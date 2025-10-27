@@ -43,7 +43,8 @@ Key implementation notes:
 	- Fixed Options mount/save race so default settings are not persisted on mount before stored settings are loaded.
 	- Added a CI workflow (`.github/workflows/ci.yml`) that runs lint, tests, build, and validates the extension icons are present in the final `dist/` build output.
 	- Addressed lint failures by removing explicit `any` usages in key tests and `lib/messaging.ts`, replacing `@ts-ignore` uses with typed mocks, and removing an unused catch binding in the background service worker.
-	- All unit tests pass locally (run with `npx vitest --run`) — current run: 11 tests across 3 files.
+	- All unit tests pass locally (run with `npx vitest --run`) — current run: 13 tests across 3 files (added background error-path tests).
+	- Continuous Integration: the GitHub Actions `ci.yml` workflow is passing on `master` (badge at top of this README).
 	- Changes were committed and pushed to `master` (latest commits include the Options fix, CI workflow, and lint/test fixes).
 - Build system: Vite with `@crxjs/vite-plugin` remains in use. The CI workflow builds the project and checks the `dist/` output.
 - UI: Popup and Options implemented in React/TypeScript; Options no longer overwrites stored settings on mount.
@@ -57,13 +58,14 @@ Key implementation notes:
 1. Permissions audit (HIGH — ask-first): If you want to narrow `host_permissions` we can:
 	 - Replace `<all_urls>` with a smaller set (e.g. `['http://*/*','https://*/*']`) or
 	 - Move broad hosts to `optional_permissions` and request them at runtime when needed.
-2. Additional tests & coverage (MEDIUM): Add tests for more background paths (e.g. `executeScript` failure modes) and consider integration/e2e tests (Playwright) that load the unpacked extension into a Chromium instance.
-3. CI improvements (MEDIUM): Parse the built `dist/manifest.json` after `npm run build` to discover any referenced assets (icons, web_accessible_resources) instead of hardcoding icon names.
+2. Additional tests & coverage (MEDIUM): Some unit coverage has been added (background error-paths). Remaining work: add more background-path tests (e.g. injection success/failure edge cases) and consider integration/e2e tests (Playwright) that load the unpacked extension into a Chromium instance.
+3. CI improvements (MEDIUM): Parse the built `dist/manifest.json` after `npm run build` to discover any referenced assets (icons, web_accessible_resources) instead of hardcoding icon names. Consider adding Vitest coverage reports and gating thresholds.
 4. UX polish (LOW): Improve popup feedback (e.g., "No selection", "Reading…", handle voice-list race conditions) and consider an explicit "Save" action on the Options page if preferred.
 5. Docs & release readiness (LOW): Add a short publishing guide (Chrome Web Store packaging, keys, CHANGELOG) and confirm icon assets exist for all platforms.
 
 Notes:
-- Tests and linting were validated locally; CI should now pass lint on GitHub Actions as the offending `any` usages were removed and tests were adjusted. If CI shows any environment-specific lint issues, I can iterate on them.
+- Tests and linting were validated locally; GitHub Actions CI is currently passing on `master` (see badge). If CI shows any environment-specific lint issues, I can iterate on them.
+- A short reminder to run lint locally before pushing was added to `memory.md`; consider adding a Husky pre-push hook to run lint automatically.
 - If you change your mind about permissions, tell me which option (A: narrow hosts, B: optional_permissions, or C: keep `<all_urls>`) and I will apply updates to `src/manifest.ts` and related documentation.
 
 Known quirks / things to watch
