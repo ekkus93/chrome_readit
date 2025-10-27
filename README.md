@@ -48,6 +48,7 @@ Key implementation notes:
 - Types: `@types/chrome` is present and code was updated to use proper Chrome typings where practical.
 - Icons & packaging: Manifest references `icon16.png`, `icon48.png`, `icon128.png` and CI now validates these exist in `dist/` after build.
 - Permissions: Per user instruction the project keeps `host_permissions: ['<all_urls>']` for now. This was an explicit decision (Option C) and no manifest change was made.
+	- Note: This decision was recorded in `memory.md` on 2025-10-27T04:20:00Z. If you later decide to narrow permissions (Option A) or move to `optional_permissions` (Option B), I can make that change and update the manifest and docs.
 
 ## What still needs to be done (recommended next steps)
 
