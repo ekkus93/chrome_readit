@@ -94,15 +94,16 @@ describe('background.sendToActiveTabOrInject', () => {
   })
 
   it('logs when executeScript fails after sendMessage rejection', async () => {
-    const g = globalThis as unknown as { chrome: { tabs: { query: { mockResolvedValue?: (v: unknown) => void }; sendMessage: { mockRejectedValue?: (e: unknown) => void } }; scripting: { executeScript: { mockRejectedValue?: (e: unknown) => void } } } }
-    g.chrome = g.chrome || ({} as any)
-    ;(globalThis as unknown as any).chrome.tabs.query.mockResolvedValue([{ id: 99, url: 'https://example.com' }])
-    ;(globalThis as unknown as any).chrome.tabs.sendMessage.mockRejectedValue(new Error('no content script'))
+  const tabsQueryMock = (globalThis as unknown as { chrome: ChromeMock }).chrome!.tabs.query as unknown as { mockResolvedValue: (v: unknown) => void }
+  const tabsSendMock = (globalThis as unknown as { chrome: ChromeMock }).chrome!.tabs.sendMessage as unknown as { mockRejectedValue: (e: unknown) => void }
+  tabsQueryMock.mockResolvedValue([{ id: 99, url: 'https://example.com' }])
+  tabsSendMock.mockRejectedValue(new Error('no content script'))
     const mockedGetSettings = vi.mocked(getSettings)
     mockedGetSettings.mockResolvedValue({ voice: 'V', rate: 1.0 })
 
     // Make executeScript fail
-    ;(globalThis as unknown as any).chrome.scripting.executeScript.mockRejectedValue(new Error('exec failed'))
+  const scriptingExecMock = (globalThis as unknown as { chrome: ChromeMock }).chrome!.scripting.executeScript as unknown as { mockRejectedValue: (e: unknown) => void }
+  scriptingExecMock.mockRejectedValue(new Error('exec failed'))
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
@@ -110,14 +111,16 @@ describe('background.sendToActiveTabOrInject', () => {
     await mod.sendToActiveTabOrInject({ kind: 'READ_SELECTION' })
 
     expect(mockedGetSettings).toHaveBeenCalled()
-    expect((globalThis as unknown as any).chrome.scripting.executeScript).toHaveBeenCalled()
+    expect((globalThis as unknown as { chrome: ChromeMock }).chrome.scripting.executeScript).toHaveBeenCalled()
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
   })
 
   it('logs when getSettings rejects and does not throw', async () => {
-    ;(globalThis as unknown as any).chrome.tabs.query.mockResolvedValue([{ id: 77, url: 'https://example.com' }])
-    ;(globalThis as unknown as any).chrome.tabs.sendMessage.mockRejectedValue(new Error('no content script'))
+  const tabsQueryMock2 = (globalThis as unknown as { chrome: ChromeMock }).chrome!.tabs.query as unknown as { mockResolvedValue: (v: unknown) => void }
+  const tabsSendMock2 = (globalThis as unknown as { chrome: ChromeMock }).chrome!.tabs.sendMessage as unknown as { mockRejectedValue: (e: unknown) => void }
+  tabsQueryMock2.mockResolvedValue([{ id: 77, url: 'https://example.com' }])
+  tabsSendMock2.mockRejectedValue(new Error('no content script'))
     const mockedGetSettings = vi.mocked(getSettings)
     mockedGetSettings.mockRejectedValue(new Error('storage error'))
 
@@ -128,7 +131,7 @@ describe('background.sendToActiveTabOrInject', () => {
 
     expect(mockedGetSettings).toHaveBeenCalled()
     // executeScript should not be called because getSettings failed
-    expect((globalThis as unknown as any).chrome.scripting.executeScript).not.toHaveBeenCalled()
+    expect((globalThis as unknown as { chrome: ChromeMock }).chrome.scripting.executeScript).not.toHaveBeenCalled()
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
   })
