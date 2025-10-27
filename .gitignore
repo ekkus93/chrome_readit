@@ -1,0 +1,50 @@
+node_modules/
+dist/
+.vite/
+.cache/
+
+# Logs
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime / environment
+.env
+.env.*
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor directories and files
+.vscode/
+.idea/
+*.iml
+*.sublime-workspace
+*.swp
+
+# TypeScript
+*.tsbuildinfo
+
+# Test output
+coverage/
+.vitest/
+
+# Build caches
+/.parcel-cache
+/.cache/
+
+# Docker local overrides
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Python caches (for local coqui builds)
+__pycache__/
+*.py[cod]
+
+# Misc
+*.pem
+*.key
