@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/ekkus93/chrome_readit/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/ekkus93/chrome_readit/actions/workflows/ci.yml)
 
+[![Coverage](https://codecov.io/gh/ekkus93/chrome_readit/branch/master/graph/badge.svg)](https://codecov.io/gh/ekkus93/chrome_readit)
+
 This repository contains "Read It", a small Chrome extension built with React + TypeScript and Vite. The extension provides a keyboard-first, accessible UI to read selected text aloud using the browser's Web Speech API.
 
 This README documents what the extension does, how it's implemented, current project state, how to build & load it locally, and next recommended steps.
