@@ -10,6 +10,8 @@ export default function Popup() {
   const [rate, setRate] = useState(1)
   const [voice, setVoice] = useState<string | undefined>()
   const [ttsHelperUp, setTtsHelperUp] = useState<boolean | null>(null)
+  const [tryText, setTryText] = useState<string>('Hello from the popup')
+  const [tryStatus, setTryStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
 
   useEffect(() => {
     const load = () => setVoices(window.speechSynthesis.getVoices())
@@ -57,6 +59,21 @@ export default function Popup() {
       await chrome.runtime.sendMessage({ kind: 'READ_SELECTION' })
     } catch (err) {
       console.warn('readit: failed to request background read', err)
+    }
+  }
+
+  async function handleTrySpeech() {
+    const text = (tryText || '').trim()
+    if (!text) return
+    setTryStatus('sending')
+    try {
+      // Request the background to read text on the active tab (or inject)
+      await chrome.runtime.sendMessage({ kind: 'READ_TEXT', text })
+      setTryStatus('ok')
+      setTimeout(() => setTryStatus('idle'), 1200)
+    } catch (err) {
+      console.warn('readit: try speech failed', err)
+      setTryStatus('error')
     }
   }
 
@@ -110,6 +127,18 @@ export default function Popup() {
           style={sliderStyle}
         />
       </div>
+
+      <section style={{ marginTop: 12 }}>
+        <label htmlFor="tryText" style={labelStyle}>Try speech on current page</label>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input id="tryText" value={tryText} onChange={e => setTryText(e.target.value)} style={{ flex: 1, padding: 8 }} />
+          <button onClick={handleTrySpeech} style={{ padding: '8px 12px' }}>
+            {tryStatus === 'sending' ? 'Sending…' : 'Try speech'}
+          </button>
+        </div>
+        {tryStatus === 'ok' && <div style={{ color: '#006400', marginTop: 8 }}>Requested speech on the active tab.</div>}
+        {tryStatus === 'error' && <div style={{ color: '#8b0000', marginTop: 8 }}>Failed to request speech. See background console.</div>}
+      </section>
 
       <p style={{ fontSize: '.85rem', marginTop: 12 }}>
         Tip: Everything here is fully keyboard accessible. Use Tab / Shift+Tab to move, Space/Enter to activate.
