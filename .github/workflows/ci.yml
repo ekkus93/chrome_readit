@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: |
+          if npm run -s lint; then echo "lint passed"; else echo "lint failed"; exit 1; fi
+
+      - name: Run tests
+        run: npx vitest --run
+
+      - name: Build
+        run: npm run build
+
+      - name: Validate icons referenced in src/manifest.ts exist in dist/
+        # After build, ensure the icons referenced by the manifest are present in the build output (dist/).
+        run: |
+          set -euo pipefail
+          icons=(icon16.png icon48.png icon128.png)
+          missing=0
+          for f in "${icons[@]}"; do
+            if [ -f "dist/$f" ]; then
+              echo "Found dist/$f"
+            else
+              echo "::error file=src/manifest.ts::$f is referenced but missing in dist/ build output" >&2
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            echo "One or more icon files referenced in src/manifest.ts are missing from dist/." >&2
+            exit 1
+          fi

@@ -21,6 +21,7 @@ export default function Options() {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   const [voice, setVoice] = useState<string | ''>('')
   const [rate, setRate] = useState<number>(1)
+  const [loaded, setLoaded] = useState<boolean>(false)
 
   // Load voices (some browsers populate asynchronously)
   useEffect(() => {
@@ -36,12 +37,23 @@ export default function Options() {
     getSettings().then(s => {
       setRate(s.rate)
       setVoice(s.voice ?? '')
+      // Mark that initial settings have been loaded. Persistence effects
+      // should only run after this to avoid overwriting stored settings
+      // with defaults during mount.
+      setLoaded(true)
     })
   }, [])
 
   // Persist on change
-  useEffect(() => { saveSettings({ rate }) }, [rate])
-  useEffect(() => { saveSettings({ voice: voice || undefined }) }, [voice])
+  useEffect(() => {
+    if (!loaded) return
+    saveSettings({ rate })
+  }, [rate, loaded])
+
+  useEffect(() => {
+    if (!loaded) return
+    saveSettings({ voice: voice || undefined })
+  }, [voice, loaded])
 
   const sysOption = useMemo(() => [{ name: '', label: 'System default' }], [])
   const voiceOptions = sysOption.concat(
