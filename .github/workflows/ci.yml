@@ -31,21 +31,40 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Validate icons referenced in src/manifest.ts exist in dist/
-        # After build, ensure the icons referenced by the manifest are present in the build output (dist/).
+      - name: Validate assets referenced in dist/manifest.json exist in dist/
+        # After build, parse the built manifest (dist/manifest.json) and ensure any referenced icons
+        # and web_accessible_resources are present in the build output (dist/).
         run: |
           set -euo pipefail
-          icons=(icon16.png icon48.png icon128.png)
+
+          # Extract referenced assets (icons + web_accessible_resources) from the built manifest
+          node -e "const fs=require('fs');const m=JSON.parse(fs.readFileSync('dist/manifest.json','utf8'));const icons=Object.values(m.icons||{});let war=[];if(m.web_accessible_resources){ if(Array.isArray(m.web_accessible_resources)){ m.web_accessible_resources.forEach(e=>{ if(typeof e==='string') war.push(e); else if(Array.isArray(e.resources)) war.push(...e.resources); else if(e.resources) war.push(...e.resources); }); } } const unique=[...new Set([...icons,...war])]; console.log(unique.join('\n'))" > /tmp/manifest-assets.txt || (echo 'Failed to read dist/manifest.json' && exit 1)
+
           missing=0
-          for f in "${icons[@]}"; do
-            if [ -f "dist/$f" ]; then
-              echo "Found dist/$f"
+          while IFS= read -r asset; do
+            # skip empty lines
+            [ -z "${asset}" ] && continue
+            # Normalize path (dist relative)
+            path="dist/${asset}"
+            if [[ "${asset}" == *"*"* ]]; then
+              # asset contains a glob; check if any match
+              if compgen -G "${path}" >/dev/null; then
+                echo "Found matches for glob: ${asset}"
+              else
+                echo "::error file=dist/manifest.json::No files match glob ${asset} in dist/" >&2
+                missing=1
+              fi
             else
-              echo "::error file=src/manifest.ts::$f is referenced but missing in dist/ build output" >&2
-              missing=1
+              if [ -f "${path}" ]; then
+                echo "Found ${path}"
+              else
+                echo "::error file=dist/manifest.json::Referenced asset ${asset} missing from dist/" >&2
+                missing=1
+              fi
             fi
-          done
+          done < /tmp/manifest-assets.txt
+
           if [ "$missing" -eq 1 ]; then
-            echo "One or more icon files referenced in src/manifest.ts are missing from dist/." >&2
+            echo "One or more assets referenced in dist/manifest.json are missing from dist/." >&2
             exit 1
           fi
