@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "Read It – Reader",
+  "version": "0.0.1",
+  "description": "Reads selected text aloud with keyboard-first accessible UI.",
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "Read It"
+  },
+  "options_page": "src/options.html",
+  "background": {
+    "service_worker": "service-worker-loader.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "commands": {
+    "read-selection": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "Read current selection"
+    }
+  },
+  "content_scripts": [
+    {
+      "js": [
+        "assets/content.ts-BWC6c0vN.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "resources": [
+        "assets/content.ts-BWC6c0vN.js"
+      ],
+      "use_dynamic_url": false
+    }
+  ]
+}
