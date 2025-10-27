@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createRoot } from 'react-dom/client'
 import type { Settings } from '../lib/storage'
 // Use real Chrome typings from @types/chrome when installed; avoid file-scoped
 // shims so TypeScript can check extension APIs correctly.
@@ -8,6 +9,7 @@ export default function Popup() {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   const [rate, setRate] = useState(1)
   const [voice, setVoice] = useState<string | undefined>()
+  const [ttsHelperUp, setTtsHelperUp] = useState<boolean | null>(null)
 
   useEffect(() => {
     const load = () => setVoices(window.speechSynthesis.getVoices())
@@ -22,6 +24,30 @@ export default function Popup() {
   }, [])
 
   useEffect(() => { getSettings().then(s => { setRate(s.rate); setVoice(s.voice) }) }, [])
+
+  // Probe the local TTS helper via the background proxy. Background will
+  // perform a GET /ping to the helper and return { ok: true } when present.
+  useEffect(() => {
+    let mounted = true
+    const probe = () => {
+      try {
+        chrome.runtime.sendMessage({ action: 'probe-tts' }, (resp) => {
+          if (!mounted) return
+          if (resp && resp.ok) setTtsHelperUp(true)
+          else setTtsHelperUp(false)
+        })
+      } catch (err) {
+        if (!mounted) return
+        console.warn('readit: probe-tts failed', err)
+        setTtsHelperUp(false)
+      }
+    }
+    probe()
+    // allow re-probe on focus so the popup updates if the helper is started
+    const onFocus = () => probe()
+    window.addEventListener('focus', onFocus)
+    return () => { mounted = false; window.removeEventListener('focus', onFocus) }
+  }, [])
 
   async function handleReadSelection() {
     // Route read selection requests through the background so it can
@@ -88,6 +114,24 @@ export default function Popup() {
       <p style={{ fontSize: '.85rem', marginTop: 12 }}>
         Tip: Everything here is fully keyboard accessible. Use Tab / Shift+Tab to move, Space/Enter to activate.
       </p>
+      {ttsHelperUp === false && (
+        <div style={{ marginTop: 12, padding: 8, background: '#fff4f4', color: '#8b0000', borderRadius: 4 }}>
+          Local TTS helper not running. Start the helper (see project scripts/README.md) if you rely on local system voices.
+        </div>
+      )}
+      {ttsHelperUp === true && (
+        <div style={{ marginTop: 12, padding: 8, background: '#f4fff7', color: '#006400', borderRadius: 4 }}>
+          Local TTS helper available.
+        </div>
+      )}
     </div>
   )
 }
+
+// Auto-mount when this file is loaded as a page entry (popup.html).
+// This keeps the file self-contained and mirrors `src/main.tsx`'s behavior.
+const root = document.getElementById('root')
+if (root) {
+  createRoot(root).render(<Popup />)
+}
+

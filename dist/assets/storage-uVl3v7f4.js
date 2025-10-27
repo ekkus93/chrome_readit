@@ -1,0 +1,1 @@
+const n={rate:1};async function e(){const t=await chrome.storage.sync.get(["settings"]);return{...n,...t.settings??{}}}async function a(t){const s=await e();await chrome.storage.sync.set({settings:{...s,...t}})}export{e as g,a as s};

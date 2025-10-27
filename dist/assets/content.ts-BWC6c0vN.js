@@ -1,2 +1,0 @@
-(function(){const o={rate:1};async function a(){const e=await chrome.storage.sync.get(["settings"]);return{...o,...e.settings??{}}}async function s(e){const t=await a(),n=new SpeechSynthesisUtterance(e);if(n.rate=t.rate,t.voice){const i=speechSynthesis.getVoices().find(c=>c.name===t.voice);i&&(n.voice=i)}speechSynthesis.cancel(),speechSynthesis.speak(n)}chrome.runtime.onMessage.addListener(e=>{if(e.kind==="READ_SELECTION"){const t=window.getSelection()?.toString().trim();t&&s(t)}else e.kind==="READ_TEXT"&&e.text?.trim()&&s(e.text.trim())});
-})()

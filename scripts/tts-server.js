@@ -3,8 +3,9 @@
 // and calls `spd-say` (or `espeak-ng` if spd-say is not available).
 // Usage: node scripts/tts-server.js [port]
 
-const http = require('http')
-const { spawn } = require('child_process')
+import http from 'http'
+import { spawn } from 'child_process'
+
 const port = parseInt(process.argv[2], 10) || 4000
 
 function speakWithSpdSay(text) {
