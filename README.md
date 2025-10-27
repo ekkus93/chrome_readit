@@ -34,17 +34,34 @@ Key implementation notes:
 - `src/content/content.ts` — message listener and `speak()` implementation.
 - `src/popup/Popup.tsx` and `src/options/Options.tsx` — React UIs for quick controls and persistent options.
 
-## Current project status (as of this review)
+## Current project status (updated)
 
 - Core functionality: Implemented and wired up. The extension supports reading selection, keyboard shortcut, context menu, popup and options, and stores settings in `chrome.storage.sync`.
-- Build system: Vite with `@crxjs/vite-plugin` is present in `package.json`. Source `manifest.ts` uses source paths — CRX plugin rewrites on build.
-- UI: Popup and Options implemented in React/TypeScript.
-- Types: `@types/chrome` has been added and the codebase was updated to remove local `chrome` shims and use proper Chrome typings.
-- Tests: Unit tests were added (Vitest) for message guards, storage helpers, and background messaging/injection behavior. Tests run locally with `npx vitest --run` and currently pass.
-- CI: A GitHub Actions workflow was added (`.github/workflows/ci.yml`) that runs a lint job (`npm run lint`), tests (`npx vitest --run`), and a production build (`npm run build`) on push and PR.
-- Important fixes done: popup now routes read requests through the background (so injection fallback is used), and the background injection fallback was rewritten to inject a one-off page script (reads selection or provided text) instead of attempting to register `chrome.runtime` in page context.
-- Icons: `manifest.ts` references `icon16.png`, `icon48.png`, `icon128.png` — confirm these exist in `public/` or the build output before publishing.
-- Permissions: `host_permissions` are still set to `<all_urls>` which is broad — consider narrowing the host list or moving hosts to `optional_permissions` if you plan to publish.
+- Fixes completed since the prior review:
+	- Fixed Options mount/save race so default settings are not persisted on mount before stored settings are loaded.
+	- Added a CI workflow (`.github/workflows/ci.yml`) that runs lint, tests, build, and validates the extension icons are present in the final `dist/` build output.
+	- Addressed lint failures by removing explicit `any` usages in key tests and `lib/messaging.ts`, replacing `@ts-ignore` uses with typed mocks, and removing an unused catch binding in the background service worker.
+	- All unit tests pass locally (run with `npx vitest --run`) — current run: 11 tests across 3 files.
+	- Changes were committed and pushed to `master` (latest commits include the Options fix, CI workflow, and lint/test fixes).
+- Build system: Vite with `@crxjs/vite-plugin` remains in use. The CI workflow builds the project and checks the `dist/` output.
+- UI: Popup and Options implemented in React/TypeScript; Options no longer overwrites stored settings on mount.
+- Types: `@types/chrome` is present and code was updated to use proper Chrome typings where practical.
+- Icons & packaging: Manifest references `icon16.png`, `icon48.png`, `icon128.png` and CI now validates these exist in `dist/` after build.
+- Permissions: Per user instruction the project keeps `host_permissions: ['<all_urls>']` for now. This was an explicit decision (Option C) and no manifest change was made.
+
+## What still needs to be done (recommended next steps)
+
+1. Permissions audit (HIGH — ask-first): If you want to narrow `host_permissions` we can:
+	 - Replace `<all_urls>` with a smaller set (e.g. `['http://*/*','https://*/*']`) or
+	 - Move broad hosts to `optional_permissions` and request them at runtime when needed.
+2. Additional tests & coverage (MEDIUM): Add tests for more background paths (e.g. `executeScript` failure modes) and consider integration/e2e tests (Playwright) that load the unpacked extension into a Chromium instance.
+3. CI improvements (MEDIUM): Parse the built `dist/manifest.json` after `npm run build` to discover any referenced assets (icons, web_accessible_resources) instead of hardcoding icon names.
+4. UX polish (LOW): Improve popup feedback (e.g., "No selection", "Reading…", handle voice-list race conditions) and consider an explicit "Save" action on the Options page if preferred.
+5. Docs & release readiness (LOW): Add a short publishing guide (Chrome Web Store packaging, keys, CHANGELOG) and confirm icon assets exist for all platforms.
+
+Notes:
+- Tests and linting were validated locally; CI should now pass lint on GitHub Actions as the offending `any` usages were removed and tests were adjusted. If CI shows any environment-specific lint issues, I can iterate on them.
+- If you change your mind about permissions, tell me which option (A: narrow hosts, B: optional_permissions, or C: keep `<all_urls>`) and I will apply updates to `src/manifest.ts` and related documentation.
 
 Known quirks / things to watch
 
@@ -101,30 +118,4 @@ If you'd like, I can open a PR that:
 ---
 
 This file was updated after a brief code review of the repository files to summarize functionality and current state.
-
-## Quick prompt to continue work with the assistant
-
-When you're ready to resume work with the assistant, paste the exact prompt below (you can edit details like branch name or which tasks to prioritise):
-
-"Resume Read It work — context: I have the repo at commit <COMMIT_HASH> (or branch <BRANCH_NAME>). Current status: README, memory.md, and RESUME_CHECKLIST.md present; unit tests pass with `npx vitest --run`. Tasks to continue (pick or edit):
-
-- Fix Options mount/save race in `src/options/Options.tsx` so defaults are not persisted before stored settings are loaded (HIGH priority).
-- Propose narrowed `host_permissions` for `src/manifest.ts` and optionally convert to `optional_permissions` (ask-first; list hosts to include: <HOST_LIST>).
-- Add a CI validation step to confirm icons referenced in `manifest.ts` exist in the build output (optional).
-
-Commands to run locally:
-```
-git checkout <BRANCH_NAME>
-git pull
-npm install
-npx vitest --run
-npm run dev   # optional: start UI dev server
-```
-
-Notes:
-- If you changed anything, commit WIP changes before asking the assistant to continue: `git add . && git commit -m "WIP: checkpoint" && git push`.
-- If you want the assistant to open a PR, include the target branch and a short description.
-
-When you paste this prompt, replace the placeholders (`<COMMIT_HASH>`, `<BRANCH_NAME>`, `<HOST_LIST>`) and tell the assistant which of the listed tasks to do first."
-
 
