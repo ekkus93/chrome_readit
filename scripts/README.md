@@ -40,10 +40,11 @@ Docker Compose example (included in repo)
 ----------------------------------------
 
 
-The repository includes a `docker-compose.yml` with a `coqui-tts` service that runs the Coqui TTS server (CPU image) on port 5002. To start the Coqui service alone:
+The repository includes a `docker-compose.coqui.yml` with a `coqui-local` service that builds and runs the Coqui TTS server (CPU build) on port 5002. To start the Coqui service alone:
 
 ```bash
-docker-compose up -d coqui-tts
+# from the repo root
+docker compose -f docker-compose.coqui.yml up --build -d
 ```
 
 If you still want to run the small local helper (for `spd-say`/`espeak-ng` fallback or to keep the existing `/speak` endpoint), run the helper locally and point it at Coqui:
@@ -58,7 +59,7 @@ Notes on COQUI_URL and models
 
 Audio playback in Docker
 ------------------------
-If you run the helper or the Coqui server in Docker and want the container to play audio on your host, you can map PulseAudio or ALSA devices. The included `docker-compose.yml` demonstrates mapping the Pulse socket and `/dev/snd`. This is platform-specific — see the compose file comments for guidance.
+If you run the helper or the Coqui server in Docker and want the container to play audio on your host, you can map PulseAudio or ALSA devices. The included `docker-compose.coqui.yml` demonstrates mapping the Pulse socket and `/dev/snd` in the `docker/coqui-local` build. This is platform-specific — see the compose file comments for guidance.
 
 Security
 --------
