@@ -22,7 +22,7 @@ export async function sendToActiveTabOrInject(msg: Msg) {
   }
   try {
     await chrome.tabs.sendMessage(tab.id!, msg)
-  } catch (e) {
+  } catch {
     // No content script present yet. Read current settings in the extension
     // context and inject a one-off page script that reads the current
     // selection and speaks it immediately. We pass settings as args so the
@@ -50,7 +50,6 @@ export async function sendToActiveTabOrInject(msg: Msg) {
             speechSynthesis.speak(u)
           } catch (err) {
             // best-effort; avoid throwing from page script
-            // eslint-disable-next-line no-console
             console.warn('readit: speak injection failed', err)
           }
         },

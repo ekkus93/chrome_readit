@@ -6,46 +6,41 @@ describe('storage.getSettings / saveSettings', () => {
 
   beforeEach(() => {
     // Reset global chrome mock
-        // Provide a minimal mock for chrome.storage.sync. Use `any` here so
-        // TypeScript doesn't enforce the full SyncStorageArea shape in tests.
-        // Provide a minimal mock and attach to globalThis using `any` so the
-        // TypeScript declared `chrome` module/type isn't enforced here.
-        ;(globalThis as any).chrome = {
-          storage: {
-            sync: {
-              get: (() => Promise.resolve({})) as any,
-              set: (() => Promise.resolve()) as any,
-            },
-          },
-        }
+    // Provide a minimal mock for chrome.storage.sync. Use typed mocks to
+    // avoid `any` while keeping tests simple.
+    type SyncMock = { get: (...a: unknown[]) => Promise<unknown>; set: (...a: unknown[]) => Promise<unknown> }
+    ;(globalThis as unknown as { chrome?: { storage?: { sync?: SyncMock } } }).chrome = {
+      storage: {
+        sync: {
+          get: vi.fn(() => Promise.resolve({})),
+          set: vi.fn(() => Promise.resolve()),
+        },
+      },
+    }
   })
 
   it('returns defaults when storage empty', async () => {
-  // Replace get with a mock that resolves the desired value
-  // @ts-ignore
-  ;(globalThis as any).chrome.storage.sync.get = vi.fn(() => Promise.resolve({}))
+    // Replace get with a mock that resolves the desired value
+    ;(globalThis as unknown as { chrome: { storage: { sync: { get: (...a: unknown[]) => unknown } } } }).chrome.storage.sync.get = vi.fn(() => Promise.resolve({}))
     const s = await storage.getSettings()
     expect(s).toEqual(DEFAULTS)
   })
 
   it('merges stored settings with defaults', async () => {
-  // @ts-ignore
-  ;(globalThis as any).chrome.storage.sync.get = vi.fn(() => Promise.resolve({ settings: { rate: 1.5, voice: 'Alice' } }))
+    ;(globalThis as unknown as { chrome: { storage: { sync: { get: (...a: unknown[]) => unknown } } } }).chrome.storage.sync.get = vi.fn(() => Promise.resolve({ settings: { rate: 1.5, voice: 'Alice' } }))
     const s = await storage.getSettings()
     expect(s).toEqual({ rate: 1.5, voice: 'Alice' })
   })
 
   it('saveSettings merges and calls storage.set', async () => {
     // initial stored settings
-  // @ts-ignore
-  ;(globalThis as any).chrome.storage.sync.get = vi.fn(() => Promise.resolve({ settings: { rate: 1.2 } }))
+    ;(globalThis as unknown as { chrome: { storage: { sync: { get: (...a: unknown[]) => unknown } } } }).chrome.storage.sync.get = vi.fn(() => Promise.resolve({ settings: { rate: 1.2 } }))
 
-  const setMock = vi.fn(() => Promise.resolve())
-  // @ts-ignore
-  ;(globalThis as any).chrome.storage.sync.set = setMock
+    const setMock = vi.fn(() => Promise.resolve())
+    ;(globalThis as unknown as { chrome: { storage: { sync: { set: (...a: unknown[]) => unknown } } } }).chrome.storage.sync.set = setMock
 
-  await storage.saveSettings({ voice: 'Bob' })
+    await storage.saveSettings({ voice: 'Bob' })
 
-  expect(setMock).toHaveBeenCalledWith({ settings: { rate: 1.2, voice: 'Bob' } })
+    expect(setMock).toHaveBeenCalledWith({ settings: { rate: 1.2, voice: 'Bob' } })
   })
 })

@@ -8,7 +8,7 @@ export function sendToContent(tabId: number, msg: Msg) {
 
 // Type guards for runtime validation of messages coming from other contexts
 export function isReadSelection(m: unknown): m is { kind: 'READ_SELECTION' } {
-  return typeof m === 'object' && m !== null && 'kind' in (m as Record<string, unknown>) && (m as any).kind === 'READ_SELECTION'
+  return typeof m === 'object' && m !== null && 'kind' in (m as Record<string, unknown>) && (m as Record<string, unknown>).kind === 'READ_SELECTION'
 }
 
 export function isReadText(m: unknown): m is { kind: 'READ_TEXT'; text: string } {
@@ -16,9 +16,9 @@ export function isReadText(m: unknown): m is { kind: 'READ_TEXT'; text: string }
     typeof m === 'object' &&
     m !== null &&
     'kind' in (m as Record<string, unknown>) &&
-    (m as any).kind === 'READ_TEXT' &&
+    (m as Record<string, unknown>).kind === 'READ_TEXT' &&
     'text' in (m as Record<string, unknown>) &&
-    typeof (m as any).text === 'string'
+    typeof (m as Record<string, unknown>).text === 'string'
   )
 }
 

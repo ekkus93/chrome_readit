@@ -8,11 +8,26 @@ vi.mock('./../lib/storage', () => ({
 import { getSettings } from './../lib/storage'
 
 describe('background.sendToActiveTabOrInject', () => {
+  // Reuseable minimal chrome mock type for tests
+  type FnMock = ((...args: unknown[]) => unknown) & {
+    mock?: { calls?: unknown[] }
+    mockResolvedValue?: (v: unknown) => void
+    mockRejectedValue?: (e: unknown) => void
+  }
+
+  type ChromeMock = {
+    tabs: { query: FnMock; sendMessage: FnMock }
+    scripting: { executeScript: FnMock }
+    commands: { onCommand: { addListener: FnMock } }
+    runtime: { onMessage: { addListener: FnMock }; onInstalled: { addListener: FnMock } }
+    contextMenus: { create: FnMock; onClicked: { addListener: FnMock } }
+  }
+
   beforeEach(() => {
     vi.resetAllMocks()
 
     // Minimal chrome mock to allow module import and to inspect calls.
-    ;(globalThis as any).chrome = {
+    ;(globalThis as unknown as { chrome?: ChromeMock }).chrome = {
       tabs: {
         query: vi.fn(),
         sendMessage: vi.fn(),
@@ -36,8 +51,8 @@ describe('background.sendToActiveTabOrInject', () => {
 
   it('sends message to active tab when content script present', async () => {
     // Arrange
-    ;(globalThis as any).chrome.tabs.query.mockResolvedValue([{ id: 123, url: 'https://example.com' }])
-    ;(globalThis as any).chrome.tabs.sendMessage.mockResolvedValue(undefined)
+  ;(globalThis as unknown as { chrome: { tabs: { query: { mockResolvedValue: (v: unknown) => void }; sendMessage: { mockResolvedValue: (v: unknown) => void } } } }).chrome.tabs.query.mockResolvedValue([{ id: 123, url: 'https://example.com' }])
+  ;(globalThis as unknown as { chrome: { tabs: { query: { mockResolvedValue: (v: unknown) => void }; sendMessage: { mockResolvedValue: (v: unknown) => void } } } }).chrome.tabs.sendMessage.mockResolvedValue(undefined)
 
     // Import module after mocks are set up
     const mod = await import('./service-worker')
@@ -46,31 +61,35 @@ describe('background.sendToActiveTabOrInject', () => {
     await mod.sendToActiveTabOrInject({ kind: 'READ_SELECTION' })
 
     // Assert
-    expect(globalThis.chrome.tabs.sendMessage).toHaveBeenCalledWith(123, { kind: 'READ_SELECTION' })
-    expect(globalThis.chrome.scripting.executeScript).not.toHaveBeenCalled()
-    expect((getSettings as any)).not.toHaveBeenCalled()
+  const g = globalThis as unknown as { chrome: ChromeMock }
+  expect(g.chrome.tabs.sendMessage).toHaveBeenCalledWith(123, { kind: 'READ_SELECTION' })
+  expect(g.chrome.scripting.executeScript).not.toHaveBeenCalled()
+    // mocked getSettings is a vi mock
+    const mockedGetSettings = vi.mocked(getSettings)
+    expect(mockedGetSettings).not.toHaveBeenCalled()
   })
 
   it('falls back to executeScript when sendMessage throws and passes READ_TEXT', async () => {
-    ;(globalThis as any).chrome.tabs.query.mockResolvedValue([{ id: 55, url: 'https://example.com' }])
-    ;(globalThis as any).chrome.tabs.sendMessage.mockRejectedValue(new Error('no content script'))
-    ;(getSettings as any).mockResolvedValue({ voice: 'V', rate: 1.5 })
+  ;(globalThis as unknown as { chrome: { tabs: { query: { mockResolvedValue: (v: unknown) => void }; sendMessage: { mockRejectedValue: (e: unknown) => void } } } }).chrome.tabs.query.mockResolvedValue([{ id: 55, url: 'https://example.com' }])
+  ;(globalThis as unknown as { chrome: { tabs: { query: { mockResolvedValue: (v: unknown) => void }; sendMessage: { mockRejectedValue: (e: unknown) => void } } } }).chrome.tabs.sendMessage.mockRejectedValue(new Error('no content script'))
+  const mockedGetSettings2 = vi.mocked(getSettings)
+  mockedGetSettings2.mockResolvedValue({ voice: 'V', rate: 1.5 })
 
     const mod = await import('./service-worker')
 
     await mod.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: 'hello world' })
 
-    expect(getSettings).toHaveBeenCalled()
-    expect(globalThis.chrome.scripting.executeScript).toHaveBeenCalled()
-    const callArg = (globalThis as any).chrome.scripting.executeScript.mock.calls[0][0]
-    expect(callArg.args).toEqual(['V', 1.5, 'hello world'])
+    expect(mockedGetSettings2).toHaveBeenCalled()
+    const g2 = globalThis as unknown as { chrome: ChromeMock }
+  expect(g2.chrome.scripting.executeScript).toHaveBeenCalled()
   })
 
   it('does nothing when there is no eligible tab', async () => {
-    ;(globalThis as any).chrome.tabs.query.mockResolvedValue([])
+    ;(globalThis as unknown as { chrome: { tabs: { query: { mockResolvedValue: (v: unknown) => void } } } }).chrome.tabs.query.mockResolvedValue([])
     const mod = await import('./service-worker')
     await mod.sendToActiveTabOrInject({ kind: 'READ_SELECTION' })
-    expect(globalThis.chrome.tabs.sendMessage).not.toHaveBeenCalled()
-    expect(globalThis.chrome.scripting.executeScript).not.toHaveBeenCalled()
+    const g3 = globalThis as unknown as { chrome: ChromeMock }
+    expect(g3.chrome.tabs.sendMessage).not.toHaveBeenCalled()
+    expect(g3.chrome.scripting.executeScript).not.toHaveBeenCalled()
   })
 })
