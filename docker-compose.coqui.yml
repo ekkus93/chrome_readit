@@ -9,3 +9,19 @@ services:
       # COQUI_MODEL: "tts_models/en/ljspeech/tacotron2-DDC"
       # Example: COQUI_MODEL: "tts_models/en/vctk/vits"
       - "PYTHONUNBUFFERED=1"
+      # Enable playback on the host. When set to '1' the container will
+      # attempt to call paplay/aplay on the generated audio file.
+      - "PLAY_ON_HOST=1"
+      # Pulse socket location: default uses XDG_RUNTIME_DIR or /run/user/1000
+      - "PULSE_SERVER=unix:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native"
+    volumes:
+      # Mount the PulseAudio socket from the host so the container can talk to
+      # the user's PulseAudio server. Adjust UID/XDG_RUNTIME_DIR as needed.
+      - "${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native"
+      # Machine-id helps Pulse locate the correct session on some distros
+      - "/etc/machine-id:/etc/machine-id:ro"
+      # Optional: forward the user's pulse cookie (uncomment if needed)
+      # - "${HOME}/.config/pulse/cookie:/root/.config/pulse/cookie:ro"
+    # Optionally expose the ALSA devices if you prefer direct /dev/snd access
+    devices:
+      - "/dev/snd:/dev/snd"

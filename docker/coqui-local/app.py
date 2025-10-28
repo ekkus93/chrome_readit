@@ -39,6 +39,23 @@ def synth(req: TTSRequest):
     try:
         # TTS.api.TTS provides tts_to_file that writes audio to disk
         tts.tts_to_file(text=req.text, file_path=out_path)
+        # Optionally play the generated audio on the host's sound device.
+        # This requires the container to have access to the host PulseAudio socket
+        # (or /dev/snd) and paplay/aplay installed. Enable by setting
+        # the environment variable PLAY_ON_HOST=1 in your docker-compose or
+        # docker run environment.
+        try:
+            play_on_host = os.environ.get("PLAY_ON_HOST", "0")
+            if play_on_host.lower() in ("1", "true", "yes"):
+                # Use paplay (PulseAudio) if available, otherwise fall back to aplay
+                from subprocess import Popen
+                if os.path.exists("/usr/bin/paplay"):
+                    Popen(["/usr/bin/paplay", out_path])
+                elif os.path.exists("/usr/bin/aplay"):
+                    Popen(["/usr/bin/aplay", out_path])
+        except Exception:
+            # Don't fail the request if playback fails; continue to return the file
+            pass
         return FileResponse(out_path, media_type="audio/wav", filename="speech.wav")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
