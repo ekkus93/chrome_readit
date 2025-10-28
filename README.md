@@ -115,6 +115,47 @@ Below are remaining recommended improvements, prioritized by impact.
 5. UX polish (LOW): show popup feedback (e.g., "No selection", "Reading…", voice unavailable) and improve voice-list handling to reduce race conditions.
 6. Docs & release readiness (LOW): add a short publishing guide (Chrome Web Store packaging, keys, and a CHANGELOG).
 
+## Host audio playback (Coqui Docker)
+
+If you prefer the Docker/Coqui TTS server to play audio on the host (so the browser doesn't handle playback), this repo includes an opt-in `PLAY_ON_HOST` mode. It uses `paplay` (PulseAudio) or `aplay` (ALSA) inside the container to output the generated WAV file to the host sound system.
+
+Quick command to start the local Coqui container with host audio forwarding (Linux desktop):
+
+```bash
+# from repo root — adjust XDG_RUNTIME_DIR if your runtime dir differs
+XDG_RUNTIME_DIR=/run/user/$(id -u) docker-compose -f docker-compose.coqui.yml up --build
+```
+
+Notes:
+- The compose file sets `PLAY_ON_HOST=1` and mounts the Pulse socket from `${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native` into the container. This is required for `paplay` to talk to your PulseAudio/pipewire session.
+- If your system uses a different runtime dir or different user ID, set `XDG_RUNTIME_DIR` accordingly (for example, `XDG_RUNTIME_DIR=/run/user/1001`).
+
+Troubleshooting
+
+- Permission denied when connecting to Pulse socket:
+	- Ensure the host socket is readable by the container user. You can run the container with your host UID by adding `user: "${UID}:${GID}"` in the service definition or run the container with `--user $(id -u):$(id -g)`.
+	- Alternatively mount your Pulse cookie into the container (uncomment the cookie mount in `docker-compose.coqui.yml`).
+
+- `paplay` not found / playback fails inside container:
+	- Confirm the container image was rebuilt after the Dockerfile change. Rebuild with the compose command above.
+	- Exec into the running container and test playback manually:
+		```bash
+		docker exec -it $(docker ps -qf "ancestor=coqui-local") bash
+		# inside container
+		paplay /path/to/sample.wav || aplay /path/to/sample.wav
+		```
+
+- Pulse/pipewire compatibility issues:
+	- Many modern distros run PipeWire with PulseAudio compatibility; mounting the Pulse socket often works. If it doesn't, consider Option C (host helper) described below.
+
+Security note
+
+- Mounting the host sound socket or `/dev/snd` allows the container to output audio through your session. Only enable this for trusted containers.
+
+Alternative (safer) approach
+
+- If you prefer to avoid mounting host devices, run a small host-side player service (a tiny HTTP endpoint on `127.0.0.1`) that receives audio bytes and plays them with `paplay` on the host. The container can POST the generated WAV to that endpoint. This keeps the container isolated and delegates audio playback to a trusted host process.
+
 ## Quick contact / contributor notes
 
 If you'd like, I can open a PR that:
