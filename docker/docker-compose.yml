@@ -1,0 +1,11 @@
+version: '3.8'
+services:
+  coqui-nginx:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "5002:5002"
+    environment:
+      # No COQUI_URL needed; the app is local.
+    restart: unless-stopped

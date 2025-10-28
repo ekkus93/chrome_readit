@@ -1,0 +1,11 @@
+services:
+  coqui-local:
+    build: ./docker/coqui-local
+    ports:
+      - "5002:5002"
+    restart: unless-stopped
+    environment:
+      # optional: override model
+      # COQUI_MODEL: "tts_models/en/ljspeech/tacotron2-DDC"
+      # Example: COQUI_MODEL: "tts_models/en/vctk/vits"
+      - "PYTHONUNBUFFERED=1"

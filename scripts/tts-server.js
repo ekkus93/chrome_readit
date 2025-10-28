@@ -42,19 +42,80 @@ async function speak(text) {
 }
 
 const server = http.createServer(async (req, res) => {
-  // Basic CORS for local calls
+  // Basic CORS for local calls. Also honor Private Network preflight requests from modern browsers.
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  // If the browser requested Private Network permissions, explicitly allow it.
+  if (req.headers['access-control-request-private-network']) {
+    res.setHeader('Access-Control-Allow-Private-Network', 'true')
+  }
 
   if (req.method === 'OPTIONS') {
-    res.writeHead(204)
+    // Reply to preflight immediately. Include the PNA header when requested.
+    const headers = {
+      'Content-Length': '0',
+    }
+    if (req.headers['access-control-request-private-network']) {
+      headers['Access-Control-Allow-Private-Network'] = 'true'
+    }
+    // Also include the basic CORS headers in the preflight response
+    headers['Access-Control-Allow-Origin'] = '*'
+    headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    res.writeHead(204, headers)
     return res.end()
   }
 
   if (req.method === 'GET' && req.url === '/ping') {
     res.writeHead(200, { 'Content-Type': 'application/json' })
     return res.end(JSON.stringify({ ok: true }))
+  }
+
+  // Compatibility proxy for Coqui/OpenTTS endpoints: accept requests at /api/tts
+  // and forward them to the configured COQUI_URL. This lets the dev proxy run
+  // on the same port the browser expects (for example, 5002) and inject CORS/PNA
+  // headers even when the upstream Coqui container doesn't handle them.
+  if (req.method === 'POST' && req.url === '/api/tts') {
+    let body = ''
+    req.on('data', (chunk) => (body += chunk))
+    req.on('end', async () => {
+      try {
+        const data = JSON.parse(body || '{}')
+        const text = (data && data.text) ? String(data.text) : ''
+        if (!text) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          return res.end(JSON.stringify({ error: 'missing text' }))
+        }
+
+        if (!COQUI_URL) {
+          res.writeHead(501, { 'Content-Type': 'application/json' })
+          return res.end(JSON.stringify({ error: 'no COQUI_URL configured' }))
+        }
+
+        // Forward to upstream Coqui/OpenTTS
+        const payload = COQUI_MODEL ? { text, model_name: COQUI_MODEL } : { text }
+        const upstream = await fetch(COQUI_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+
+        if (!upstream.ok) {
+          res.writeHead(502, { 'Content-Type': 'application/json' })
+          return res.end(JSON.stringify({ error: 'upstream error', status: upstream.status }))
+        }
+
+        const contentType = upstream.headers.get('content-type') || 'application/octet-stream'
+        // Stream upstream audio/text directly to client
+        res.writeHead(200, { 'Content-Type': contentType })
+        upstream.body.pipe(res)
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: String(err && err.message) }))
+      }
+    })
+    return
   }
 
   if (req.method === 'POST' && req.url === '/speak') {

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Mock storage.getSettings before importing the background module
@@ -56,12 +57,16 @@ describe('background TTS service (test-tts)', () => {
 
     expect(sendResponse).toHaveBeenCalled()
     const arg = (sendResponse as any).mock.calls[0][0]
-    expect(arg).toEqual({ ok: true })
-    // ensure audio forwarded to content script
-    expect((globalThis as any).chrome.tabs.sendMessage).toHaveBeenCalled()
-    const smCall = (globalThis as any).chrome.tabs.sendMessage.mock.calls[0]
-    expect(smCall[1].kind).toBe('PLAY_AUDIO')
-    expect(smCall[1].audio.byteLength).toBe((fakeBuf as ArrayBuffer).byteLength)
+  expect(arg.ok).toBe(true)
+  // response should include audio bytes and mime type so callers can play it
+  expect(arg.audio).toBeDefined()
+  expect(arg.mime).toBe('audio/wav')
+  expect(arg.audio.byteLength).toBe((fakeBuf as ArrayBuffer).byteLength)
+  // ensure audio was also forwarded to content script
+  expect((globalThis as any).chrome.tabs.sendMessage).toHaveBeenCalled()
+  const smCall = (globalThis as any).chrome.tabs.sendMessage.mock.calls[0]
+  expect(smCall[1].kind).toBe('PLAY_AUDIO')
+  expect(smCall[1].audio.byteLength).toBe((fakeBuf as ArrayBuffer).byteLength)
   })
 
   it('returns error when no ttsUrl configured', async () => {

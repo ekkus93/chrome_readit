@@ -14,7 +14,6 @@ pnpm-debug.log*
 .env
 .env.*
 .env.local
-package-lock.json
 
 # OS files
 .DS_Store
