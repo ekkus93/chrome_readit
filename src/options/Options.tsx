@@ -6,6 +6,21 @@ type Settings = {
   ttsUrl?: string
 }
 
+// Exported helper for tests: fetch available voices from a configured TTS URL.
+export async function fetchVoicesForTtsUrl(ttsUrl: string): Promise<string[]> {
+  try {
+    const url = new URL(ttsUrl)
+    url.pathname = '/api/voices'
+    const res = await fetch(url.toString(), { method: 'GET' })
+    if (!res.ok) return []
+    const js = await res.json().catch(() => null)
+    if (!js || !Array.isArray(js.voices)) return []
+    return js.voices
+  } catch {
+    return []
+  }
+}
+
 const DEFAULTS: Settings = { rate: 1.0 }
 
 const DEFAULT_TTS_URL = 'http://localhost:5002/api/tts/play'
@@ -56,16 +71,9 @@ export default function Options() {
     let mounted = true
     async function fetchVoices() {
       try {
-        // Construct voices endpoint from configured ttsUrl
-        const url = new URL(ttsUrl)
-        // ensure we point at /api/voices
-        url.pathname = '/api/voices'
-        const res = await fetch(url.toString(), { method: 'GET' })
-        if (!res.ok) return
-        const js = await res.json().catch(() => null)
-        if (!js || !Array.isArray(js.voices)) return
+        const voices = await fetchVoicesForTtsUrl(ttsUrl)
         if (!mounted) return
-        setVoicesList(js.voices.map((v: string) => ({ name: v, label: v })))
+        setVoicesList(voices.map((v: string) => ({ name: v, label: v })))
       } catch (err) {
         // ignore; leave voicesList empty
       }
