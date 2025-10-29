@@ -225,7 +225,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
             const resp = await fetch(s.ttsUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text }),
+              body: JSON.stringify({ text, voice: s.voice }),
             })
             if (!resp.ok) {
               sendResponse({ ok: false, error: `tts service returned ${resp.status}` })
