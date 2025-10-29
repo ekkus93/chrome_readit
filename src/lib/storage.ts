@@ -8,7 +8,7 @@ export type Settings = {
 // Default TTS service URL — points at the local Coqui docker server included
 // in this repository (docker/coqui-local). This makes the service the
 // default target; users can still change or clear it in Options.
-const DEFAULTS: Settings = { rate: 1.0, ttsUrl: 'http://localhost:5002/api/tts' }
+const DEFAULTS: Settings = { rate: 1.0, ttsUrl: 'http://localhost:5002/api/tts/play' }
 
 export async function getSettings(): Promise<Settings> {
   const s = await chrome.storage.sync.get(['settings'])

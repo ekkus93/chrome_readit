@@ -8,6 +8,28 @@ services:
     # Expose internal port for nginx to talk to
     ports:
       - "8000:8000"
+    environment:
+      # Point paplay inside the container to the host Pulse socket
+      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
+      - PYTHONUNBUFFERED=1
+      # Ensure model cache and pip cache are writable when running as a
+      # non-root UID (we run the container as the host UID). Set HOME and
+      # XDG_CACHE_HOME to writable paths to avoid permission errors when the
+      # TTS library downloads models at startup.
+      - HOME=/tmp
+      - XDG_CACHE_HOME=/tmp/.cache
+    volumes:
+      # Mount the host Pulse socket so paplay can connect to the user's session
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:ro
+      # Machine-id helps Pulse locate the correct session on some distros
+      - /etc/machine-id:/etc/machine-id:ro
+      # Optional: mount the pulse cookie if needed for auth (uncomment if necessary)
+      # - ${HOME}/.config/pulse/cookie:/root/.config/pulse/cookie:ro
+    devices:
+      # Optional ALSA fallback (less recommended)
+      - /dev/snd:/dev/snd
+    # Run container as the current user to avoid permission issues with the socket
+    user: "${UID:-1000}:${GID:-1000}"
 
   nginx-proxy:
     image: nginx:stable

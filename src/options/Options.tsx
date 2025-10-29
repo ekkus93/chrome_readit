@@ -8,7 +8,7 @@ type Settings = {
 
 const DEFAULTS: Settings = { rate: 1.0 }
 
-const DEFAULT_TTS_URL = 'http://localhost:5002/api/tts'
+const DEFAULT_TTS_URL = 'http://localhost:5002/api/tts/play'
 
 async function getSettings(): Promise<Settings> {
   const s = await chrome.storage.sync.get(['settings'])
@@ -21,22 +21,17 @@ async function saveSettings(patch: Partial<Settings>) {
 }
 
 export default function Options() {
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   const [voice, setVoice] = useState<string | ''>('')
   const [rate, setRate] = useState<number>(1)
   const [loaded, setLoaded] = useState<boolean>(false)
   const [testText, setTestText] = useState<string>('Hello — this is a quick test of Read It.')
-  const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'ok' | 'fallback' | 'error'>('idle')
+  const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
   const [testError, setTestError] = useState<string | null>(null)
   const [ttsUrl, setTtsUrl] = useState<string>(DEFAULT_TTS_URL)
+  
 
-  useEffect(() => {
-    const load = () => setVoices(window.speechSynthesis.getVoices())
-    load()
-    const onvc = () => load()
-    window.speechSynthesis.addEventListener('voiceschanged', onvc)
-    return () => window.speechSynthesis.removeEventListener('voiceschanged', onvc)
-  }, [])
+  // NOTE: we no longer use the browser SpeechSynthesis fallback. Keep
+  // voice selection as a stored preference only.
 
   useEffect(() => {
     getSettings().then(s => {
@@ -51,25 +46,29 @@ export default function Options() {
   useEffect(() => { if (!loaded) return; saveSettings({ voice: voice || undefined }) }, [voice, loaded])
   useEffect(() => { if (!loaded) return; saveSettings({ ttsUrl: ttsUrl || undefined }) }, [ttsUrl, loaded])
 
-  const sysOption = useMemo(() => [{ name: '', label: 'System default' }], [])
-  const voiceOptions = sysOption.concat(voices.map(v => ({ name: v.name, label: `${v.name}${v.lang ? ` (${v.lang})` : ''}` })))
+  const voiceOptions = useMemo(() => [{ name: '', label: 'System default' }], [])
 
-  async function trySpeakLocally(text: string) {
+  // Browser speechSynthesis fallback removed — extension now requires the
+  // configured server to perform playback. Errors are surfaced to the user.
+
+  function isProbablyAudio(buf: ArrayBuffer | Uint8Array, mime?: string) {
     try {
-      const utter = new SpeechSynthesisUtterance(text)
-      utter.rate = rate ?? 1
-      if (voice) {
-        const v = window.speechSynthesis.getVoices().find(x => x.name === voice)
-        if (v) utter.voice = v
+      if (mime && mime.startsWith('audio/')) return true
+      const view = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf
+      if (view.length >= 4) {
+        // WAV -> "RIFF"
+        if (view[0] === 0x52 && view[1] === 0x49 && view[2] === 0x46 && view[3] === 0x46) return true
+        // Ogg -> "OggS"
+        if (view[0] === 0x4F && view[1] === 0x67 && view[2] === 0x67 && view[3] === 0x53) return true
+        // FLAC -> "fLaC"
+        if (view[0] === 0x66 && view[1] === 0x4C && view[2] === 0x61 && view[3] === 0x43) return true
+        // ID3 (MP3 tag) -> "ID3"
+        if (view[0] === 0x49 && view[1] === 0x44 && view[2] === 0x33) return true
       }
-      window.speechSynthesis.cancel()
-      window.speechSynthesis.speak(utter)
-      setTestStatus('fallback')
-      setTestError(null)
-    } catch (err) {
-      setTestStatus('error')
-      setTestError(String(err))
+    } catch {
+      // ignore
     }
+    return false
   }
 
   function handleTestSpeech() {
@@ -82,27 +81,65 @@ export default function Options() {
       if (chrome.runtime.lastError) {
         const errMsg = chrome.runtime.lastError?.message ?? 'unknown runtime error'
         console.warn('[readit] request-tts sendMessage failed', errMsg)
-        const voicesNow = window.speechSynthesis.getVoices()
-        if (voicesNow && voicesNow.length > 0) {
-          trySpeakLocally(text)
-          setTestStatus('fallback')
-          setTestError(errMsg)
-          return
-        }
         setTestStatus('error')
         setTestError(errMsg)
         return
       }
       if (!resp) { setTestStatus('error'); setTestError('no response from background'); return }
-      if (resp.ok && resp.audio) {
+  if (resp.ok && resp.audio) {
         try {
           const buf = resp.audio as ArrayBuffer
           const mime = resp.mime || 'audio/wav'
+
+          // Check that the returned buffer actually looks like audio. Some
+          // endpoints (e.g. the server-side play-only path) may return JSON
+          // or other non-audio payloads; attempting to play those causes
+          // NotSupportedError. Use a lightweight signature check before
+          // creating the Blob.
+          // Peek a small prefix for debugging (hex) so we can see what the
+          // server actually returned when diagnosing NotSupportedError.
+          let prefixHex = ''
+          try {
+            const v = new Uint8Array(buf)
+            const len = Math.min(16, v.length)
+            const parts: string[] = []
+            for (let i = 0; i < len; i++) parts.push(v[i].toString(16).padStart(2, '0'))
+            prefixHex = parts.join(' ')
+          } catch {
+            prefixHex = '<unavailable>'
+          }
+
+          // If the buffer is empty, avoid attempting to play it and report
+          // a clear error — empty payloads commonly cause NotSupportedError.
+          try {
+            const v = new Uint8Array(buf)
+            if (v.length === 0) {
+              console.warn('[readit] options: returned audio buffer is empty', { mime, prefixHex })
+              setTestStatus('error')
+              setTestError(`TTS service returned an empty payload (${mime})`)
+              return
+            }
+          } catch {
+            // ignore
+          }
+
+          if (!isProbablyAudio(buf, mime)) {
+            console.warn('[readit] options: returned payload does not appear to be audio', { mime, prefixHex })
+            setTestStatus('error')
+            setTestError(`TTS service returned non-audio payload (${mime})`)
+            return
+          }
+
           const blob = new Blob([buf], { type: mime })
           const url = URL.createObjectURL(blob)
           const a = new Audio(url)
           a.autoplay = true
-          a.play().catch((e) => { console.warn('[readit] options player failed to play', e); setTestStatus('error'); setTestError(String(e)) })
+          a.play().catch((e) => {
+            // Log the full DOMException/object for debugging (not just String)
+            console.warn('[readit] options player failed to play', { mime, prefixHex, error: e })
+            setTestStatus('error')
+            setTestError(String(e))
+          })
           a.onended = () => setTestStatus('ok')
           setTimeout(() => URL.revokeObjectURL(url), 60_000)
           setTestStatus('sending')
@@ -115,8 +152,31 @@ export default function Options() {
           return
         }
       }
-      if (!resp.ok) { const voicesNow = window.speechSynthesis.getVoices(); if (voicesNow && voicesNow.length > 0) { trySpeakLocally(text); setTestStatus('fallback'); setTestError(resp.error ?? 'background tts failed'); return } setTestStatus('error'); setTestError(resp.error ?? 'background tts failed'); return }
+      if (!resp.ok) { setTestStatus('error'); setTestError(resp.error ?? 'background tts failed'); return }
     })
+  }
+
+  const [serverHealth, setServerHealth] = useState<'unknown' | 'ok' | 'error'>('unknown')
+  const [serverTesting, setServerTesting] = useState(false)
+  const [serverTestError, setServerTestError] = useState<string | null>(null)
+
+  async function testServer() {
+    setServerTesting(true)
+    setServerTestError(null)
+    try {
+      const res = await fetch(ttsUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'health-check' }) })
+      if (!res.ok) {
+        setServerHealth('error')
+        setServerTestError(`HTTP ${res.status} ${res.statusText}`)
+      } else {
+        setServerHealth('ok')
+      }
+    } catch (err) {
+      setServerHealth('error')
+      setServerTestError(String(err))
+    } finally {
+      setServerTesting(false)
+    }
   }
 
   return (
@@ -135,6 +195,15 @@ export default function Options() {
           <input id="ttsUrl" type="text" value={ttsUrl} onChange={e => setTtsUrl(e.target.value)} style={{ width: 440, padding: 8 }} placeholder={DEFAULT_TTS_URL} />
           <button onClick={() => setTtsUrl(DEFAULT_TTS_URL)} style={{ padding: '8px 10px' }}>Use local default</button>
         </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+          <div style={{ marginLeft: 8 }}>
+            <button onClick={testServer} disabled={serverTesting} style={{ padding: '6px 10px' }}>{serverTesting ? 'Testing…' : 'Test server'}</button>
+          </div>
+          <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 12, height: 12, borderRadius: 12, background: serverHealth === 'ok' ? '#00c853' : serverHealth === 'error' ? '#d50000' : '#bdbdbd' }} />
+            <div style={{ color: serverHealth === 'ok' ? '#006400' : serverHealth === 'error' ? '#8b0000' : 'GrayText' }}>{serverHealth === 'ok' ? 'Server reachable' : serverHealth === 'error' ? `Server error${serverTestError ? `: ${serverTestError}` : ''}` : 'Server status unknown'}</div>
+          </div>
+        </div>
         <div style={{ color: 'GrayText', marginTop: 6 }}>If set, Read It will POST text to this URL and play returned audio. The default points to a local Coqui helper ({DEFAULT_TTS_URL}).</div>
       </section>
       <section>
@@ -147,7 +216,7 @@ export default function Options() {
         <textarea id="test" rows={3} value={testText} onChange={e => setTestText(e.target.value)} style={{ width: 520, padding: 8 }} />
         <div style={{ marginTop: 8 }}>
           <button onClick={handleTestSpeech} style={{ padding: '8px 12px' }}>Test speech</button>
-          <span style={{ marginLeft: 12 }}>{testStatus === 'sending' && 'Sending…'}{testStatus === 'ok' && <span style={{ color: '#006400' }}> Spoken via local helper</span>}{testStatus === 'fallback' && <span style={{ color: '#006400' }}> Spoken via browser TTS</span>}{testStatus === 'error' && <span style={{ color: '#8b0000' }}> Error: {testError}</span>}</span>
+          <span style={{ marginLeft: 12 }}>{testStatus === 'sending' && 'Sending…'}{testStatus === 'ok' && <span style={{ color: '#006400' }}> Spoken via local helper</span>}{testStatus === 'error' && <span style={{ color: '#8b0000' }}> Error: {testError}</span>}</span>
         </div>
       </section>
     </main>

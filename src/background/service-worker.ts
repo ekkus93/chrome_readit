@@ -17,34 +17,7 @@ async function getActiveHttpTab() {
 // Wait for the player window to announce readiness. The player page
 // sends { action: 'player_ready' } when its script runs. Resolve when
 // that message arrives or when the timeout elapses.
-function waitForPlayerReady(timeout = 2000): Promise<void> {
-  return new Promise((resolve) => {
-    let resolved = false
-    const onMessage = (msg: any) => {
-      try {
-        if (msg && msg.action === 'player_ready') {
-          resolved = true
-          chrome.runtime.onMessage.removeListener(onMessage)
-          resolve()
-        }
-      } catch {
-        // ignore
-      }
-    }
-    chrome.runtime.onMessage.addListener(onMessage)
-    // fallback timeout
-    setTimeout(() => {
-      if (!resolved) {
-        try {
-          chrome.runtime.onMessage.removeListener(onMessage)
-        } catch {
-          /* ignore */
-        }
-        resolve()
-      }
-    }, timeout)
-  })
-}
+
 
 export async function sendToActiveTabOrInject(msg: Msg) {
   // For reliability and to avoid injecting audio into arbitrary web pages,
@@ -99,6 +72,34 @@ export async function sendToActiveTabOrInject(msg: Msg) {
       return
     }
 
+    // If this is a play-only endpoint (server-side playback), POST and
+    // don't attempt to read or forward audio bytes — the server will
+    // play audio on the host. This avoids unnecessary transfers and keeps
+    // the behavior consistent when users configure `/api/tts/play`.
+    if (s.ttsUrl?.toString().endsWith('/play')) {
+      try {
+        const respPlay = await fetch(s.ttsUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: textArg }),
+        })
+        if (!respPlay.ok) {
+          console.warn('[readit] play-only tts service returned non-ok', respPlay.status)
+        } else {
+          // Optionally parse JSON status for debugging
+          try {
+            const js = await respPlay.json().catch(() => null)
+            console.debug('[readit] play-only endpoint responded', js)
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch (err) {
+        console.warn('[readit] failed to call play-only tts endpoint', err)
+      }
+      return
+    }
+
     // Fetch TTS from configured service in the background (avoids page CORS)
     let resp: Response
     try {
@@ -118,17 +119,17 @@ export async function sendToActiveTabOrInject(msg: Msg) {
     const contentType = resp.headers.get('content-type') || 'audio/wav'
     const buf = await resp.arrayBuffer()
 
-    // Open (or focus) the extension player window and send audio there.
-      try {
-        const url = chrome.runtime.getURL('src/player/player.html')
-        await chrome.windows.create({ url, type: 'popup', width: 300, height: 80, focused: true })
-        // Wait for the player script to register its runtime.onMessage
-        // listener. The player sends { action: 'player_ready' } when ready.
-        await waitForPlayerReady(2000)
+    // Send audio to the active page's content script so audio plays in-page.
+    // This removes the legacy extension popup player window and avoids
+    // creating small browser windows when doing TTS.
+    try {
+      const tab = await getActiveHttpTab()
+      if (tab && tab.id) {
         try {
-          await chrome.runtime.sendMessage({ action: 'play-audio', audio: buf, mime: contentType })
+          await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: buf, mime: contentType })
+          console.debug('[readit] forwarded audio to content script')
         } catch (e) {
-          // If structured clone for ArrayBuffer fails, encode as base64 and send
+          // If structured clone for ArrayBuffer fails, fall back to base64
           try {
             const bytes = new Uint8Array(buf)
             let binary = ''
@@ -138,14 +139,20 @@ export async function sendToActiveTabOrInject(msg: Msg) {
               binary += String.fromCharCode.apply(null, Array.from(sub))
             }
             const b64 = btoa(binary)
-            await chrome.runtime.sendMessage({ action: 'play-audio', audio: b64, mime: contentType })
+            await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: b64, mime: contentType })
+            console.debug('[readit] forwarded base64 audio to content script')
           } catch (e2) {
-            console.warn('[readit] failed to send audio to player window', e2)
+            console.warn('[readit] failed to send audio to content script', e2)
           }
         }
-      } catch (e3) {
-        console.warn('[readit] failed to open player window', e3)
+      } else {
+        // No eligible tab to receive audio; log and skip playing rather
+        // than opening a popup window.
+        console.warn('[readit] no eligible tab to play audio in; skipping playback')
       }
+    } catch (e3) {
+      console.warn('[readit] failed to forward audio to content script', e3)
+    }
   } catch (err) {
     console.warn('[readit] sendToActiveTabOrInject failed', err)
   }
@@ -211,6 +218,27 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           return
         }
         try {
+          // If the configured URL is a play-only endpoint (server-side playback),
+          // POST and treat the response as JSON status instead of audio. This
+          // avoids attempting to play non-audio responses in the extension UI.
+          if (s.ttsUrl?.toString().endsWith('/play')) {
+            const resp = await fetch(s.ttsUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text }),
+            })
+            if (!resp.ok) {
+              sendResponse({ ok: false, error: `tts service returned ${resp.status}` })
+              return
+            }
+            // Try to parse JSON status; return played flag so callers can
+            // present friendly UI.
+            let js: any = null
+            try { js = await resp.json() } catch { js = null }
+            sendResponse({ ok: true, played: js?.played === true, info: js })
+            return
+          }
+
           const resp = await fetch(s.ttsUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -242,6 +270,29 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           return
         }
         try {
+          // If the configured URL is a play-only endpoint, call it and
+          // surface the JSON status to the caller; also attempt to forward
+          // playback to the content script when the endpoint returned
+          // audio (non-play-only).
+          if (s.ttsUrl?.toString().endsWith('/play')) {
+            const resp = await fetch(s.ttsUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text }),
+            })
+            if (!resp.ok) {
+              sendResponse({ ok: false, error: `tts service returned ${resp.status}` })
+              return
+            }
+            let js: any = null
+            try { js = await resp.json() } catch { js = null }
+            // Forward a simple OK response; content script playback is not
+            // applicable for play-only endpoints since audio is played on
+            // the server.
+            sendResponse({ ok: true, played: js?.played === true, info: js })
+            return
+          }
+
           const resp = await fetch(s.ttsUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

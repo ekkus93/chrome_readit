@@ -20,6 +20,14 @@ async function speak(text: string) {
           console.warn('[readit] speak: no audio in response')
           return
         }
+        // If server returned a non-audio MIME (for example the play-only
+        // endpoint returns JSON), avoid trying to play it. Fall back to
+        // browser TTS when possible.
+        if (!mime.startsWith('audio/')) {
+          console.warn('[readit] speak: received non-audio response from TTS service', mime)
+          // No automatic browser fallback — server-only playback is required.
+          return
+        }
         // audio may be an ArrayBuffer (structured clone) or a base64 string
         if (typeof audio === 'string') {
           try {
@@ -27,12 +35,19 @@ async function speak(text: string) {
             const len = bin.length
             const u8 = new Uint8Array(len)
             for (let i = 0; i < len; i++) u8[i] = bin.charCodeAt(i)
+            if (u8.length === 0) {
+              console.warn('[readit] speak: decoded audio buffer is empty', { mime })
+              // No automatic fallback; surface the issue via console.
+              return
+            }
             const blob = new Blob([u8], { type: mime })
             const url = URL.createObjectURL(blob)
             const a = new Audio(url)
             a.autoplay = true
-            const p = a.play()
-            if (p && p.catch) p.catch((e) => console.warn('[readit] audio play failed', e))
+            a.play().catch((e) => {
+              const hex = (() => { try { const v = u8.subarray(0,16); return Array.from(v).map(x=>x.toString(16).padStart(2,'0')).join(' ') } catch { return '<n/a>' } })()
+              console.warn('[readit] audio play failed', { mime, prefixHex: hex, error: e })
+            })
             setTimeout(() => URL.revokeObjectURL(url), 60_000)
           } catch (err) {
             console.warn('[readit] speak: failed to decode base64 audio', err)
@@ -40,12 +55,20 @@ async function speak(text: string) {
         } else {
           try {
             const buf = audio as ArrayBuffer
+            const u8 = new Uint8Array(buf)
+            if (u8.length === 0) {
+              console.warn('[readit] speak: fetched audio buffer is empty', { mime })
+              // No automatic fallback; surface the issue via console.
+              return
+            }
             const blob = new Blob([buf], { type: mime })
             const url = URL.createObjectURL(blob)
             const a = new Audio(url)
             a.autoplay = true
-            const p = a.play()
-            if (p && p.catch) p.catch((e) => console.warn('[readit] audio play failed', e))
+            a.play().catch((e) => {
+              const hex = (() => { try { const v = u8.subarray(0,16); return Array.from(v).map(x=>x.toString(16).padStart(2,'0')).join(' ') } catch { return '<n/a>' } })()
+              console.warn('[readit] audio play failed', { mime, prefixHex: hex, error: e })
+            })
             setTimeout(() => URL.revokeObjectURL(url), 60_000)
           } catch (err) {
             console.warn('[readit] speak: failed to play audio buffer', err)
@@ -120,4 +143,5 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender) => {
   // no async response
   return false
 })
+
 

@@ -9,6 +9,8 @@ RUN apt-get update \
     libsndfile1 \
     git \
     curl \
+    pulseaudio-utils \
+    alsa-utils \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
