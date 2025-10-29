@@ -28,6 +28,9 @@ export default function Options() {
   const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
   const [testError, setTestError] = useState<string | null>(null)
   const [ttsUrl, setTtsUrl] = useState<string>(DEFAULT_TTS_URL)
+  const [voicesList, setVoicesList] = useState<Array<{ name: string; label: string }>>([])
+  const [serverPlaying, setServerPlaying] = useState<boolean>(false)
+  const [checkingPlaying, setCheckingPlaying] = useState(false)
   
 
   // NOTE: we no longer use the browser SpeechSynthesis fallback. Keep
@@ -46,7 +49,74 @@ export default function Options() {
   useEffect(() => { if (!loaded) return; saveSettings({ voice: voice || undefined }) }, [voice, loaded])
   useEffect(() => { if (!loaded) return; saveSettings({ ttsUrl: ttsUrl || undefined }) }, [ttsUrl, loaded])
 
-  const voiceOptions = useMemo(() => [{ name: '', label: 'System default' }], [])
+  const voiceOptions = useMemo(() => [{ name: '', label: 'System default' }, ...voicesList], [voicesList])
+
+  useEffect(() => {
+    if (!ttsUrl) return
+    let mounted = true
+    async function fetchVoices() {
+      try {
+        // Construct voices endpoint from configured ttsUrl
+        const url = new URL(ttsUrl)
+        // ensure we point at /api/voices
+        url.pathname = '/api/voices'
+        const res = await fetch(url.toString(), { method: 'GET' })
+        if (!res.ok) return
+        const js = await res.json().catch(() => null)
+        if (!js || !Array.isArray(js.voices)) return
+        if (!mounted) return
+        setVoicesList(js.voices.map((v: string) => ({ name: v, label: v })))
+      } catch (err) {
+        // ignore; leave voicesList empty
+      }
+    }
+    fetchVoices()
+    return () => { mounted = false }
+  }, [ttsUrl])
+
+  useEffect(() => {
+    let poll: number | undefined
+    async function checkPlaying() {
+      if (!ttsUrl) return
+      setCheckingPlaying(true)
+      try {
+        const url = new URL(ttsUrl)
+        url.pathname = '/api/playing'
+        const res = await fetch(url.toString())
+        if (!res.ok) {
+          setServerPlaying(false)
+        } else {
+          const js = await res.json().catch(() => null)
+          setServerPlaying(Boolean(js?.playing))
+        }
+      } catch {
+        setServerPlaying(false)
+      } finally {
+        setCheckingPlaying(false)
+      }
+    }
+    // poll while serverPlaying is true (to detect end) and otherwise do a single check
+    checkPlaying()
+    poll = window.setInterval(checkPlaying, 2500)
+    return () => { if (poll) clearInterval(poll) }
+  }, [ttsUrl])
+
+  async function cancelPlayback() {
+    if (!ttsUrl) return
+    try {
+      const url = new URL(ttsUrl)
+      url.pathname = '/api/tts/cancel'
+      const res = await fetch(url.toString(), { method: 'POST' })
+      if (!res.ok) {
+        // ignore for now
+      } else {
+        const js = await res.json().catch(() => null)
+        if (js && js.canceled) setServerPlaying(false)
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   // Browser speechSynthesis fallback removed — extension now requires the
   // configured server to perform playback. Errors are surfaced to the user.
@@ -202,6 +272,11 @@ export default function Options() {
           <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ width: 12, height: 12, borderRadius: 12, background: serverHealth === 'ok' ? '#00c853' : serverHealth === 'error' ? '#d50000' : '#bdbdbd' }} />
             <div style={{ color: serverHealth === 'ok' ? '#006400' : serverHealth === 'error' ? '#8b0000' : 'GrayText' }}>{serverHealth === 'ok' ? 'Server reachable' : serverHealth === 'error' ? `Server error${serverTestError ? `: ${serverTestError}` : ''}` : 'Server status unknown'}</div>
+          </div>
+          <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 12, height: 12, borderRadius: 12, background: serverPlaying ? '#00c853' : '#bdbdbd' }} />
+            <div style={{ color: serverPlaying ? '#006400' : 'GrayText' }}>{serverPlaying ? 'Server speaking' : 'Server idle'}</div>
+            <button onClick={cancelPlayback} disabled={!serverPlaying || checkingPlaying} style={{ padding: '6px 10px' }}>Cancel playback</button>
           </div>
         </div>
         <div style={{ color: 'GrayText', marginTop: 6 }}>If set, Read It will POST text to this URL and play returned audio. The default points to a local Coqui helper ({DEFAULT_TTS_URL}).</div>

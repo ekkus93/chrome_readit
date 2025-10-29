@@ -81,7 +81,7 @@ export async function sendToActiveTabOrInject(msg: Msg) {
         const respPlay = await fetch(s.ttsUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: textArg }),
+          body: JSON.stringify({ text: textArg, voice: s.voice }),
         })
         if (!respPlay.ok) {
           console.warn('[readit] play-only tts service returned non-ok', respPlay.status)
@@ -242,7 +242,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           const resp = await fetch(s.ttsUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
+            body: JSON.stringify({ text, voice: s.voice }),
           })
           if (!resp.ok) {
             sendResponse({ ok: false, error: `tts service returned ${resp.status}` })
@@ -278,7 +278,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
             const resp = await fetch(s.ttsUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text }),
+              body: JSON.stringify({ text, voice: s.voice }),
             })
             if (!resp.ok) {
               sendResponse({ ok: false, error: `tts service returned ${resp.status}` })
@@ -296,7 +296,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           const resp = await fetch(s.ttsUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
+            body: JSON.stringify({ text, voice: s.voice }),
           })
           if (!resp.ok) {
             sendResponse({ ok: false, error: `tts service returned ${resp.status}` })
