@@ -117,6 +117,17 @@ export default function Popup() {
   const selectStyle = { width: '100%', padding: 8 } as const
   const sliderStyle = { width: '100%' } as const
 
+  // Control handlers for pause/resume/cancel reading
+  async function handlePause() {
+    try { chrome.runtime.sendMessage({ action: 'pause-speech' }, () => {}) } catch (e) { console.warn('readit: pause failed', e) }
+  }
+  async function handleResume() {
+    try { chrome.runtime.sendMessage({ action: 'resume-speech' }, () => {}) } catch (e) { console.warn('readit: resume failed', e) }
+  }
+  async function handleCancel() {
+    try { chrome.runtime.sendMessage({ action: 'cancel-speech' }, () => {}) } catch (e) { console.warn('readit: cancel failed', e) }
+  }
+
   return (
     <div
       role="application"
@@ -171,6 +182,15 @@ export default function Popup() {
         </div>
         {tryStatus === 'ok' && <div style={{ color: '#006400', marginTop: 8 }}>Requested speech on the active tab.</div>}
         {tryStatus === 'error' && <div style={{ color: '#8b0000', marginTop: 8 }}>Failed to request speech. See background console.</div>}
+      </section>
+
+      <section style={{ marginTop: 12 }}>
+        <label style={labelStyle}>Playback controls</label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={handlePause} style={{ padding: '8px 10px', flex: 1 }}>Pause</button>
+          <button onClick={handleResume} style={{ padding: '8px 10px', flex: 1 }}>Resume</button>
+          <button onClick={handleCancel} style={{ padding: '8px 10px', flex: 1 }}>Cancel</button>
+        </div>
       </section>
 
       <p style={{ fontSize: '.85rem', marginTop: 12 }}>

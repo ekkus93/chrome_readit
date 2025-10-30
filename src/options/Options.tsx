@@ -127,6 +127,18 @@ export default function Options() {
     }
   }
 
+  // UI controls to pause/resume/cancel in-page playback (sends messages
+  // to the background which will notify the active tab/content script).
+  async function handlePause() {
+    try { chrome.runtime.sendMessage({ action: 'pause-speech' }, () => {}) } catch (e) { console.warn('readit: pause failed', e) }
+  }
+  async function handleResume() {
+    try { chrome.runtime.sendMessage({ action: 'resume-speech' }, () => {}) } catch (e) { console.warn('readit: resume failed', e) }
+  }
+  async function handleCancel() {
+    try { chrome.runtime.sendMessage({ action: 'cancel-speech' }, () => {}) } catch (e) { console.warn('readit: cancel failed', e) }
+  }
+
   // Browser speechSynthesis fallback removed — extension now requires the
   // configured server to perform playback. Errors are surfaced to the user.
 
@@ -312,6 +324,11 @@ export default function Options() {
             <div style={{ width: 12, height: 12, borderRadius: 12, background: serverPlaying ? '#00c853' : '#bdbdbd' }} />
             <div style={{ color: serverPlaying ? '#006400' : 'GrayText' }}>{serverPlaying ? 'Server speaking' : 'Server idle'}</div>
             <button onClick={cancelPlayback} disabled={!serverPlaying || checkingPlaying} style={{ padding: '6px 10px' }}>Cancel playback</button>
+            <div style={{ display: 'flex', gap: 8, marginLeft: 12 }}>
+              <button onClick={handlePause} style={{ padding: '6px 10px' }}>Pause</button>
+              <button onClick={handleResume} style={{ padding: '6px 10px' }}>Resume</button>
+              <button onClick={handleCancel} style={{ padding: '6px 10px' }}>Stop</button>
+            </div>
           </div>
         </div>
         <div style={{ color: 'GrayText', marginTop: 6 }}>If set, Read It will POST text to this URL and play returned audio. The default points to a local Coqui helper ({DEFAULT_TTS_URL}).</div>
