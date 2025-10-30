@@ -1,0 +1,153 @@
+import type { Msg } from '../lib/messaging'
+import { getSettings } from '../lib/storage'
+
+// Single, minimal background service worker (no duplicates)
+
+const MAX_CHUNK_CHARS = 1200
+const CHUNK_TIMEOUT_MS = 12_000
+
+let cancelRequested = false
+let paused = false
+let currentChunks: string[] | null = null
+let currentIndex = 0
+
+function resetState() {
+  currentChunks = null
+  currentIndex = 0
+  cancelRequested = false
+  paused = false
+}
+
+function splitTextIntoChunks(text: string, maxLen = MAX_CHUNK_CHARS): string[] {
+  const out: string[] = []
+  let remaining = text.trim()
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLen) { out.push(remaining); break }
+    const slice = remaining.slice(0, maxLen)
+    const boundary = Math.max(slice.lastIndexOf('.'), slice.lastIndexOf('!'), slice.lastIndexOf('?'), slice.lastIndexOf('\n'), slice.lastIndexOf(';'))
+    let cut = boundary
+    if (cut <= 0) {
+      const ws = slice.lastIndexOf(' ')
+      cut = ws > 0 ? ws : maxLen
+    }
+    const part = remaining.slice(0, cut).trim()
+    if (part) out.push(part)
+    remaining = remaining.slice(cut).trim()
+  }
+  return out
+}
+
+function arrayBufferToBase64(buf: ArrayBuffer) {
+  const bytes = new Uint8Array(buf)
+  const CHUNK = 0x8000
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    const sub = bytes.subarray(i, i + CHUNK)
+    binary += String.fromCharCode.apply(null, Array.from(sub))
+  }
+  return btoa(binary)
+}
+
+async function fetchTtsAudio(text: string, voice?: string) {
+  const s = await getSettings()
+  if (!s.ttsUrl) return null
+  try {
+    const resp = await fetch(s.ttsUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: voice ?? s.voice }) })
+    if (!resp.ok) return null
+    const mime = resp.headers.get('content-type') || 'audio/wav'
+    const buf = await resp.arrayBuffer()
+    return { b64: arrayBufferToBase64(buf), mime }
+  } catch (err) {
+    console.warn('[readit] fetchTtsAudio failed', err)
+    return null
+  }
+}
+
+async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[], voice?: string) {
+  cancelRequested = false
+  paused = false
+  currentChunks = chunks
+  currentIndex = 0
+  for (let i = 0; i < chunks.length; i++) {
+    currentIndex = i
+    if (cancelRequested) { try { if (tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch {} ; resetState(); return }
+    while (paused && !cancelRequested) await new Promise((r) => setTimeout(r, 200))
+    if (cancelRequested) { try { if (tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch {} ; resetState(); return }
+
+    const fetched = await fetchTtsAudio(chunks[i], voice)
+    if (!fetched) { console.warn('[readit] failed to fetch chunk', i); resetState(); return }
+
+    try {
+      const sendPromise = (async () => { if (!tab.id) return null; return await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: fetched.b64, mime: fetched.mime }) })()
+      const timeout = new Promise((res) => setTimeout(() => res({ timeout: true }), CHUNK_TIMEOUT_MS))
+      const res = await Promise.race([sendPromise, timeout])
+      if (res && (res as any).timeout) console.warn('[readit] chunk ack timeout; proceeding')
+    } catch (err) { console.warn('[readit] send chunk failed', err); resetState(); return }
+  }
+  resetState()
+}
+
+export async function sendToActiveTabOrInject(msg: Msg) {
+  try {
+    const s = await getSettings()
+    let text: string | null = null
+    if (msg.kind === 'READ_TEXT') text = msg.text
+    else {
+      const tab = await getActiveHttpTab()
+      if (!tab) return
+      try {
+        const r = await chrome.scripting.executeScript({ target: { tabId: tab.id! }, world: 'MAIN', func: () => window.getSelection?.()?.toString().trim() ?? '' })
+        if (Array.isArray(r) && r.length > 0) text = (r[0] as any).result
+        else if (r && typeof r === 'object' && 'result' in (r as any)) text = (r as any).result
+      } catch (err) { console.warn('[readit] executeScript failed', err); return }
+    }
+    if (!text || !s.ttsUrl) return
+    if (s.ttsUrl?.toString().endsWith('/play')) { try { await fetch(s.ttsUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: s.voice }) }) } catch (e) { console.warn('[readit] play-only POST failed', e) } ; return }
+
+    const tab = await getActiveHttpTab()
+    if (tab && tab.id && text.length > MAX_CHUNK_CHARS) { const chunks = splitTextIntoChunks(text, MAX_CHUNK_CHARS); await processChunksSequentially(tab, chunks, s.voice); return }
+
+    const fetched = await fetchTtsAudio(text, s.voice)
+    if (!fetched) return
+    try { if (tab && tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: fetched.b64, mime: fetched.mime }) } catch (err) { console.warn('[readit] forward audio failed', err) }
+  } catch (err) { console.warn('[readit] sendToActiveTabOrInject failed', err) }
+}
+
+async function getActiveHttpTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+  if (!tab?.id || !tab.url) return null
+  if (!/^https?:|^file:/.test(tab.url)) return null
+  return tab
+}
+
+// keyboard shortcut
+chrome.commands.onCommand.addListener(async (command: string) => { if (command === 'read-selection') await sendToActiveTabOrInject({ kind: 'READ_SELECTION' }) })
+
+// route Msg-like messages
+chrome.runtime.onMessage.addListener((msg: unknown) => {
+  ;(async () => {
+    try { const m = msg as any; if (m?.kind && typeof m.kind === 'string') await sendToActiveTabOrInject(m as Msg) } catch (err) { console.warn('[readit] runtime message handler failed', err) }
+  })()
+  return true
+})
+
+// popup/options message handler (status/actions)
+chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
+  ;(async () => {
+    try {
+      if (typeof msg !== 'object' || msg === null) return
+      const m = msg as Record<string, any>
+      const action = m.action as string | undefined
+      if (action === 'speech-status') { const total = currentChunks ? currentChunks.length : 0; const idx = currentChunks ? currentIndex : 0; const state = cancelRequested ? 'cancelled' : (currentChunks ? (paused ? 'paused' : 'playing') : 'idle'); sendResponse({ ok: true, state, current: idx + (state === 'idle' ? 0 : 1), total }); return }
+      if (action === 'cancel-speech') { cancelRequested = true; try { const tab = await getActiveHttpTab(); if (tab && tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch (e) { console.warn('[readit] cancel notify failed', e) } resetState(); sendResponse({ ok: true }); return }
+      if (action === 'pause-speech') { paused = true; try { const tab = await getActiveHttpTab(); if (tab && tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'PAUSE_SPEECH' }) } catch (e) { console.warn('[readit] pause notify failed', e) } sendResponse({ ok: true }); return }
+      if (action === 'resume-speech') { paused = false; try { const tab = await getActiveHttpTab(); if (tab && tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'RESUME_SPEECH' }) } catch (e) { console.warn('[readit] resume notify failed', e) } sendResponse({ ok: true }); return }
+      if (action === 'request-tts') { const text = String(m.text ?? ''); if (!text) { sendResponse({ ok: false, error: 'empty text' }); return } ; const s = await getSettings(); if (!s.ttsUrl) { sendResponse({ ok: false, error: 'no ttsUrl configured' }); return } ; try { const resp = await fetch(s.ttsUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: s.voice }) }); if (!resp.ok) { sendResponse({ ok: false, error: `tts returned ${resp.status}` }); return } ; const mime = resp.headers.get('content-type') || 'audio/wav'; const buf = await resp.arrayBuffer(); sendResponse({ ok: true, audio: arrayBufferToBase64(buf), mime }); return } catch (err) { sendResponse({ ok: false, error: String(err) }); return }
+    } catch (err) { console.warn('[readit] async action failed', err); try { sendResponse({ ok: false, error: String(err) }) } catch (_) {} }
+  })()
+  return true
+})
+
+// context menu
+chrome.runtime.onInstalled.addListener(() => { if (chrome.contextMenus) chrome.contextMenus.create({ id: 'read-selection', title: 'Read selection aloud', contexts: ['selection'] }) })
+if (chrome.contextMenus?.onClicked) chrome.contextMenus.onClicked.addListener(async (info) => { if (info.menuItemId === 'read-selection') await sendToActiveTabOrInject({ kind: 'READ_SELECTION' }) })

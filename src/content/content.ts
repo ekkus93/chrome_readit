@@ -2,6 +2,24 @@ import { isReadSelection, isReadText, isPlayAudio } from '../lib/messaging'
 
 console.debug('[readit] content script loaded')
 
+// Track the currently playing audio so we can stop it on demand.
+let currentAudio: HTMLAudioElement | null = null
+let currentAudioContextSource: { ctx: AudioContext; src: AudioBufferSourceNode } | null = null
+
+// Temporary diagnostics flag - enable while debugging playback/selection issues.
+// Set to false when not needed to avoid noisy logs.
+const DEBUG = true
+
+function prefixHexFromU8(u8: Uint8Array | null | undefined, len = 32) {
+  if (!u8) return '<empty>'
+  try {
+    const slice = u8.subarray(0, Math.min(len, u8.length))
+    return Array.from(slice).map((b) => b.toString(16).padStart(2, '0')).join(' ')
+  } catch (_) {
+    return '<err>'
+  }
+}
+
 // Ask the background/service worker to obtain TTS audio (avoids CORS)
 // and return the audio bytes which we then play in-page.
 async function speak(text: string) {
@@ -89,7 +107,7 @@ async function speak(text: string) {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg: unknown, sender) => {
+chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
   try {
     // Debug logging to help diagnose silent failures when the user triggers
     // the read-selection command or uses the popup. Check this log in the
@@ -104,47 +122,249 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender) => {
       const t = msg.text?.trim()
       if (t) speak(t)
     } else if (isPlayAudio(msg)) {
+      // Extra diagnostics when enabled
+      try {
+        if (DEBUG) {
+          if (typeof msg.audio === 'string') {
+            const bin = atob(msg.audio as string)
+            const u8 = new Uint8Array(bin.length)
+            for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i)
+            console.debug('[readit][DBG] PLAY_AUDIO received (base64)', { mime: msg.mime, audioLength: u8.length, prefixHex: prefixHexFromU8(u8) })
+          } else {
+            const buf = msg.audio as ArrayBuffer
+            const u8 = new Uint8Array(buf)
+            console.debug('[readit][DBG] PLAY_AUDIO received (arraybuffer)', { mime: msg.mime, audioLength: u8.byteLength, prefixHex: prefixHexFromU8(u8) })
+          }
+        }
+      } catch (dbgErr) {
+        console.debug('[readit][DBG] PLAY_AUDIO diagnostics failed', dbgErr)
+      }
       console.debug('[readit] content PLAY_AUDIO: received audio message', { mime: msg.mime, audioType: typeof msg.audio, audioLength: typeof msg.audio === 'string' ? msg.audio.length : (msg.audio as ArrayBuffer)?.byteLength })
       try {
         const mime = msg.mime ?? 'audio/wav'
-        if (typeof msg.audio === 'string') {
-          // base64 path
-          console.debug('[readit] content PLAY_AUDIO: decoding base64')
+        // Stop any previously playing audio (we'll replace it with the new chunk)
+        if (currentAudio) {
           try {
-            const bin = atob(msg.audio)
+            currentAudio.pause()
+            currentAudio.src = ''
+          } catch {}
+          currentAudio = null
+        }
+
+        // Helper that sets up playback and resolves sendResponse when audio ends
+        const playBase64 = async (b64: string) => {
+          // Try HTMLAudio first, fall back to WebAudio decode/play on error.
+          let responded = false
+          const finish = (ok: boolean, info?: any) => {
+            if (responded) return
+            responded = true
+            sendResponse?.({ ok, ...info })
+          }
+
+          try {
+            const bin = atob(b64)
             const len = bin.length
             const u8 = new Uint8Array(len)
             for (let i = 0; i < len; i++) u8[i] = bin.charCodeAt(i)
+            if (u8.length === 0) {
+              console.warn('[readit] PLAY_AUDIO base64 handler: decoded buffer empty', { mime })
+              finish(false, { error: 'empty audio' })
+              return
+            }
             const blob = new Blob([u8], { type: mime })
             const url = URL.createObjectURL(blob)
-            const a = new Audio(url)
+            const a = new Audio()
             a.autoplay = true
+            currentAudio = a
+
+            const done = () => {
+              try { a.pause() } catch {}
+              currentAudio = null
+              try { URL.revokeObjectURL(url) } catch {}
+              finish(true)
+            }
+            a.addEventListener('ended', done)
+            a.addEventListener('error', async (e) => {
+              console.warn('[readit] PLAY_AUDIO base64 play failed', e)
+              // WebAudio fallback
+              try {
+                try { URL.revokeObjectURL(url) } catch {}
+                currentAudio = null
+                const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+                const audioBuffer = await ctx.decodeAudioData(u8.buffer.slice(0))
+                const src = ctx.createBufferSource()
+                src.buffer = audioBuffer
+                src.connect(ctx.destination)
+                currentAudioContextSource = { ctx, src }
+                src.onended = () => { try { currentAudioContextSource = null } catch {} ; finish(true) }
+                src.start(0)
+              } catch (fallbackErr) {
+                console.warn('[readit] PLAY_AUDIO base64 WebAudio fallback failed', fallbackErr)
+                finish(false, { error: String(fallbackErr) })
+              }
+            })
+            a.src = url
             const p = a.play()
-            if (p && p.catch) p.catch((e) => console.warn('[readit] PLAY_AUDIO base64 play failed', e))
-            setTimeout(() => URL.revokeObjectURL(url), 60_000)
+            if (p && p.catch) p.catch(async (e) => {
+              console.warn('[readit] PLAY_AUDIO base64 play promise rejected', e)
+              // Try WebAudio fallback
+              try {
+                try { URL.revokeObjectURL(url) } catch {}
+                currentAudio = null
+                const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+                const audioBuffer = await ctx.decodeAudioData(u8.buffer.slice(0))
+                const src = ctx.createBufferSource()
+                src.buffer = audioBuffer
+                src.connect(ctx.destination)
+                currentAudioContextSource = { ctx, src }
+                src.onended = () => { try { currentAudioContextSource = null } catch {} ; finish(true) }
+                src.start(0)
+              } catch (fallbackErr) {
+                console.warn('[readit] PLAY_AUDIO base64 WebAudio fallback failed', fallbackErr)
+                finish(false, { error: String(fallbackErr) })
+              }
+            })
           } catch (err) {
             console.warn('[readit] PLAY_AUDIO base64 handler failed', err)
+            finish(false, { error: String(err) })
           }
-        } else {
-          // ArrayBuffer path
-          console.debug('[readit] content PLAY_AUDIO: playing ArrayBuffer')
+        }
+
+        const playArrayBuffer = async (audioBuf: ArrayBuffer) => {
+          // Try the simple <audio> approach first (object URL). If the
+          // browser rejects the source (NotSupportedError) we fall back to
+          // WebAudio decode/play which often supports more container/codecs
+          // or at least gives a clearer failure.
+          let responded = false
+          const finish = (ok: boolean, info?: any) => {
+            if (responded) return
+            responded = true
+            sendResponse?.({ ok, ...info })
+          }
+
           try {
-            const audioBuf = msg.audio
             const blob = new Blob([audioBuf], { type: mime })
             const url = URL.createObjectURL(blob)
             const a = new Audio()
-            a.src = url
             a.autoplay = true
+            currentAudio = a
+            const done = () => {
+              try { a.pause() } catch {}
+              currentAudio = null
+              try { URL.revokeObjectURL(url) } catch {}
+              finish(true)
+            }
+            a.addEventListener('ended', done)
+            a.addEventListener('error', async (e) => {
+              console.warn('[readit] PLAY_AUDIO ArrayBuffer play failed', e)
+              // Attempt WebAudio fallback
+              try {
+                try { URL.revokeObjectURL(url) } catch {}
+                currentAudio = null
+                const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+                const audioBuffer = await ctx.decodeAudioData(audioBuf.slice(0))
+                const src = ctx.createBufferSource()
+                src.buffer = audioBuffer
+                src.connect(ctx.destination)
+                currentAudioContextSource = { ctx, src }
+                src.onended = () => {
+                  try { currentAudioContextSource = null } catch {}
+                  finish(true)
+                }
+                src.start(0)
+              } catch (fallbackErr) {
+                console.warn('[readit] PLAY_AUDIO ArrayBuffer WebAudio fallback failed', fallbackErr)
+                finish(false, { error: String(fallbackErr) })
+              }
+            })
+            a.src = url
             const p = a.play()
-            if (p && p.catch) p.catch((e) => console.warn('[readit] PLAY_AUDIO ArrayBuffer play failed', e))
-            setTimeout(() => URL.revokeObjectURL(url), 60_000)
+            if (p && p.catch) p.catch(async (e) => {
+              console.warn('[readit] PLAY_AUDIO ArrayBuffer play promise rejected', e)
+              // play() rejected (autoplay or codec); try WebAudio fallback
+              try {
+                try { URL.revokeObjectURL(url) } catch {}
+                currentAudio = null
+                const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+                const audioBuffer = await ctx.decodeAudioData(audioBuf.slice(0))
+                const src = ctx.createBufferSource()
+                src.buffer = audioBuffer
+                src.connect(ctx.destination)
+                currentAudioContextSource = { ctx, src }
+                src.onended = () => {
+                  try { currentAudioContextSource = null } catch {}
+                  finish(true)
+                }
+                src.start(0)
+              } catch (fallbackErr) {
+                console.warn('[readit] PLAY_AUDIO ArrayBuffer WebAudio fallback failed', fallbackErr)
+                finish(false, { error: String(fallbackErr) })
+              }
+            })
           } catch (err) {
             console.warn('[readit] PLAY_AUDIO handler failed', err)
+            finish(false, { error: String(err) })
           }
         }
+
+        if (typeof msg.audio === 'string') {
+          playBase64(msg.audio)
+        } else {
+          playArrayBuffer(msg.audio as ArrayBuffer)
+        }
+        // Return true to indicate we'll call sendResponse asynchronously
+        return true
       } catch (err) {
         console.warn('[readit] PLAY_AUDIO handler error', err)
       }
+    }
+    // Support pause/resume/stop messages so the background can control playback
+    else if (typeof msg === 'object' && msg !== null && (msg as any).kind === 'PAUSE_SPEECH') {
+      try {
+        if (currentAudio) {
+          try { currentAudio.pause() } catch {}
+        } else if (currentAudioContextSource) {
+          try { currentAudioContextSource.ctx.suspend().catch?.(() => {}) } catch {}
+        }
+        sendResponse?.({ ok: true, paused: true })
+      } catch (err) {
+        console.warn('[readit] PAUSE_SPEECH handler failed', err)
+        sendResponse?.({ ok: false, error: String(err) })
+      }
+      return true
+    } else if (typeof msg === 'object' && msg !== null && (msg as any).kind === 'RESUME_SPEECH') {
+      try {
+        if (currentAudio) {
+          try { void currentAudio.play() } catch {}
+        } else if (currentAudioContextSource) {
+          try { currentAudioContextSource.ctx.resume().catch?.(() => {}) } catch {}
+        }
+        sendResponse?.({ ok: true, resumed: true })
+      } catch (err) {
+        console.warn('[readit] RESUME_SPEECH handler failed', err)
+        sendResponse?.({ ok: false, error: String(err) })
+      }
+      return true
+    }
+    // Support a stop message so the background can cancel queued playback
+    else if (typeof msg === 'object' && msg !== null && (msg as any).kind === 'STOP_SPEECH') {
+      try {
+        if (currentAudio) {
+          try { currentAudio.pause() } catch {}
+          try { currentAudio.src = '' } catch {}
+          currentAudio = null
+        }
+        if (currentAudioContextSource) {
+          try { currentAudioContextSource.src.stop?.() } catch {}
+          try { currentAudioContextSource.ctx.close?.() } catch {}
+          currentAudioContextSource = null
+        }
+        sendResponse?.({ ok: true, stopped: true })
+      } catch (err) {
+        console.warn('[readit] STOP_SPEECH handler failed', err)
+        sendResponse?.({ ok: false, error: String(err) })
+      }
+      return true
     }
   } catch (err) {
     console.warn('[readit] content script handler error', err)

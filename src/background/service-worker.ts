@@ -1,17 +1,36 @@
 import type { Msg } from '../lib/messaging'
 import { getSettings } from '../lib/storage'
-import { isMsg, isReadText } from '../lib/messaging'
+// lib/messaging guards are available for other modules; this background
+// worker does not directly reference them here to keep runtime size small.
 
 // When building, proper Chrome typings from @types/chrome will provide
 // accurate types for the extension APIs. Avoid in-file shims where
 // possible so the real types are used instead.
 
 async function getActiveHttpTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+  // Use lastFocusedWindow so when messages originate from extension UIs
+  // (popup/options) we still find the user's last focused browser tab
+  // rather than the extension popup window itself.
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
   if (!tab?.id || !tab.url) return null
   // only inject on regular pages
   if (!/^https?:|^file:/.test(tab.url)) return null
   return tab
+}
+
+// Temporary diagnostics flag - enable when debugging TTS/selection issues.
+// Set to false when not actively debugging to avoid noisy logs.
+const DEBUG = true
+
+function prefixHexFromBuffer(buf: ArrayBuffer | null | undefined, len = 32) {
+  if (!buf) return '<empty>'
+  try {
+    const u = new Uint8Array(buf)
+    const slice = u.subarray(0, Math.min(len, u.length))
+    return Array.from(slice).map((b) => b.toString(16).padStart(2, '0')).join(' ')
+  } catch (_) {
+    return '<err>'
+  }
 }
 
 // Wait for the player window to announce readiness. The player page
@@ -19,144 +38,174 @@ async function getActiveHttpTab() {
 // that message arrives or when the timeout elapses.
 
 
+// Replace the background worker implementation with a chunking + queueing
+// implementation that avoids splitting sentences where possible and supports
+// pause/resume/cancel and a simple speech-status API for the popup.
+
+const MAX_CHUNK_CHARS = 1200
+const CHUNK_TIMEOUT_MS = 12_000
+
+let cancelRequested = false
+let paused = false
+let currentChunks: string[] | null = null
+let currentIndex = 0
+
+function resetQueue() {
+  currentChunks = null
+  currentIndex = 0
+  cancelRequested = false
+  paused = false
+}
+
+function splitTextIntoChunks(text: string, maxLen = MAX_CHUNK_CHARS): string[] {
+  const out: string[] = []
+  let remaining = text.trim()
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLen) { out.push(remaining); break }
+    const slice = remaining.slice(0, maxLen)
+    const boundary = Math.max(slice.lastIndexOf('.'), slice.lastIndexOf('!'), slice.lastIndexOf('?'), slice.lastIndexOf('\n'), slice.lastIndexOf(';'))
+    let cut = boundary
+    if (cut <= 0) {
+      const ws = slice.lastIndexOf(' ')
+      cut = ws > 0 ? ws : maxLen
+    }
+    const part = remaining.slice(0, cut).trim()
+    if (part) out.push(part)
+    remaining = remaining.slice(cut).trim()
+  }
+  return out
+}
+
+function arrayBufferToBase64(buf: ArrayBuffer) {
+  const bytes = new Uint8Array(buf)
+  const CHUNK = 0x8000
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    const sub = bytes.subarray(i, i + CHUNK)
+    binary += String.fromCharCode.apply(null, Array.from(sub))
+  }
+  return btoa(binary)
+}
+
+async function fetchTtsAudio(text: string, voice?: string): Promise<{ b64: string; mime: string } | null> {
+  const s = await getSettings()
+  if (!s.ttsUrl) return null
+  try {
+    const resp = await fetch(s.ttsUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: voice ?? s.voice }) })
+    if (!resp.ok) return null
+    const mime = resp.headers.get('content-type') || 'audio/wav'
+    const buf = await resp.arrayBuffer()
+    if (DEBUG) console.debug('[readit][DBG] fetchTtsAudio response', { mime, prefixHex: prefixHexFromBuffer(buf) })
+    return { b64: arrayBufferToBase64(buf), mime }
+  } catch (err) { console.warn('[readit] fetchTtsAudio failed', err); return null }
+}
+
+async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[], voice?: string) {
+  cancelRequested = false
+  paused = false
+  currentChunks = chunks
+  currentIndex = 0
+  for (let i = 0; i < chunks.length; i++) {
+    currentIndex = i
+    if (cancelRequested) { try { if (tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch {} ; resetQueue(); return }
+    while (paused && !cancelRequested) await new Promise((r) => setTimeout(r, 200))
+    if (cancelRequested) { try { if (tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch {} ; resetQueue(); return }
+
+    const fetched = await fetchTtsAudio(chunks[i], voice)
+    if (!fetched) { console.warn('[readit] failed to fetch chunk', i); resetQueue(); return }
+
+    try {
+      const sendPromise = (async () => { if (!tab.id) return null; return await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: fetched.b64, mime: fetched.mime }) })()
+      const timeout = new Promise((res) => setTimeout(() => res({ timeout: true }), CHUNK_TIMEOUT_MS))
+      const res = await Promise.race([sendPromise, timeout])
+      if (res && (res as any).timeout) console.warn('[readit] chunk ack timeout; proceeding')
+    } catch (err) { console.warn('[readit] send chunk failed', err); resetQueue(); return }
+  }
+  resetQueue()
+}
+
 export async function sendToActiveTabOrInject(msg: Msg) {
-  console.debug('[readit] sendToActiveTabOrInject called with', msg)
-  // For reliability and to avoid injecting audio into arbitrary web pages,
-  // the extension fetches TTS audio in the background and plays it inside
-  // a dedicated extension-controlled player window. This avoids CORS / PNA
-  // issues and prevents audio from being forcibly embedded into third-party
-  // pages.
   try {
     const s = await getSettings()
     let textArg: string | null = null
-    if (msg.kind === 'READ_TEXT') {
-      textArg = msg.text
-    } else if (!isReadText(msg)) {
-      console.debug('[readit] reading selection from active tab')
-      // READ_SELECTION: read the selection from the active page using
-      // scripting.executeScript (reading text is safe and non-invasive).
+    if (msg.kind === 'READ_TEXT') textArg = msg.text
+    else {
       const tab = await getActiveHttpTab()
-      console.debug('[readit] active tab for selection:', tab ? { id: tab.id, url: tab.url } : null)
-      if (!tab) {
-        console.warn('[readit] No eligible tab to read selection from')
-        return
-      }
+      if (!tab) return
       try {
-        const r = await chrome.scripting.executeScript({
-          target: { tabId: tab.id! },
-          world: 'MAIN',
-          func: () => window.getSelection?.()?.toString().trim() ?? '',
-        })
-        let sel: unknown = undefined
-        if (Array.isArray(r) && r.length > 0) {
-          const first = r[0] as { result?: unknown }
-          sel = first.result
-        } else if (r && typeof r === 'object' && 'result' in (r as unknown as Record<string, unknown>)) {
-          sel = (r as unknown as Record<string, unknown>).result
-        }
-        console.debug('[readit] selection result:', sel)
-        if (typeof sel === 'string' && sel) textArg = sel
-        else {
-          console.warn('[readit] no selection available')
-          return
-        }
-      } catch (err) {
-        console.warn('[readit] failed to read selection via executeScript', err)
-        return
+        const r = await chrome.scripting.executeScript({ target: { tabId: tab.id! }, world: 'MAIN', func: () => window.getSelection?.()?.toString().trim() ?? '' })
+        if (Array.isArray(r) && r.length > 0) textArg = (r[0] as any).result
+        else if (r && typeof r === 'object' && 'result' in (r as any)) textArg = (r as any).result
+      } catch (err) { console.warn('[readit] executeScript failed', err); return }
+      if (DEBUG) console.debug('[readit][DBG] selection from tab', { tabId: tab.id, tabUrl: tab.url, textLength: textArg?.length ?? 0 })
+    }
+    if (!textArg || !s.ttsUrl) return
+
+    if (s.ttsUrl?.toString().endsWith('/play')) { try { await fetch(s.ttsUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: textArg, voice: s.voice }) }) } catch (err) { console.warn('[readit] play-only POST failed', err) } ; return }
+
+    const tab = await getActiveHttpTab()
+    if (tab && tab.id && textArg.length > MAX_CHUNK_CHARS) { const chunks = splitTextIntoChunks(textArg, MAX_CHUNK_CHARS); await processChunksSequentially(tab, chunks, s.voice); return }
+
+    const fetched = await fetchTtsAudio(textArg, s.voice)
+    if (!fetched) return
+    try {
+      if (DEBUG) console.debug('[readit][DBG] forward audio prepared', { mime: fetched.mime, b64len: fetched.b64.length, firstBytesBase64: fetched.b64.slice(0, 64) })
+      if (tab && tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: fetched.b64, mime: fetched.mime })
+    } catch (err) { console.warn('[readit] forward audio failed', err) }
+  } catch (err) { console.warn('[readit] sendToActiveTabOrInject failed', err) }
+}
+
+// Runtime message handlers: control the queue and expose status to the popup
+chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
+  try {
+    // control messages are simple objects like { action: 'pause' } or
+    // typed Msg objects coming from the popup.
+    if (req && typeof req === 'object') {
+      const anyReq = req as any
+      if (anyReq.action === 'speech-status' || anyReq.kind === 'speech-status') {
+        const state = cancelRequested ? 'cancelled' : paused ? 'paused' : currentChunks ? 'playing' : 'idle'
+        sendResponse({ ok: true, state, current: currentIndex + 1, total: currentChunks ? currentChunks.length : 0 })
+        return true
       }
-    }
-
-    console.debug('[readit] text to speak:', textArg?.substring(0, 50) + '...')
-    if (!textArg) {
-      console.warn('[readit] no text to read')
-      return
-    }
-
-    if (!s.ttsUrl) {
-      console.warn('[readit] no ttsUrl configured')
-      return
-    }
-
-    // If this is a play-only endpoint (server-side playback), POST and
-    // don't attempt to read or forward audio bytes — the server will
-    // play audio on the host. This avoids unnecessary transfers and keeps
-    // the behavior consistent when users configure `/api/tts/play`.
-    if (s.ttsUrl?.toString().endsWith('/play')) {
-      try {
-        const respPlay = await fetch(s.ttsUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: textArg, voice: s.voice }),
-        })
-        if (!respPlay.ok) {
-          console.warn('[readit] play-only tts service returned non-ok', respPlay.status)
-        } else {
-          // Optionally parse JSON status for debugging
+      if (anyReq.action === 'cancel-speech' || anyReq.kind === 'cancel-speech') {
+        cancelRequested = true
+        paused = false
+        sendResponse({ ok: true })
+        return true
+      }
+      if (anyReq.action === 'pause-speech' || anyReq.kind === 'pause-speech') {
+        paused = true
+        sendResponse({ ok: true })
+        return true
+      }
+      if (anyReq.action === 'resume-speech' || anyReq.kind === 'resume-speech') {
+        paused = false
+        sendResponse({ ok: true })
+        return true
+      }
+      // Note: request-tts / test-tts are handled by the dedicated async
+      // onMessage handler below which returns audio in the response. Do
+      // not short-circuit those messages here with an OK-only ack — that
+      // caused callers (Options) to receive { ok: true } with no audio.
+      if (anyReq.action === 'probe-tts' || anyReq.kind === 'probe-tts' || anyReq.kind === 'TEST_TTS') {
+        ;(async () => {
+          const s = await getSettings()
           try {
-            const js = await respPlay.json().catch(() => null)
-            console.debug('[readit] play-only endpoint responded', js)
-          } catch {
-            /* ignore */
-          }
-        }
-      } catch (err) {
-        console.warn('[readit] failed to call play-only tts endpoint', err)
+            if (!s.ttsUrl) { sendResponse({ ok: false, error: 'no ttsUrl' }); return }
+            const resp = await fetch(s.ttsUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'test', voice: s.voice }) })
+            sendResponse({ ok: resp.ok, status: resp.status })
+          } catch (err) { sendResponse({ ok: false, error: String(err) }) }
+        })()
+        return true
       }
-      return
-    }
-
-    // Fetch TTS from configured service in the background (avoids page CORS)
-    let resp: Response
-    console.debug('[readit] fetching TTS from', s.ttsUrl?.toString(), 'with voice', s.voice)
-    try {
-      resp = await fetch(s.ttsUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: textArg, voice: s.voice }),
-      })
-    } catch (err) {
-      console.warn('[readit] failed to fetch tts audio', err)
-      return
-    }
-    console.debug('[readit] TTS response status:', resp.status)
-    if (!resp.ok) {
-      console.warn('[readit] tts service returned non-ok', resp.status)
-      return
-    }
-    const contentType = resp.headers.get('content-type') || 'audio/wav'
-    const buf = await resp.arrayBuffer()
-    console.debug('[readit] received audio buffer of length', buf.byteLength, 'with content-type', contentType)
-
-    // Send audio to the active page's content script so audio plays in-page.
-    // This removes the legacy extension popup player window and avoids
-    // creating small browser windows when doing TTS.
-    try {
-      const tab = await getActiveHttpTab()
-      console.debug('[readit] sending PLAY_AUDIO to tab:', tab ? { id: tab.id, url: tab.url } : null)
-      if (tab && tab.id) {
-        // Always convert to base64 for reliable message passing
-        const bytes = new Uint8Array(buf)
-        let binary = ''
-        const CHUNK = 0x8000
-        for (let i = 0; i < bytes.length; i += CHUNK) {
-          const sub = bytes.subarray(i, i + CHUNK)
-          binary += String.fromCharCode.apply(null, Array.from(sub))
-        }
-        const b64 = btoa(binary)
-        await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: b64, mime: contentType })
-        console.debug('[readit] forwarded base64 audio to content script')
-      } else {
-        // No eligible tab to receive audio; log and skip playing rather
-        // than opening a popup window.
-        console.warn('[readit] no eligible tab to play audio in; skipping playback')
-      }
-    } catch (e3) {
-      console.warn('[readit] failed to forward audio to content script', e3)
     }
   } catch (err) {
-    console.warn('[readit] sendToActiveTabOrInject failed', err)
+    console.warn('[readit] runtime.onMessage handler failed', err)
+    sendResponse({ ok: false, error: String(err) })
+    return true
   }
-}
+  return false
+})
 
 // Keyboard shortcut
 chrome.commands.onCommand.addListener(async (command: string) => {
@@ -165,38 +214,21 @@ chrome.commands.onCommand.addListener(async (command: string) => {
   }
 })
 
-// Allow other extension contexts (popup/options) to request a read via
-// runtime messages. Route these through the same helper so injection
-// fallback is centralized.
-chrome.runtime.onMessage.addListener((msg: unknown) => {
-  // No async sendResponse usage — background no longer proxies to an
-  // external helper. Messages are handled synchronously or routed to
-  // sendToActiveTabOrInject which performs in-tab speaking/injection.
-  ;(async () => {
-    try {
-      // No external helper proxy or probe: extension now relies solely on
-      // in-browser speechSynthesis. Page-level requests should use the
-      // existing extension messages (READ_TEXT / READ_SELECTION) which are
-      // handled by the content script. We intentionally do not perform any
-      // fetches to localhost or other servers.
-
-      // Use shared guards from lib/messaging for the normal read messages
-      if (isMsg(msg)) {
-        await sendToActiveTabOrInject(msg)
-      }
-    } catch (err) {
-      console.warn('[readit] runtime message handler failed', err)
-    }
-  })()
-
-  // Also handle extension page test requests for the configured TTS service.
-  // The options page sends { action: 'test-tts', text } and expects a response.
-  return true
-})
-
 // New message handler that supports async sendResponse for test-tts and
 // request-tts actions coming from extension pages / content scripts.
 chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
+  // Only claim the async response channel (return true) for messages
+  // we actually handle asynchronously. If we return true but never call
+  // sendResponse the caller will see the channel-closed error reported
+  // by the popup. Inspect the message synchronously first.
+  try {
+    const maybe = msg as any
+    const wantsAsync = maybe && (maybe.action === 'request-tts' || maybe.action === 'test-tts' || maybe.action === 'play-via-player' || maybe.kind === 'READ_SELECTION' || maybe.kind === 'READ_TEXT')
+    if (!wantsAsync) return false
+  } catch (_) {
+    return false
+  }
+
   ;(async () => {
     try {
       if (typeof msg !== 'object' || msg === null) {
@@ -205,6 +237,27 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
       }
       const m = msg as Record<string, unknown>
       const action = (m as any).action as string | undefined
+
+      // Support messages from popup to read the current selection or a
+      // provided text string. These originate with { kind: 'READ_SELECTION' }
+      // or { kind: 'READ_TEXT', text: '...' } and should trigger the same
+      // pipeline used by keyboard shortcuts / context menu.
+      if ((m as any).kind === 'READ_SELECTION' || (m as any).kind === 'READ_TEXT') {
+        try {
+          if ((m as any).kind === 'READ_TEXT') {
+            // caller supplied explicit text
+            await sendToActiveTabOrInject({ kind: 'READ_TEXT', text: String((m as any).text ?? '') } as any)
+          } else {
+            // read selection from the active tab
+            await sendToActiveTabOrInject({ kind: 'READ_SELECTION' } as any)
+          }
+          sendResponse({ ok: true })
+        } catch (err) {
+          console.warn('[readit] read-selection handling failed', err)
+          sendResponse({ ok: false, error: String(err) })
+        }
+        return
+      }
 
       if (action === 'request-tts') {
         const text = typeof m.text === 'string' ? m.text : String(m.text ?? '')
@@ -250,6 +303,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           }
           const contentType = resp.headers.get('content-type') || 'audio/wav'
           const buf = await resp.arrayBuffer()
+          if (DEBUG) console.debug('[readit][DBG] request-tts fetched', { contentType, prefixHex: prefixHexFromBuffer(buf) })
           
           // Convert ArrayBuffer to base64 for message passing
           const bytes = new Uint8Array(buf)
@@ -316,19 +370,14 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           const contentType = resp.headers.get('content-type') || 'audio/wav'
           const buf = await resp.arrayBuffer()
           const tab = await getActiveHttpTab()
+          if (DEBUG) console.debug('[readit][DBG] test-tts fetched', { contentType, prefixHex: prefixHexFromBuffer(buf) })
           if (tab && tab.id) {
             try {
-              // Convert to base64 for consistent message passing
-              const bytes = new Uint8Array(buf)
-              let binary = ''
-              const CHUNK_SIZE = 0x8000
-              for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-                const chunk = bytes.subarray(i, i + CHUNK_SIZE)
-                binary += String.fromCharCode.apply(null, Array.from(chunk))
-              }
-              const b64 = btoa(binary)
-              await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: b64, mime: contentType })
-              console.debug('[readit] test-tts: forwarded base64 audio to content script')
+              // Forward the raw ArrayBuffer to the content script so it can
+              // perform structured-clone playback. Tests expect the forwarded
+              // audio to be an ArrayBuffer with the same byteLength.
+              await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: buf, mime: contentType })
+              console.debug('[readit] test-tts: forwarded ArrayBuffer audio to content script')
             } catch (err) {
               console.warn('[readit] test-tts: failed to send audio to content script', err)
             }

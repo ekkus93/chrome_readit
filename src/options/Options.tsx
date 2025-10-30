@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState, useRef } from 'react'
 
 type Settings = {
   voice?: string
@@ -46,6 +46,7 @@ export default function Options() {
   const [voicesList, setVoicesList] = useState<Array<{ name: string; label: string }>>([])
   const [serverPlaying, setServerPlaying] = useState<boolean>(false)
   const [checkingPlaying, setCheckingPlaying] = useState(false)
+  const testAudioRef = useRef<HTMLAudioElement | null>(null)
   
 
   // NOTE: we no longer use the browser SpeechSynthesis fallback. Keep
@@ -231,15 +232,21 @@ export default function Options() {
           const blob = new Blob([buf], { type: mime })
           const url = URL.createObjectURL(blob)
           const a = new Audio(url)
+          // keep a reference so the element isn't GC'd while playback runs
+          testAudioRef.current = a
           a.autoplay = true
           a.play().catch((e) => {
             // Log the full DOMException/object for debugging (not just String)
             console.warn('[readit] options player failed to play', { mime, prefixHex, error: e })
             setTestStatus('error')
             setTestError(String(e))
+            testAudioRef.current = null
           })
-          a.onended = () => setTestStatus('ok')
-          setTimeout(() => URL.revokeObjectURL(url), 60_000)
+          a.onended = () => {
+            setTestStatus('ok')
+            testAudioRef.current = null
+          }
+          setTimeout(() => { try { URL.revokeObjectURL(url) } catch {} }, 60_000)
           setTestStatus('sending')
           setTestError(null)
           return
