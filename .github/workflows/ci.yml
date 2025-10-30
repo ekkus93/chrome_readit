@@ -19,7 +19,11 @@ jobs:
           node-version: '18'
 
       - name: Install dependencies
-        run: npm ci
+        # Allow legacy peer deps resolution to avoid CI failing when some dev deps
+        # require React 18 while the project uses React 19. This is a pragmatic
+        # fix so CI can install and run tests; consider upgrading test libs
+        # to versions that declare React 19 peer deps in the future.
+        run: npm ci --legacy-peer-deps
 
       - name: Lint
         run: |
