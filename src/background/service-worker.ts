@@ -42,8 +42,10 @@ function prefixHexFromBuffer(buf: ArrayBuffer | null | undefined, len = 32) {
 // implementation that avoids splitting sentences where possible and supports
 // pause/resume/cancel and a simple speech-status API for the popup.
 
-const MAX_CHUNK_CHARS = 1200
-const CHUNK_TIMEOUT_MS = 12_000
+const MAX_CHUNK_CHARS = 400
+// Allow tests to override the chunk timeout via globalThis.__CHUNK_TIMEOUT_MS
+const CHUNK_TIMEOUT_MS = (globalThis as any).__CHUNK_TIMEOUT_MS ?? 60_000 // default 1 minute
+const PREFETCH_COUNT = 2 // how many chunks to fetch ahead of playback
 
 let cancelRequested = false
 let paused = false
@@ -101,26 +103,102 @@ async function fetchTtsAudio(text: string, voice?: string): Promise<{ b64: strin
 }
 
 async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[], voice?: string) {
+  // Producer-consumer: fetch audio for chunks ahead of playback
   cancelRequested = false
   paused = false
   currentChunks = chunks
   currentIndex = 0
-  for (let i = 0; i < chunks.length; i++) {
-    currentIndex = i
-    if (cancelRequested) { try { if (tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch {} ; resetQueue(); return }
-    while (paused && !cancelRequested) await new Promise((r) => setTimeout(r, 200))
-    if (cancelRequested) { try { if (tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch {} ; resetQueue(); return }
 
-    const fetched = await fetchTtsAudio(chunks[i], voice)
-    if (!fetched) { console.warn('[readit] failed to fetch chunk', i); resetQueue(); return }
+  const audioMap = new Map<number, { b64: string; mime: string }>()
+  let nextFetchIndex = 0
+  let nextSendIndex = 0
+  let producerDone = false
 
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+  const producer = async () => {
     try {
-      const sendPromise = (async () => { if (!tab.id) return null; return await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: fetched.b64, mime: fetched.mime }) })()
-      const timeout = new Promise((res) => setTimeout(() => res({ timeout: true }), CHUNK_TIMEOUT_MS))
-      const res = await Promise.race([sendPromise, timeout])
-      if (res && (res as any).timeout) console.warn('[readit] chunk ack timeout; proceeding')
-    } catch (err) { console.warn('[readit] send chunk failed', err); resetQueue(); return }
+      while (nextFetchIndex < chunks.length && !cancelRequested) {
+        // Pause fetching while paused to respect user intent
+        while (paused && !cancelRequested) await sleep(200)
+        if (cancelRequested) break
+
+        // Don't prefetch beyond the configured window
+        if (audioMap.size >= PREFETCH_COUNT) {
+          await sleep(100)
+          continue
+        }
+
+        const i = nextFetchIndex
+        nextFetchIndex++
+        const fetched = await fetchTtsAudio(chunks[i], voice)
+        if (!fetched) {
+          console.warn('[readit] failed to fetch chunk', i)
+          // Abort the whole pipeline on fetch failure
+          cancelRequested = true
+          break
+        }
+        audioMap.set(i, fetched)
+      }
+    } catch (err) {
+      console.warn('[readit] producer failed', err)
+      cancelRequested = true
+    } finally {
+      producerDone = true
+    }
   }
+
+  const consumer = async () => {
+    try {
+      while (nextSendIndex < chunks.length && !cancelRequested) {
+        currentIndex = nextSendIndex
+
+  // Wait for the audio to be available (or for producer to finish)
+        while (!audioMap.has(nextSendIndex) && !producerDone && !cancelRequested) {
+          await sleep(100)
+          // If paused, wait until resumed
+          while (paused && !cancelRequested) await sleep(200)
+        }
+        if (cancelRequested) break
+
+        const entry = audioMap.get(nextSendIndex)
+        if (!entry) {
+          // No audio available (producer finished or failed). Abort.
+          console.warn('[readit] no audio available for chunk', nextSendIndex)
+          cancelRequested = true
+          break
+        }
+
+        // Send to content script and wait for ack or timeout
+        try {
+          const sendPromise = (async () => { if (!tab.id) return null; return await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: entry.b64, mime: entry.mime }) })()
+          const timeout = new Promise((res) => setTimeout(() => res({ timeout: true }), CHUNK_TIMEOUT_MS))
+          const res = await Promise.race([sendPromise, timeout])
+          if (res && (res as any).timeout) console.warn('[readit] chunk ack timeout; proceeding')
+        } catch (err) { console.warn('[readit] send chunk failed', err); cancelRequested = true; break }
+
+        // Free memory for this chunk and move to next
+        audioMap.delete(nextSendIndex)
+        nextSendIndex++
+      }
+    } catch (err) {
+      console.warn('[readit] consumer failed', err)
+      cancelRequested = true
+    }
+  }
+
+  // Start both concurrently and wait for completion
+  const prod = producer()
+  const cons = consumer()
+  await Promise.all([prod, cons])
+
+  if (cancelRequested) {
+    try { if (tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch {}
+    resetQueue()
+    return
+  }
+
+  // Finished successfully
   resetQueue()
 }
 

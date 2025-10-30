@@ -10,34 +10,27 @@ This README documents what the extension does, how it's implemented, current pro
 
 ## What the extension does
 
-- Reads the currently selected text aloud using a local Coqui TTS Docker server with 109 high-quality voices
-- Keyboard shortcut support: Alt+Shift+R (configured as the `read-selection` command)
-- Context menu entry: "Read selection aloud" for selection contexts
-- Popup UI (React) with controls to manually trigger reading and to set voice & rate
-- Options page (React) for persistent voice and rate settings saved in `chrome.storage.sync`
-- Background service worker manages commands and context menu clicks, fetches TTS audio from the local Docker server, and plays it in the page context
+  - Playback controls: Pause, Resume and Cancel (stop) while reading; available via popup/options buttons and keyboard commands.
 
 ## High-level architecture
 
-- `src/manifest.ts` — MV3 manifest (TypeScript). Uses source paths; CRX/Vite plugin rewrites for distribution.
-- `src/background/service-worker.ts` — Background service worker (MV3). Handles keyboard command, context menu, TTS server communication, and audio playback coordination.
-- `src/content/content.ts` — Content script that receives audio data and plays it in the page context using HTML5 Audio API.
+  - Background worker: producer/consumer pipeline that prefetches TTS audio chunks and forwards them to the content script for ordered playback.
+  - Chunking: sentence-aware chunking (character-based) with a current max chunk size of 400 characters and a per-chunk ack-or-timeout behavior to avoid stalls.
 - `src/lib/messaging.ts` — Shared message types and helpers for extension communication.
 - `src/lib/storage.ts` — Small storage wrapper for getting/saving voice and rate settings via `chrome.storage.sync`.
 - `src/popup/Popup.tsx` — React popup UI allowing the user to trigger reading and configure voice/rate.
-- `src/options/Options.tsx` — React options page that persists settings and provides TTS testing.
-- `docker/docker-compose.yml` — Docker Compose configuration for the Coqui TTS server.
+  - `src/background/timeout.integration.test.ts` — integration test verifying per-chunk ack-or-timeout behavior and that the background proceeds when content acks are slow or missing.
+  - `src/background/splitting.integration.test.ts` — integration test verifying sentence-aware splitting and that each chunk is sent to the TTS server and forwarded to the page in order.
 - `docker/coqui-local/Dockerfile` & `docker/coqui-local/app.py` — FastAPI server providing TTS endpoints with 109 voices.
 
 Key implementation notes:
-- The extension communicates with a local Coqui TTS Docker server running on `localhost:5002`
-- TTS audio is generated server-side and transferred to the extension as base64-encoded WAV data
 - Audio playback happens in the page context using HTML5 Audio API for reliable cross-origin audio
 - Settings are stored under `settings` in `chrome.storage.sync` with default voice 'p225' and rate `1.0`
 
 ## Files of interest
 
 - `src/manifest.ts` — manifest settings (permissions include `storage`, `activeTab`, `scripting`, `contextMenus`; `host_permissions` currently set to `<all_urls>`).
+  - ✅ Added Pause/Resume/Cancel playback controls (UI + keyboard commands) and tests; improved background pipeline to prefetch audio and handle per-chunk timeouts.
 - `src/background/service-worker.ts` — command and context menu logic plus injection fallback.
 - `src/content/content.ts` — message listener and `speak()` implementation.
 - `src/popup/Popup.tsx` and `src/options/Options.tsx` — React UIs for quick controls and persistent options.
