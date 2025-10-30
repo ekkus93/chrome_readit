@@ -1,24 +1,10 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react'
+import { fetchVoicesForTtsUrl } from './helpers'
 
 type Settings = {
   voice?: string
   rate: number // 0.5..2.0
   ttsUrl?: string
-}
-
-// Exported helper for tests: fetch available voices from a configured TTS URL.
-export async function fetchVoicesForTtsUrl(ttsUrl: string): Promise<string[]> {
-  try {
-    const url = new URL(ttsUrl)
-    url.pathname = '/api/voices'
-    const res = await fetch(url.toString(), { method: 'GET' })
-    if (!res.ok) return []
-    const js = await res.json().catch(() => null)
-    if (!js || !Array.isArray(js.voices)) return []
-    return js.voices
-  } catch {
-    return []
-  }
 }
 
 const DEFAULTS: Settings = { rate: 1.0, voice: 'p225' }
@@ -75,16 +61,13 @@ export default function Options() {
         const voices = await fetchVoicesForTtsUrl(ttsUrl)
         if (!mounted) return
         setVoicesList(voices.map((v: string) => ({ name: v, label: v })))
-      } catch (err) {
-        // ignore; leave voicesList empty
-      }
+      } catch (e) { void e }
     }
     fetchVoices()
     return () => { mounted = false }
   }, [ttsUrl])
 
   useEffect(() => {
-    let poll: number | undefined
     async function checkPlaying() {
       if (!ttsUrl) return
       setCheckingPlaying(true)
@@ -98,16 +81,14 @@ export default function Options() {
           const js = await res.json().catch(() => null)
           setServerPlaying(Boolean(js?.playing))
         }
-      } catch {
-        setServerPlaying(false)
-      } finally {
+      } catch (e) { void e } finally {
         setCheckingPlaying(false)
       }
     }
     // poll while serverPlaying is true (to detect end) and otherwise do a single check
     checkPlaying()
-    poll = window.setInterval(checkPlaying, 2500)
-    return () => { if (poll) clearInterval(poll) }
+    const poll = window.setInterval(checkPlaying, 2500)
+    return () => { clearInterval(poll) }
   }, [ttsUrl])
 
   async function cancelPlayback() {
@@ -120,23 +101,21 @@ export default function Options() {
         // ignore for now
       } else {
         const js = await res.json().catch(() => null)
-        if (js && js.canceled) setServerPlaying(false)
+  if (js && Boolean((js as Record<string, unknown>)['canceled'])) setServerPlaying(false)
       }
-    } catch {
-      // ignore
-    }
+    } catch (e) { void e }
   }
 
   // UI controls to pause/resume/cancel in-page playback (sends messages
   // to the background which will notify the active tab/content script).
   async function handlePause() {
-    try { chrome.runtime.sendMessage({ action: 'pause-speech' }, () => {}) } catch (e) { console.warn('readit: pause failed', e) }
+    try { chrome.runtime.sendMessage({ action: 'pause-speech' }, () => {}) } catch (e) { console.warn('readit: pause failed', e); void e }
   }
   async function handleResume() {
-    try { chrome.runtime.sendMessage({ action: 'resume-speech' }, () => {}) } catch (e) { console.warn('readit: resume failed', e) }
+    try { chrome.runtime.sendMessage({ action: 'resume-speech' }, () => {}) } catch (e) { console.warn('readit: resume failed', e); void e }
   }
   async function handleCancel() {
-    try { chrome.runtime.sendMessage({ action: 'cancel-speech' }, () => {}) } catch (e) { console.warn('readit: cancel failed', e) }
+    try { chrome.runtime.sendMessage({ action: 'cancel-speech' }, () => {}) } catch (e) { console.warn('readit: cancel failed', e); void e }
   }
 
   // Browser speechSynthesis fallback removed — extension now requires the
@@ -216,9 +195,7 @@ export default function Options() {
             const parts: string[] = []
             for (let i = 0; i < len; i++) parts.push(v[i].toString(16).padStart(2, '0'))
             prefixHex = parts.join(' ')
-          } catch {
-            prefixHex = '<unavailable>'
-          }
+          } catch (e) { void e; prefixHex = '<unavailable>' }
 
           // If the buffer is empty, avoid attempting to play it and report
           // a clear error — empty payloads commonly cause NotSupportedError.
@@ -230,9 +207,7 @@ export default function Options() {
               setTestError(`TTS service returned an empty payload (${mime})`)
               return
             }
-          } catch {
-            // ignore
-          }
+          } catch (e) { void e }
 
           if (!isProbablyAudio(buf, mime)) {
             console.warn('[readit] options: returned payload does not appear to be audio', { mime, prefixHex })
@@ -258,7 +233,7 @@ export default function Options() {
             setTestStatus('ok')
             testAudioRef.current = null
           }
-          setTimeout(() => { try { URL.revokeObjectURL(url) } catch {} }, 60_000)
+          setTimeout(() => { try { URL.revokeObjectURL(url) } catch (e) { void e } }, 60_000)
           setTestStatus('sending')
           setTestError(null)
           return

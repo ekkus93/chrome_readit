@@ -9,7 +9,7 @@ import Options from './Options'
 describe('Options integration (DOM)', () => {
   beforeEach(() => {
     // Provide chrome.storage mock used by the component
-    ;(globalThis as unknown as { chrome?: any }).chrome = {
+  ;(globalThis as unknown as { chrome?: unknown }).chrome = {
       storage: {
         sync: {
           get: vi.fn(() => Promise.resolve({ settings: { ttsUrl: 'http://localhost:5002/api/tts/play' } })),

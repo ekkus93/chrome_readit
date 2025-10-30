@@ -13,9 +13,15 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
   beforeEach(() => {
     vi.resetModules()
     vi.resetAllMocks()
-
     // minimal chrome mock
-    ;(globalThis as unknown as { chrome?: any }).chrome = {
+    type ChromeMock = {
+      tabs: { query: (...args: unknown[]) => Promise<unknown>, sendMessage: (...args: unknown[]) => unknown }
+      scripting: { executeScript: (...args: unknown[]) => unknown }
+      commands: { onCommand: { addListener: (...args: unknown[]) => unknown } }
+      runtime: { onMessage: { addListener: (...args: unknown[]) => unknown }, onInstalled: { addListener: (...args: unknown[]) => unknown }, sendMessage: (...args: unknown[]) => unknown }
+      contextMenus: { create: (...args: unknown[]) => unknown, onClicked: { addListener: (...args: unknown[]) => unknown } }
+    }
+    const chromeObj = {
       tabs: {
         query: vi.fn(() => Promise.resolve([{ id: 201, url: 'https://example.com' }])),
         sendMessage: vi.fn(() => Promise.resolve(undefined)),
@@ -24,7 +30,8 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
       commands: { onCommand: { addListener: vi.fn() } },
       runtime: { onMessage: { addListener: vi.fn() }, onInstalled: { addListener: vi.fn() }, sendMessage: vi.fn() },
       contextMenus: { create: vi.fn(), onClicked: { addListener: vi.fn() } },
-    }
+    } as unknown as ChromeMock
+    ;(globalThis as unknown as Record<string, unknown>).chrome = chromeObj
   })
 
   it('splits large text, fetches audio per chunk and forwards in order', async () => {
@@ -34,25 +41,26 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
 
     const fetchedTexts: string[] = []
     // mock fetch to capture the text bodies sent to the TTS endpoint
-  vi.stubGlobal('fetch', vi.fn(async (_input: unknown, init?: any) => {
+    vi.stubGlobal('fetch', vi.fn(async (_input: unknown, init?: unknown) => {
       // parse JSON body if present
       try {
-        if (init && typeof init.body === 'string') {
-          const js = JSON.parse(init.body)
+        const maybe = init as Record<string, unknown> | undefined
+        if (maybe && typeof maybe.body === 'string') {
+          const js = JSON.parse(maybe.body)
           if (js && typeof js.text === 'string') fetchedTexts.push(js.text)
         }
-      } catch {}
+      } catch (e) { void e }
       return Promise.resolve({ ok: true, status: 200, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new Uint8Array([1,2,3]).buffer })
     }))
 
     // import module after mocks set up
     const mod = await import('./service-worker')
 
-    // call the exported helper to send the text
-    await (mod.sendToActiveTabOrInject as any)({ kind: 'READ_TEXT', text: long })
+  // call the exported helper to send the text
+  await (mod.sendToActiveTabOrInject as unknown as (x: unknown) => Promise<unknown>)({ kind: 'READ_TEXT', text: long })
 
-    // The fetch mock should have been called and captured chunk texts
-    expect((globalThis as any).fetch).toHaveBeenCalled()
+  // The fetch mock should have been called and captured chunk texts
+  expect((globalThis as unknown as Record<string, unknown>).fetch).toHaveBeenCalled()
     expect(fetchedTexts.length).toBeGreaterThanOrEqual(1)
 
     // Ensure that concatenating the fetched chunk texts (normalized) equals the original normalized text
@@ -74,7 +82,7 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
     }
 
     // Ensure we forwarded audio to the content script once per fetched chunk
-    const sendCalls = (globalThis as any).chrome.tabs.sendMessage.mock.calls.length
+  const sendCalls = ((globalThis as unknown as Record<string, unknown>).chrome as unknown as { tabs: { sendMessage?: { mock?: { calls?: unknown[][] } } } }).tabs.sendMessage?.mock?.calls?.length ?? 0
     expect(sendCalls).toBeGreaterThanOrEqual(fetchedTexts.length)
     // If the producer/consumer worked normally, they should match
     expect(sendCalls).toBe(fetchedTexts.length)

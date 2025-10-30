@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchVoicesForTtsUrl } from './Options'
+import { fetchVoicesForTtsUrl } from './helpers'
 
 describe('Options voice list', () => {
   beforeEach(() => {
-    ;(globalThis as unknown as { chrome?: any }).chrome = {
+  ;(globalThis as unknown as { chrome?: unknown }).chrome = {
       storage: {
         sync: {
           get: vi.fn(() => Promise.resolve({ settings: { ttsUrl: 'http://localhost:5002/api/tts/play' } })),
