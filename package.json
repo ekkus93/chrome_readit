@@ -6,6 +6,7 @@
   "scripts": {
     "lint": "eslint .",
     "dev": "vite",
+    "prebuild": "sh -c \"if npm run -s lint; then echo 'lint passed'; else echo 'lint failed'; exit 1; fi\"",
     "build": "vite build",
     "preview": "vite build && vite preview",
     "test": "npx vitest --ui"

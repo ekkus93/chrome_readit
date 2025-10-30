@@ -193,7 +193,7 @@ async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[],
                             // play() returns a promise; swallow failures
                             void audio.play().catch(() => { /* ignore */ })
                             return true
-                          } catch (e) { return false }
+                          } catch { return false }
                         },
                         args: [entry.b64, entry.mime],
                       })
@@ -276,7 +276,7 @@ export async function sendToActiveTabOrInject(msg: Msg) {
                   const audio = new Audio(`data:${mime};base64,${b64}`)
                   void audio.play().catch(() => { /* ignore */ })
                   return true
-                } catch (e) { return false }
+                } catch { return false }
               },
               args: [fetched.b64, fetched.mime],
             })
