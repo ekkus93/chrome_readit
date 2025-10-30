@@ -248,16 +248,43 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
       if (anyReq.action === 'cancel-speech' || anyReq.kind === 'cancel-speech') {
         cancelRequested = true
         paused = false
+        // Also notify the active tab to stop any in-page playback immediately.
+        ;(async () => {
+          try {
+            const tab = await getActiveHttpTab()
+            if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' })
+          } catch (_) {
+            // ignore
+          }
+        })()
         sendResponse({ ok: true })
         return true
       }
       if (anyReq.action === 'pause-speech' || anyReq.kind === 'pause-speech') {
         paused = true
+        // Notify active tab to pause current audio playback
+        ;(async () => {
+          try {
+            const tab = await getActiveHttpTab()
+            if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'PAUSE_SPEECH' })
+          } catch (_) {
+            // ignore
+          }
+        })()
         sendResponse({ ok: true })
         return true
       }
       if (anyReq.action === 'resume-speech' || anyReq.kind === 'resume-speech') {
         paused = false
+        // Notify active tab to resume current audio playback
+        ;(async () => {
+          try {
+            const tab = await getActiveHttpTab()
+            if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'RESUME_SPEECH' })
+          } catch (_) {
+            // ignore
+          }
+        })()
         sendResponse({ ok: true })
         return true
       }

@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite build && vite preview",
-    "test": "vitest --ui"
+    "test": "npx vitest --ui"
   },
   "dependencies": {
     "react": "^19.1.1",
