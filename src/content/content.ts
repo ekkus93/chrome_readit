@@ -1,11 +1,15 @@
 import { isReadSelection, isReadText, isPlayAudio } from '../lib/messaging'
 
+console.debug('[readit] content script loaded')
+
 // Ask the background/service worker to obtain TTS audio (avoids CORS)
 // and return the audio bytes which we then play in-page.
 async function speak(text: string) {
   try {
+    console.debug('[readit] content speak: requesting tts for', text.substring(0, 50) + '...')
     chrome.runtime.sendMessage({ action: 'request-tts', text }, (resp) => {
       try {
+        console.debug('[readit] content speak: received response', resp)
         if (!resp) {
           console.warn('[readit] speak: no response from background')
           return
@@ -30,6 +34,7 @@ async function speak(text: string) {
         }
         // audio may be an ArrayBuffer (structured clone) or a base64 string
         if (typeof audio === 'string') {
+          console.debug('[readit] content speak: decoding base64 audio')
           try {
             const bin = atob(audio)
             const len = bin.length
@@ -53,6 +58,7 @@ async function speak(text: string) {
             console.warn('[readit] speak: failed to decode base64 audio', err)
           }
         } else {
+          console.debug('[readit] content speak: playing ArrayBuffer audio')
           try {
             const buf = audio as ArrayBuffer
             const u8 = new Uint8Array(buf)
@@ -98,10 +104,12 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender) => {
       const t = msg.text?.trim()
       if (t) speak(t)
     } else if (isPlayAudio(msg)) {
+      console.debug('[readit] content PLAY_AUDIO: received audio message', { mime: msg.mime, audioType: typeof msg.audio, audioLength: typeof msg.audio === 'string' ? msg.audio.length : (msg.audio as ArrayBuffer)?.byteLength })
       try {
         const mime = msg.mime ?? 'audio/wav'
         if (typeof msg.audio === 'string') {
           // base64 path
+          console.debug('[readit] content PLAY_AUDIO: decoding base64')
           try {
             const bin = atob(msg.audio)
             const len = bin.length
@@ -112,13 +120,14 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender) => {
             const a = new Audio(url)
             a.autoplay = true
             const p = a.play()
-            if (p && p.catch) p.catch((e) => console.warn('[readit] audio play failed', e))
+            if (p && p.catch) p.catch((e) => console.warn('[readit] PLAY_AUDIO base64 play failed', e))
             setTimeout(() => URL.revokeObjectURL(url), 60_000)
           } catch (err) {
             console.warn('[readit] PLAY_AUDIO base64 handler failed', err)
           }
         } else {
           // ArrayBuffer path
+          console.debug('[readit] content PLAY_AUDIO: playing ArrayBuffer')
           try {
             const audioBuf = msg.audio
             const blob = new Blob([audioBuf], { type: mime })
@@ -127,7 +136,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender) => {
             a.src = url
             a.autoplay = true
             const p = a.play()
-            if (p && p.catch) p.catch((e) => console.warn('[readit] audio play failed', e))
+            if (p && p.catch) p.catch((e) => console.warn('[readit] PLAY_AUDIO ArrayBuffer play failed', e))
             setTimeout(() => URL.revokeObjectURL(url), 60_000)
           } catch (err) {
             console.warn('[readit] PLAY_AUDIO handler failed', err)

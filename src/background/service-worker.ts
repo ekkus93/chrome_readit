@@ -20,6 +20,7 @@ async function getActiveHttpTab() {
 
 
 export async function sendToActiveTabOrInject(msg: Msg) {
+  console.debug('[readit] sendToActiveTabOrInject called with', msg)
   // For reliability and to avoid injecting audio into arbitrary web pages,
   // the extension fetches TTS audio in the background and plays it inside
   // a dedicated extension-controlled player window. This avoids CORS / PNA
@@ -31,9 +32,11 @@ export async function sendToActiveTabOrInject(msg: Msg) {
     if (msg.kind === 'READ_TEXT') {
       textArg = msg.text
     } else if (!isReadText(msg)) {
+      console.debug('[readit] reading selection from active tab')
       // READ_SELECTION: read the selection from the active page using
       // scripting.executeScript (reading text is safe and non-invasive).
       const tab = await getActiveHttpTab()
+      console.debug('[readit] active tab for selection:', tab ? { id: tab.id, url: tab.url } : null)
       if (!tab) {
         console.warn('[readit] No eligible tab to read selection from')
         return
@@ -51,6 +54,7 @@ export async function sendToActiveTabOrInject(msg: Msg) {
         } else if (r && typeof r === 'object' && 'result' in (r as unknown as Record<string, unknown>)) {
           sel = (r as unknown as Record<string, unknown>).result
         }
+        console.debug('[readit] selection result:', sel)
         if (typeof sel === 'string' && sel) textArg = sel
         else {
           console.warn('[readit] no selection available')
@@ -62,6 +66,7 @@ export async function sendToActiveTabOrInject(msg: Msg) {
       }
     }
 
+    console.debug('[readit] text to speak:', textArg?.substring(0, 50) + '...')
     if (!textArg) {
       console.warn('[readit] no text to read')
       return
@@ -102,49 +107,44 @@ export async function sendToActiveTabOrInject(msg: Msg) {
 
     // Fetch TTS from configured service in the background (avoids page CORS)
     let resp: Response
+    console.debug('[readit] fetching TTS from', s.ttsUrl?.toString(), 'with voice', s.voice)
     try {
       resp = await fetch(s.ttsUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: textArg }),
+        body: JSON.stringify({ text: textArg, voice: s.voice }),
       })
     } catch (err) {
       console.warn('[readit] failed to fetch tts audio', err)
       return
     }
+    console.debug('[readit] TTS response status:', resp.status)
     if (!resp.ok) {
       console.warn('[readit] tts service returned non-ok', resp.status)
       return
     }
     const contentType = resp.headers.get('content-type') || 'audio/wav'
     const buf = await resp.arrayBuffer()
+    console.debug('[readit] received audio buffer of length', buf.byteLength, 'with content-type', contentType)
 
     // Send audio to the active page's content script so audio plays in-page.
     // This removes the legacy extension popup player window and avoids
     // creating small browser windows when doing TTS.
     try {
       const tab = await getActiveHttpTab()
+      console.debug('[readit] sending PLAY_AUDIO to tab:', tab ? { id: tab.id, url: tab.url } : null)
       if (tab && tab.id) {
-        try {
-          await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: buf, mime: contentType })
-          console.debug('[readit] forwarded audio to content script')
-        } catch (e) {
-          // If structured clone for ArrayBuffer fails, fall back to base64
-          try {
-            const bytes = new Uint8Array(buf)
-            let binary = ''
-            const CHUNK = 0x8000
-            for (let i = 0; i < bytes.length; i += CHUNK) {
-              const sub = bytes.subarray(i, i + CHUNK)
-              binary += String.fromCharCode.apply(null, Array.from(sub))
-            }
-            const b64 = btoa(binary)
-            await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: b64, mime: contentType })
-            console.debug('[readit] forwarded base64 audio to content script')
-          } catch (e2) {
-            console.warn('[readit] failed to send audio to content script', e2)
-          }
+        // Always convert to base64 for reliable message passing
+        const bytes = new Uint8Array(buf)
+        let binary = ''
+        const CHUNK = 0x8000
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+          const sub = bytes.subarray(i, i + CHUNK)
+          binary += String.fromCharCode.apply(null, Array.from(sub))
         }
+        const b64 = btoa(binary)
+        await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: b64, mime: contentType })
+        console.debug('[readit] forwarded base64 audio to content script')
       } else {
         // No eligible tab to receive audio; log and skip playing rather
         // than opening a popup window.
@@ -250,7 +250,18 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           }
           const contentType = resp.headers.get('content-type') || 'audio/wav'
           const buf = await resp.arrayBuffer()
-          sendResponse({ ok: true, audio: buf, mime: contentType })
+          
+          // Convert ArrayBuffer to base64 for message passing
+          const bytes = new Uint8Array(buf)
+          let binary = ''
+          const CHUNK_SIZE = 0x8000
+          for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+            const chunk = bytes.subarray(i, i + CHUNK_SIZE)
+            binary += String.fromCharCode.apply(null, Array.from(chunk))
+          }
+          const b64 = btoa(binary)
+          
+          sendResponse({ ok: true, audio: b64, mime: contentType })
           return
         } catch (err) {
           sendResponse({ ok: false, error: String(err) })
@@ -307,8 +318,17 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           const tab = await getActiveHttpTab()
           if (tab && tab.id) {
             try {
-              await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: buf, mime: contentType })
-              console.debug('[readit] test-tts: forwarded audio to content script')
+              // Convert to base64 for consistent message passing
+              const bytes = new Uint8Array(buf)
+              let binary = ''
+              const CHUNK_SIZE = 0x8000
+              for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+                const chunk = bytes.subarray(i, i + CHUNK_SIZE)
+                binary += String.fromCharCode.apply(null, Array.from(chunk))
+              }
+              const b64 = btoa(binary)
+              await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: b64, mime: contentType })
+              console.debug('[readit] test-tts: forwarded base64 audio to content script')
             } catch (err) {
               console.warn('[readit] test-tts: failed to send audio to content script', err)
             }

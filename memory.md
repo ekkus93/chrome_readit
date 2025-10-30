@@ -1,5 +1,4 @@
-
- 2025-10-27T04:20:00Z - Decision: keep `<all_urls>` in `src/manifest.ts` (Option C) per user instruction — no manifest change performed.
+2025-10-27T04:20:00Z - Decision: keep `<all_urls>` in `src/manifest.ts` (Option C) per user instruction — no manifest change performed.
 2025-10-27T05:30:00Z - Reminder: run `npm run lint` (or `npx eslint`) locally before committing and pushing to avoid CI failures due to lint errors. Add a pre-push lint check if desired.
 2025-10-27T12:00:00Z - Note: Remember - Too smart is stupid.
 2025-10-27T12:00:00Z - Explanation: Overly clever or intrusive automation can cause harm or confusion — it may make assumptions that conflict with the user's constraints, take actions the user rejects, or add complexity that becomes a maintenance burden. Treat "too smart" behaviours as risky: prefer explicit, reversible, and least-privilege changes, ask only essential clarifying questions, and default to opt-in designs. This helps maintain user control, reduces unexpected side effects, and keeps the codebase and UX predictable.
@@ -7,3 +6,5 @@
 2025-10-27T12:05:00Z - Decision/Preference: User requested the default TTS URL be set to the local Coqui server. Updated `src/lib/storage.ts` DEFAULTS.ttsUrl to 'http://localhost:5002/api/tts' and prefilled the Options UI accordingly. Background `test-tts` now returns audio bytes so Options can play them.
 
 2025-10-28T00:00:00Z - Fix: Added a player readiness handshake in `src/background/service-worker.ts` (function `waitForPlayerReady`) and awaited it before sending `{ action: 'play-audio'` to the player window. This avoids "Could not establish connection. Receiving end does not exist." when Options triggers "Test speech" while the player is still loading. Suggested to reload unpacked extension in Chrome to pick up the change.
+
+2025-10-29T00:00:00Z - Success: Upgraded Coqui TTS docker server to multi-speaker VITS model (tts_models/en/vctk/vits) providing 109 voices instead of 1. Added espeak-ng dependency to Dockerfile, implemented model pre-download at build time to reduce startup delays, and verified /api/voices endpoint returns complete voice list. Service now running on port 5002 with voice selection support.

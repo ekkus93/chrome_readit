@@ -21,9 +21,9 @@ export async function fetchVoicesForTtsUrl(ttsUrl: string): Promise<string[]> {
   }
 }
 
-const DEFAULTS: Settings = { rate: 1.0 }
+const DEFAULTS: Settings = { rate: 1.0, voice: 'p225' }
 
-const DEFAULT_TTS_URL = 'http://localhost:5002/api/tts/play'
+const DEFAULT_TTS_URL = 'http://localhost:5002/api/tts'
 
 async function getSettings(): Promise<Settings> {
   const s = await chrome.storage.sync.get(['settings'])
@@ -166,8 +166,28 @@ export default function Options() {
       if (!resp) { setTestStatus('error'); setTestError('no response from background'); return }
   if (resp.ok && resp.audio) {
         try {
-          const buf = resp.audio as ArrayBuffer
           const mime = resp.mime || 'audio/wav'
+          
+          // Decode base64 audio back to ArrayBuffer
+          let buf: ArrayBuffer
+          if (typeof resp.audio === 'string') {
+            // Base64 encoded audio from service worker
+            try {
+              const binary = atob(resp.audio)
+              const len = binary.length
+              const u8 = new Uint8Array(len)
+              for (let i = 0; i < len; i++) u8[i] = binary.charCodeAt(i)
+              buf = u8.buffer
+            } catch (err) {
+              console.warn('[readit] failed to decode base64 audio', err)
+              setTestStatus('error')
+              setTestError('Failed to decode audio data')
+              return
+            }
+          } else {
+            // Direct ArrayBuffer (fallback)
+            buf = resp.audio as ArrayBuffer
+          }
 
           // Check that the returned buffer actually looks like audio. Some
           // endpoints (e.g. the server-side play-only path) may return JSON

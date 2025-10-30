@@ -46,19 +46,24 @@ def synth(req: TTSRequest):
         # TTS.api.TTS provides tts_to_file that writes audio to disk
         # Support optional voice/speaker selection if backend supports it.
         try:
-            if req.voice:
+            # Check if speakers are available (indicates multi-speaker model)
+            speakers = getattr(tts, 'speakers', None) or getattr(tts, 'available_speakers', None)
+            if speakers:
+                # Multi-speaker model - always provide a speaker
+                speaker = req.voice or 'p225'  # Default to p225 if no voice specified
                 try:
-                    tts.tts_to_file(text=req.text, file_path=out_path, speaker=req.voice)
+                    tts.tts_to_file(text=req.text, file_path=out_path, speaker=speaker)
                 except TypeError:
                     try:
-                        tts.tts_to_file(text=req.text, file_path=out_path, voice=req.voice)
+                        tts.tts_to_file(text=req.text, file_path=out_path, voice=speaker)
                     except TypeError:
-                        raise HTTPException(status_code=400, detail=f"voice '{req.voice}' not supported by backend")
+                        raise HTTPException(status_code=400, detail=f"voice '{speaker}' not supported by backend")
             else:
+                # Single-speaker model
                 tts.tts_to_file(text=req.text, file_path=out_path)
         except HTTPException:
             raise
-        except Exception:
+        except Exception as e:
             # Re-raise as generic error handled below
             raise
         # Optionally play the generated audio on the host's sound device.
@@ -172,6 +177,26 @@ def synth_play(req: TTSRequest):
         # cleanup, implement a background cleanup task that deletes files after a
         # short delay.
         pass
+
+
+@app.get("/api/debug")
+def debug():
+    """Debug endpoint to inspect TTS object."""
+    tts = getattr(app.state, "tts", None)
+    if tts is None:
+        return {"error": "TTS not initialized"}
+    
+    attrs = [attr for attr in dir(tts) if not attr.startswith('_')]
+    speakers = getattr(tts, 'speakers', None)
+    available_speakers = getattr(tts, 'available_speakers', None)
+    
+    return {
+        "attributes": attrs,
+        "speakers": speakers,
+        "available_speakers": available_speakers,
+        "is_multi_speaker": getattr(tts, 'is_multi_speaker', None),
+        "speaker_manager": getattr(tts, 'speaker_manager', None)
+    }
 
 
 @app.get("/api/ping")

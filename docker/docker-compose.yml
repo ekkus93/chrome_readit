@@ -2,8 +2,20 @@ version: '3.8'
 services:
   coqui-local:
     build:
-      context: ..
-      dockerfile: docker/coqui-local/Dockerfile
+      context: ./coqui-local
+      dockerfile: Dockerfile
     ports:
       - "5002:5002"
-    restart: unless-stopped
+    environment:
+      # Use a multi-speaker model so the server can expose selectable voices.
+      # Multi-speaker models are larger and slower on CPU; pick based on your needs.
+      - COQUI_MODEL=tts_models/en/vctk/vits
+      # Persist downloaded model files to a named volume to avoid re-downloading
+      # and to keep image sizes smaller across rebuilds.
+      - TTS_CACHE_DIR=/root/.local/share/tts
+      # Enable host audio playback
+      - PLAY_ON_HOST=1
+      - PULSE_SERVER=unix:/tmp/pulse/native
+
+volumes:
+  coqui_models:
