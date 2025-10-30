@@ -180,14 +180,5 @@ The extension defaults to voice 'p225' but you can change this in the extension 
 - Voice 'p225' is a good default for clear, natural speech
 - Some voices may work better for different types of text
 
-## Quick contact / contributor notes
 
-If you'd like, I can open a PR that:
-- Fixes the Options mount/save race so stored settings are not overwritten on load.
-- Proposes a narrowed `host_permissions` and (optionally) converts broad hosts to `optional_permissions` (ask-first change).
-- Adds CI validations for manifest assets and a short publishing checklist.
-
----
-
-This README was updated on October 29, 2025 to reflect the upgrade to Coqui TTS with 109 voices and improved setup instructions.
 
