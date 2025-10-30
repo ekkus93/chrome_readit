@@ -29,6 +29,19 @@ const manifest: ManifestV3 = {
       suggested_key: { default: 'Alt+Shift+R' },
       description: 'Read current selection',
     },
+    // Added pause/resume/cancel keyboard shortcuts for quick control
+    'pause-speech': {
+      suggested_key: { default: 'Alt+Shift+P' },
+      description: 'Pause reading',
+    },
+    'resume-speech': {
+      suggested_key: { default: 'Alt+Shift+U' },
+      description: 'Resume reading',
+    },
+    'cancel-speech': {
+      suggested_key: { default: 'Alt+Shift+C' },
+      description: 'Cancel/stop reading',
+    },
   },
 
   // Use SOURCE file here as well; CRXJS will hash it in dist

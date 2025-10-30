@@ -207,10 +207,40 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
   return false
 })
 
-// Keyboard shortcut
+// Keyboard shortcuts
 chrome.commands.onCommand.addListener(async (command: string) => {
-  if (command === 'read-selection') {
-    await sendToActiveTabOrInject({ kind: 'READ_SELECTION' })
+  try {
+    if (command === 'read-selection') {
+      await sendToActiveTabOrInject({ kind: 'READ_SELECTION' })
+      return
+    }
+
+    // Pause / Resume / Cancel shortcuts map directly to the same
+    // control actions exposed via runtime messages. We update internal
+    // flags and also notify the active tab so in-page playback is
+    // controlled immediately.
+    const tab = await getActiveHttpTab()
+    if (command === 'pause-speech') {
+      paused = true
+      try { if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'PAUSE_SPEECH' }) } catch (e) { /* ignore */ }
+      return
+    }
+    if (command === 'resume-speech') {
+      paused = false
+      try { if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'RESUME_SPEECH' }) } catch (e) { /* ignore */ }
+      return
+    }
+    if (command === 'cancel-speech') {
+      cancelRequested = true
+      paused = false
+      try { if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch (e) { /* ignore */ }
+      // resetQueue will be performed by running code path where appropriate
+      // but ensure state is reset here for safety.
+      resetQueue()
+      return
+    }
+  } catch (err) {
+    console.warn('[readit] commands.onCommand handler failed', err)
   }
 })
 
