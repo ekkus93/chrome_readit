@@ -103,8 +103,8 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
       console.debug('[readit] content PLAY_AUDIO: received audio message', { mime: msg.mime, audioType: typeof msg.audio, audioLength: typeof msg.audio === 'string' ? msg.audio.length : (msg.audio as ArrayBuffer)?.byteLength })
       try {
         const mime = msg.mime ?? 'audio/wav'
-        // Stop any previously playing audio (we'll replace it with the new chunk)
-        try { playback.stop() } catch {}
+  // Stop any previously playing audio (we'll replace it with the new chunk)
+  try { playback.stop() } catch (e) { void e }
 
         if (typeof msg.audio === 'string') {
           void playback.playBase64(msg.audio as string, mime).then((r) => sendResponse?.(r))
@@ -118,7 +118,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
       }
     }
     // Support pause/resume/stop messages so the background can control playback
-    else if (typeof msg === 'object' && msg !== null && (msg as any).kind === 'PAUSE_SPEECH') {
+    if (typeof msg === 'object' && msg !== null && (msg as Record<string, unknown>).kind === 'PAUSE_SPEECH') {
       try {
         playback.pause()
         sendResponse?.({ ok: true, paused: true })
@@ -127,7 +127,8 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
         sendResponse?.({ ok: false, error: String(err) })
       }
       return true
-    } else if (typeof msg === 'object' && msg !== null && (msg as any).kind === 'RESUME_SPEECH') {
+    }
+    if (typeof msg === 'object' && msg !== null && (msg as Record<string, unknown>).kind === 'RESUME_SPEECH') {
       try {
         void playback.resume().then(() => sendResponse?.({ ok: true, resumed: true })).catch((e) => sendResponse?.({ ok: false, error: String(e) }))
       } catch (err) {
@@ -137,7 +138,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
       return true
     }
     // Support a stop message so the background can cancel queued playback
-    else if (typeof msg === 'object' && msg !== null && (msg as any).kind === 'STOP_SPEECH') {
+    if (typeof msg === 'object' && msg !== null && (msg as Record<string, unknown>).kind === 'STOP_SPEECH') {
       try {
         playback.stop()
         sendResponse?.({ ok: true, stopped: true })

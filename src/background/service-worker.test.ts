@@ -54,22 +54,22 @@ describe('background.sendToActiveTabOrInject', () => {
 
   it('sends message to active tab when content script present', async () => {
     // Arrange
-  ;(globalThis as any).chrome.tabs.query.mockResolvedValue([{ id: 123, url: 'https://example.com' }])
-  ;(globalThis as any).chrome.tabs.sendMessage.mockResolvedValue(undefined)
-  ;(globalThis as any).chrome.scripting.executeScript.mockResolvedValue([{ result: 'selected text' }])
+    const g = globalThis as unknown as { chrome: ChromeMock }
+    ;(g.chrome.tabs.query as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.([{ id: 123, url: 'https://example.com' }])
+    ;(g.chrome.tabs.sendMessage as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.(undefined)
+    ;(g.chrome.scripting.executeScript as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.([{ result: 'selected text' }])
     const mockedGetSettings = vi.mocked(getSettings)
     mockedGetSettings.mockResolvedValue({ voice: 'V', rate: 1.0, ttsUrl: 'http://localhost/tts' })
-  ;(globalThis as any).chrome.runtime.sendMessage.mockResolvedValue(undefined)
-    ;(globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new ArrayBuffer(8) })
+    ;(g.chrome.runtime.sendMessage as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.(undefined)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new ArrayBuffer(8) }))
 
     // Import module after mocks are set up
     const mod = await import('./service-worker')
 
-    // Act
-    await mod.sendToActiveTabOrInject({ kind: 'READ_SELECTION' })
+  // Act
+  await mod.sendToActiveTabOrInject({ kind: 'READ_SELECTION' })
 
     // Assert
-  const g = globalThis as unknown as { chrome: ChromeMock }
   // Canonical playback now forwards audio to the content script; ensure
   // we did not open a player window and that the content script was used.
   expect(g.chrome.tabs.sendMessage).toHaveBeenCalled()
@@ -81,12 +81,13 @@ describe('background.sendToActiveTabOrInject', () => {
   })
 
   it('falls back to executeScript when sendMessage throws and passes READ_TEXT', async () => {
-  ;(globalThis as any).chrome.tabs.query.mockResolvedValue([{ id: 55, url: 'https://example.com' }])
-  ;(globalThis as any).chrome.tabs.sendMessage.mockRejectedValue(new Error('no content script'))
+    const g = globalThis as unknown as { chrome: ChromeMock }
+    ;(g.chrome.tabs.query as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.([{ id: 55, url: 'https://example.com' }])
+    ;(g.chrome.tabs.sendMessage as unknown as { mockRejectedValue?: (e: unknown) => void }).mockRejectedValue?.(new Error('no content script'))
     const mockedGetSettings2 = vi.mocked(getSettings)
     mockedGetSettings2.mockResolvedValue({ voice: 'V', rate: 1.5, ttsUrl: 'http://localhost/tts' })
-  ;(globalThis as any).chrome.runtime.sendMessage.mockResolvedValue(undefined)
-    ;(globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new ArrayBuffer(8) })
+    ;(g.chrome.runtime.sendMessage as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.(undefined)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new ArrayBuffer(8) }))
 
     const mod = await import('./service-worker')
 
@@ -97,7 +98,8 @@ describe('background.sendToActiveTabOrInject', () => {
   })
 
   it('does nothing when there is no eligible tab', async () => {
-  ;(globalThis as any).chrome.tabs.query.mockResolvedValue([])
+    const g = globalThis as unknown as { chrome: ChromeMock }
+    ;(g.chrome.tabs.query as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.([])
     const mod = await import('./service-worker')
     await mod.sendToActiveTabOrInject({ kind: 'READ_SELECTION' })
     const g3 = globalThis as unknown as { chrome: ChromeMock }
@@ -106,14 +108,13 @@ describe('background.sendToActiveTabOrInject', () => {
   })
 
   it('logs when executeScript fails after sendMessage rejection', async () => {
-  const tabsQueryMock = (globalThis as any).chrome!.tabs.query as unknown as { mockResolvedValue: (v: unknown) => void }
-  const tabsSendMock = (globalThis as any).chrome!.tabs.sendMessage as unknown as { mockRejectedValue: (e: unknown) => void }
-  tabsQueryMock.mockResolvedValue([{ id: 99, url: 'https://example.com' }])
-  tabsSendMock.mockRejectedValue(new Error('no content script'))
-  const mockedGetSettings = vi.mocked(getSettings)
-  mockedGetSettings.mockResolvedValue({ voice: 'V', rate: 1.0, ttsUrl: 'http://localhost/tts' })
-  ;(globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new ArrayBuffer(8) })
-  ;(globalThis as any).chrome.scripting.executeScript.mockResolvedValue([{ result: 'selected text' }])
+    const g = globalThis as unknown as { chrome: ChromeMock }
+    ;(g.chrome.tabs.query as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.([{ id: 99, url: 'https://example.com' }])
+    ;(g.chrome.tabs.sendMessage as unknown as { mockRejectedValue?: (e: unknown) => void }).mockRejectedValue?.(new Error('no content script'))
+    const mockedGetSettings = vi.mocked(getSettings)
+    mockedGetSettings.mockResolvedValue({ voice: 'V', rate: 1.0, ttsUrl: 'http://localhost/tts' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new ArrayBuffer(8) }))
+    ;(g.chrome.scripting.executeScript as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.([{ result: 'selected text' }])
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
@@ -126,10 +127,9 @@ describe('background.sendToActiveTabOrInject', () => {
   })
 
   it('logs when getSettings rejects and does not throw', async () => {
-  const tabsQueryMock2 = (globalThis as any).chrome!.tabs.query as unknown as { mockResolvedValue: (v: unknown) => void }
-  const tabsSendMock2 = (globalThis as any).chrome!.tabs.sendMessage as unknown as { mockRejectedValue: (e: unknown) => void }
-  tabsQueryMock2.mockResolvedValue([{ id: 77, url: 'https://example.com' }])
-  tabsSendMock2.mockRejectedValue(new Error('no content script'))
+    const g = globalThis as unknown as { chrome: ChromeMock }
+    ;(g.chrome.tabs.query as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.([{ id: 77, url: 'https://example.com' }])
+    ;(g.chrome.tabs.sendMessage as unknown as { mockRejectedValue?: (e: unknown) => void }).mockRejectedValue?.(new Error('no content script'))
     const mockedGetSettings = vi.mocked(getSettings)
     mockedGetSettings.mockRejectedValue(new Error('storage error'))
 
@@ -139,7 +139,7 @@ describe('background.sendToActiveTabOrInject', () => {
     await mod.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: 'hi' })
 
     expect(mockedGetSettings).toHaveBeenCalled()
-  // legacy player window is not used; ensure we logged a warning
+    // legacy player window is not used; ensure we logged a warning
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
   })

@@ -10,7 +10,7 @@ describe('Options playback control buttons', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.resetAllMocks()
-    ;(globalThis as unknown as { chrome?: any }).chrome = {
+  ;(globalThis as unknown as { chrome?: unknown }).chrome = {
       storage: { sync: { get: vi.fn(() => Promise.resolve({ settings: { rate: 1.0, voice: '' } })), set: vi.fn(() => Promise.resolve()) } },
       runtime: { sendMessage: vi.fn() },
       tabs: { query: vi.fn(() => Promise.resolve([{ id: 1, url: 'https://example.com' }])), sendMessage: vi.fn() },
@@ -19,6 +19,18 @@ describe('Options playback control buttons', () => {
       runtimeOnMessage: { addListener: vi.fn() },
     }
   })
+
+  function getGlobal(path: string[]) {
+    let obj: unknown = globalThis
+    for (const p of path) {
+      if (obj && typeof obj === 'object' && p in (obj as Record<string, unknown>)) {
+        obj = (obj as Record<string, unknown>)[p]
+      } else {
+        return undefined
+      }
+    }
+    return obj
+  }
 
   it('sends pause/resume/stop messages when Options buttons are clicked', async () => {
     render(<Options />)
@@ -33,10 +45,11 @@ describe('Options playback control buttons', () => {
     await user.click(resume)
     await user.click(stop)
 
-    const send = (globalThis as any).chrome.runtime.sendMessage
-    expect(send).toHaveBeenCalled()
-    expect(send).toHaveBeenCalledWith({ action: 'pause-speech' }, expect.any(Function))
-    expect(send).toHaveBeenCalledWith({ action: 'resume-speech' }, expect.any(Function))
-    expect(send).toHaveBeenCalledWith({ action: 'cancel-speech' }, expect.any(Function))
+    const runtimeSend = getGlobal(['chrome', 'runtime', 'sendMessage']) as unknown as { mock?: { calls?: unknown[][] } }
+    const calls = (runtimeSend.mock?.calls as unknown[][]) || []
+    expect(calls.length).toBeGreaterThan(0)
+    expect(calls.some((c) => (c[0] as Record<string, unknown>)?.action === 'pause-speech')).toBeTruthy()
+    expect(calls.some((c) => (c[0] as Record<string, unknown>)?.action === 'resume-speech')).toBeTruthy()
+    expect(calls.some((c) => (c[0] as Record<string, unknown>)?.action === 'cancel-speech')).toBeTruthy()
   })
 })

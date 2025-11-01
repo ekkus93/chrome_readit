@@ -5,12 +5,13 @@ console.debug('[readit] player loaded')
 
 chrome.runtime.sendMessage({ action: 'player_ready' })
 
-chrome.runtime.onMessage.addListener((msg: any) => {
+chrome.runtime.onMessage.addListener((msg: unknown) => {
   try {
     if (!msg || typeof msg !== 'object') return
-    if (msg.action === 'play-audio') {
-      const audio = msg.audio
-      const mime = msg.mime || 'audio/wav'
+    const m = msg as Record<string, unknown>
+    if (m.action === 'play-audio') {
+      const audio = m.audio
+      const mime = (m.mime as string) || 'audio/wav'
       if (!audio) {
         console.warn('[readit] player: no audio provided')
         return
@@ -23,12 +24,12 @@ chrome.runtime.onMessage.addListener((msg: any) => {
         console.warn('[readit] player: received non-audio payload', mime)
         try {
           const voices = window.speechSynthesis.getVoices()
-          if (voices && voices.length > 0 && typeof msg.text === 'string') {
-            const u = new SpeechSynthesisUtterance(msg.text)
+          if (voices && voices.length > 0 && typeof m.text === 'string') {
+            const u = new SpeechSynthesisUtterance(m.text as string)
             window.speechSynthesis.cancel()
             window.speechSynthesis.speak(u)
             // close after a short delay to allow playback to start
-            setTimeout(() => { try { window.close() } catch { /* ignore */ } }, 1000)
+            setTimeout(() => { try { window.close() } catch (e) { void e } }, 1000)
             return
           }
         } catch (e) {
@@ -50,22 +51,20 @@ chrome.runtime.onMessage.addListener((msg: any) => {
           // Guard against empty buffers
           if (u8.length === 0) {
             console.warn('[readit] player: decoded audio buffer is empty', { mime })
-            try { window.close() } catch {}
+            try { window.close() } catch (e) { void e }
             return
           }
           a.play().catch((e) => {
-            const hex = (() => { try { const v = u8.subarray(0,16); return Array.from(v).map(x=>x.toString(16).padStart(2,'0')).join(' ') } catch { return '<n/a>' } })()
+            const hex = (() => { try { const v = u8.subarray(0,16); return Array.from(v).map(x=>x.toString(16).padStart(2,'0')).join(' ') } catch (err) { void err; return '<n/a>' } })()
             console.warn('[readit] player play failed', { mime, prefixHex: hex, error: e })
           })
           a.onended = () => {
             // close window after playback
             try {
               window.close()
-            } catch {
-              /* ignore */
-            }
+            } catch (e) { void e }
           }
-          setTimeout(() => URL.revokeObjectURL(url), 60_000)
+          setTimeout(() => { try { URL.revokeObjectURL(url) } catch (e) { void e } }, 60_000)
         } catch (err) {
           console.warn('[readit] player: failed to decode base64', err)
         }
@@ -75,7 +74,7 @@ chrome.runtime.onMessage.addListener((msg: any) => {
           const u8 = new Uint8Array(buf)
           if (u8.length === 0) {
             console.warn('[readit] player: fetched audio buffer is empty', { mime })
-            try { window.close() } catch {}
+            try { window.close() } catch (e) { void e }
             return
           }
           const blob = new Blob([buf], { type: mime })
@@ -85,20 +84,12 @@ chrome.runtime.onMessage.addListener((msg: any) => {
           a.play().catch((e) => {
             try {
               const u8 = new Uint8Array(buf)
-              const hex = (() => { try { const v = u8.subarray(0,16); return Array.from(v).map(x=>x.toString(16).padStart(2,'0')).join(' ') } catch { return '<n/a>' } })()
+              const hex = (() => { try { const v = u8.subarray(0,16); return Array.from(v).map(x=>x.toString(16).padStart(2,'0')).join(' ') } catch (err) { void err; return '<n/a>' } })()
               console.warn('[readit] player play failed', { mime, prefixHex: hex, error: e })
-            } catch {
-              console.warn('[readit] player play failed', { mime, error: e })
-            }
+            } catch (err) { void err; console.warn('[readit] player play failed', { mime, error: e }) }
           })
-          a.onended = () => {
-            try {
-              window.close()
-            } catch {
-              /* ignore */
-            }
-          }
-          setTimeout(() => URL.revokeObjectURL(url), 60_000)
+          a.onended = () => { try { window.close() } catch (e) { void e } }
+          setTimeout(() => { try { URL.revokeObjectURL(url) } catch (e) { void e } }, 60_000)
         } catch (err) {
           console.warn('[readit] player: failed to play buffer', err)
         }

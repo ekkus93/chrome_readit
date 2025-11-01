@@ -30,36 +30,39 @@ export class PlaybackController {
 
     return new Promise((resolve) => {
       let responded = false
-      const finish = (ok: boolean, info?: any) => {
+  const finish = (ok: boolean, info?: Record<string, unknown>) => {
         if (responded) return
         responded = true
         try {
           a.pause()
-        } catch {}
+  } catch (e) { void e }
         this.currentAudio = null
         try {
           URL.revokeObjectURL(url)
-        } catch {}
+  } catch (e) { void e }
         resolve({ ok, ...info })
       }
 
       const done = () => finish(true)
       a.addEventListener('ended', done)
 
-  a.addEventListener('error', async (_err) => {
+      a.addEventListener('error', async (err) => {
+        void err
         // HTMLAudio failed; attempt WebAudio fallback
         try {
           try {
             URL.revokeObjectURL(url)
-          } catch {}
+    } catch (e) { void e }
           this.currentAudio = null
-          const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext
+          const win = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }
+          const AudioCtx = win.AudioContext || win.webkitAudioContext
           if (!AudioCtx) {
             finish(false, { error: 'webaudio-unavailable' })
             return
           }
           const ctx = new AudioCtx()
-          const audioBuffer = await ctx.decodeAudioData(u8.buffer.slice(0))
+          const ab = u8.buffer.slice(0) as ArrayBuffer
+          const audioBuffer = await ctx.decodeAudioData(ab)
           const src = ctx.createBufferSource()
           src.buffer = audioBuffer
           src.connect(ctx.destination)
@@ -67,7 +70,7 @@ export class PlaybackController {
           src.onended = () => {
             try {
               this.currentAudioContextSource = null
-            } catch {}
+            } catch (e) { void e }
             finish(true)
           }
           src.start(0)
@@ -78,21 +81,24 @@ export class PlaybackController {
 
       a.src = url
       const p = a.play()
-      if (p && (p as Promise<any>).catch) {
-        ;(p as Promise<any>).catch(async (_err) => {
+      if (p && typeof (p as Promise<unknown>).catch === 'function') {
+        ;(p as Promise<unknown>).catch(async (err) => {
+          void err
           // play() rejected (autoplay/codec); attempt WebAudio fallback
           try {
             try {
               URL.revokeObjectURL(url)
-            } catch {}
+            } catch (e) { void e }
             this.currentAudio = null
-            const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext
+            const win = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }
+            const AudioCtx = win.AudioContext || win.webkitAudioContext
             if (!AudioCtx) {
               finish(false, { error: 'webaudio-unavailable' })
               return
             }
             const ctx = new AudioCtx()
-            const audioBuffer = await ctx.decodeAudioData(u8.buffer.slice(0))
+            const ab = u8.buffer.slice(0) as ArrayBuffer
+            const audioBuffer = await ctx.decodeAudioData(ab)
             const src = ctx.createBufferSource()
             src.buffer = audioBuffer
             src.connect(ctx.destination)
@@ -100,7 +106,7 @@ export class PlaybackController {
             src.onended = () => {
               try {
                 this.currentAudioContextSource = null
-              } catch {}
+              } catch (e) { void e }
               finish(true)
             }
             src.start(0)
@@ -116,11 +122,11 @@ export class PlaybackController {
     if (this.currentAudio) {
       try {
         this.currentAudio.pause()
-      } catch {}
+              } catch (e) { void e }
     } else if (this.currentAudioContextSource) {
       try {
         this.currentAudioContextSource.ctx.suspend?.()
-      } catch {}
+  } catch (e) { void e }
     }
   }
 
@@ -128,11 +134,11 @@ export class PlaybackController {
     if (this.currentAudio) {
       try {
         await this.currentAudio.play()
-      } catch {}
+  } catch (e) { void e }
     } else if (this.currentAudioContextSource) {
       try {
         await this.currentAudioContextSource.ctx.resume()
-      } catch {}
+  } catch (e) { void e }
     }
   }
 
@@ -141,16 +147,16 @@ export class PlaybackController {
       try {
         this.currentAudio.pause()
         this.currentAudio.src = ''
-      } catch {}
+  } catch (e) { void e }
       this.currentAudio = null
     }
     if (this.currentAudioContextSource) {
       try {
         this.currentAudioContextSource.src.stop?.()
-      } catch {}
+  } catch (e) { void e }
       try {
         this.currentAudioContextSource.ctx.close?.()
-      } catch {}
+  } catch (e) { void e }
       this.currentAudioContextSource = null
     }
   }

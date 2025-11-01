@@ -15,7 +15,7 @@ export function prefixHexFromU8(u8: Uint8Array | null | undefined, len = 32): st
   try {
     const slice = u8.subarray(0, Math.min(len, u8.length))
     return Array.from(slice).map((b) => b.toString(16).padStart(2, '0')).join(' ')
-  } catch (_) {
+  } catch {
     return '<err>'
   }
 }

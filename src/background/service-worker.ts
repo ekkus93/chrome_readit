@@ -28,9 +28,7 @@ function prefixHexFromBuffer(buf: ArrayBuffer | null | undefined, len = 32) {
     const u = new Uint8Array(buf)
     const slice = u.subarray(0, Math.min(len, u.length))
     return Array.from(slice).map((b) => b.toString(16).padStart(2, '0')).join(' ')
-  } catch (_) {
-    return '<err>'
-  }
+  } catch (e) { void e; return '<err>' }
 }
 
 // Wait for the player window to announce readiness. The player page
@@ -44,7 +42,7 @@ function prefixHexFromBuffer(buf: ArrayBuffer | null | undefined, len = 32) {
 
 const MAX_CHUNK_CHARS = 400
 // Allow tests to override the chunk timeout via globalThis.__CHUNK_TIMEOUT_MS
-const CHUNK_TIMEOUT_MS = (globalThis as any).__CHUNK_TIMEOUT_MS ?? 60_000 // default 1 minute
+const CHUNK_TIMEOUT_MS = ((globalThis as unknown as { __CHUNK_TIMEOUT_MS?: number }).__CHUNK_TIMEOUT_MS) ?? 60_000 // default 1 minute
 const PREFETCH_COUNT = 2 // how many chunks to fetch ahead of playback
 
 let cancelRequested = false
@@ -170,12 +168,42 @@ async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[],
         }
 
         // Send to content script and wait for ack or timeout
-        try {
-          const sendPromise = (async () => { if (!tab.id) return null; return await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: entry.b64, mime: entry.mime }) })()
-          const timeout = new Promise((res) => setTimeout(() => res({ timeout: true }), CHUNK_TIMEOUT_MS))
-          const res = await Promise.race([sendPromise, timeout])
-          if (res && (res as any).timeout) console.warn('[readit] chunk ack timeout; proceeding')
-        } catch (err) { console.warn('[readit] send chunk failed', err); cancelRequested = true; break }
+                try {
+                  // Try the normal content-script path first. If the tab has a
+                  // content script registered and listening this will resolve.
+                  const sendPromise = (async () => { if (!tab.id) return null; return await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: entry.b64, mime: entry.mime }) })()
+                  const timeout = new Promise((res) => setTimeout(() => res({ timeout: true }), CHUNK_TIMEOUT_MS))
+                  const res = await Promise.race([sendPromise, timeout])
+                  if (res && typeof res === 'object' && res !== null && 'timeout' in (res as Record<string, unknown>) && (res as Record<string, unknown>).timeout) console.warn('[readit] chunk ack timeout; proceeding')
+                } catch (err) {
+                  // If sendMessage fails because no content script exists in the
+                  // page, attempt to play the chunk by injecting a small script
+                  // that creates an HTMLAudio element with a data: URI. This
+                  // avoids cancelling the entire pipeline for pages where the
+                  // manifest content script wasn't present or was blocked.
+                  console.warn('[readit] send chunk failed - attempting executeScript fallback', err)
+                  try {
+                    if (tab.id) {
+                      await chrome.scripting.executeScript({
+                        target: { tabId: tab.id },
+                        world: 'MAIN',
+                        func: (b64: string, mime: string) => {
+                          try {
+                            const audio = new Audio(`data:${mime};base64,${b64}`)
+                            // play() returns a promise; swallow failures
+                            void audio.play().catch(() => { /* ignore */ })
+                            return true
+                          } catch { return false }
+                        },
+                        args: [entry.b64, entry.mime],
+                      })
+                    }
+                  } catch (ex) {
+                    console.warn('[readit] executeScript fallback failed', ex)
+                    cancelRequested = true
+                    break
+                  }
+                }
 
         // Free memory for this chunk and move to next
         audioMap.delete(nextSendIndex)
@@ -193,7 +221,7 @@ async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[],
   await Promise.all([prod, cons])
 
   if (cancelRequested) {
-    try { if (tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch {}
+    try { if (tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch (e) { void e }
     resetQueue()
     return
   }
@@ -210,11 +238,16 @@ export async function sendToActiveTabOrInject(msg: Msg) {
     else {
       const tab = await getActiveHttpTab()
       if (!tab) return
-      try {
-        const r = await chrome.scripting.executeScript({ target: { tabId: tab.id! }, world: 'MAIN', func: () => window.getSelection?.()?.toString().trim() ?? '' })
-        if (Array.isArray(r) && r.length > 0) textArg = (r[0] as any).result
-        else if (r && typeof r === 'object' && 'result' in (r as any)) textArg = (r as any).result
-      } catch (err) { console.warn('[readit] executeScript failed', err); return }
+        try {
+          const r = await chrome.scripting.executeScript({ target: { tabId: tab.id! }, world: 'MAIN', func: () => window.getSelection?.()?.toString().trim() ?? '' })
+          if (Array.isArray(r) && r.length > 0) {
+            const first = r[0] as unknown as Record<string, unknown>
+            if ('result' in first) textArg = String(first.result ?? '')
+          } else if (r && typeof r === 'object' && 'result' in (r as unknown as Record<string, unknown>)) {
+            const obj = r as unknown as Record<string, unknown>
+            textArg = String(obj.result ?? '')
+          }
+        } catch (err) { console.warn('[readit] executeScript failed', err); return }
       if (DEBUG) console.debug('[readit][DBG] selection from tab', { tabId: tab.id, tabUrl: tab.url, textLength: textArg?.length ?? 0 })
     }
     if (!textArg || !s.ttsUrl) return
@@ -228,7 +261,30 @@ export async function sendToActiveTabOrInject(msg: Msg) {
     if (!fetched) return
     try {
       if (DEBUG) console.debug('[readit][DBG] forward audio prepared', { mime: fetched.mime, b64len: fetched.b64.length, firstBytesBase64: fetched.b64.slice(0, 64) })
-      if (tab && tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: fetched.b64, mime: fetched.mime })
+      if (tab && tab.id) {
+        try {
+          await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: fetched.b64, mime: fetched.mime })
+        } catch (err) {
+          // Fallback: attempt to play via executeScript (inject small in-page player)
+          console.warn('[readit] forward audio sendMessage failed; trying executeScript fallback', err)
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              world: 'MAIN',
+              func: (b64: string, mime: string) => {
+                try {
+                  const audio = new Audio(`data:${mime};base64,${b64}`)
+                  void audio.play().catch(() => { /* ignore */ })
+                  return true
+                } catch { return false }
+              },
+              args: [fetched.b64, fetched.mime],
+            })
+          } catch (ex) {
+            console.warn('[readit] executeScript fallback failed for forward audio', ex)
+          }
+        }
+      }
     } catch (err) { console.warn('[readit] forward audio failed', err) }
   } catch (err) { console.warn('[readit] sendToActiveTabOrInject failed', err) }
 }
@@ -239,13 +295,13 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
     // control messages are simple objects like { action: 'pause' } or
     // typed Msg objects coming from the popup.
     if (req && typeof req === 'object') {
-      const anyReq = req as any
+      const anyReq = req as unknown as Record<string, unknown>
       if (anyReq.action === 'speech-status' || anyReq.kind === 'speech-status') {
         const state = cancelRequested ? 'cancelled' : paused ? 'paused' : currentChunks ? 'playing' : 'idle'
         sendResponse({ ok: true, state, current: currentIndex + 1, total: currentChunks ? currentChunks.length : 0 })
         return true
       }
-      if (anyReq.action === 'cancel-speech' || anyReq.kind === 'cancel-speech') {
+        if (anyReq.action === 'cancel-speech' || anyReq.kind === 'cancel-speech') {
         cancelRequested = true
         paused = false
         // Also notify the active tab to stop any in-page playback immediately.
@@ -253,9 +309,7 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
           try {
             const tab = await getActiveHttpTab()
             if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' })
-          } catch (_) {
-            // ignore
-          }
+          } catch (e) { void e }
         })()
         sendResponse({ ok: true })
         return true
@@ -267,9 +321,7 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
           try {
             const tab = await getActiveHttpTab()
             if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'PAUSE_SPEECH' })
-          } catch (_) {
-            // ignore
-          }
+          } catch (e) { void e }
         })()
         sendResponse({ ok: true })
         return true
@@ -281,9 +333,7 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
           try {
             const tab = await getActiveHttpTab()
             if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'RESUME_SPEECH' })
-          } catch (_) {
-            // ignore
-          }
+          } catch (e) { void e }
         })()
         sendResponse({ ok: true })
         return true
@@ -327,18 +377,18 @@ chrome.commands.onCommand.addListener(async (command: string) => {
     const tab = await getActiveHttpTab()
     if (command === 'pause-speech') {
       paused = true
-      try { if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'PAUSE_SPEECH' }) } catch (e) { /* ignore */ }
+      try { if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'PAUSE_SPEECH' }) } catch (e) { void e }
       return
     }
     if (command === 'resume-speech') {
       paused = false
-      try { if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'RESUME_SPEECH' }) } catch (e) { /* ignore */ }
+      try { if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'RESUME_SPEECH' }) } catch (e) { void e }
       return
     }
     if (command === 'cancel-speech') {
       cancelRequested = true
       paused = false
-      try { if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch (e) { /* ignore */ }
+      try { if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch (e) { void e }
       // resetQueue will be performed by running code path where appropriate
       // but ensure state is reset here for safety.
       resetQueue()
@@ -356,35 +406,38 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
   // we actually handle asynchronously. If we return true but never call
   // sendResponse the caller will see the channel-closed error reported
   // by the popup. Inspect the message synchronously first.
-  try {
-    const maybe = msg as any
-    const wantsAsync = maybe && (maybe.action === 'request-tts' || maybe.action === 'test-tts' || maybe.action === 'play-via-player' || maybe.kind === 'READ_SELECTION' || maybe.kind === 'READ_TEXT')
-    if (!wantsAsync) return false
-  } catch (_) {
-    return false
-  }
+  // Inspect message shape synchronously and decide whether we should
+  // claim the async response channel. Avoid `any` and use narrow runtime
+  // checks so the linter and TypeScript remain satisfied.
+  const maybeMsg = msg as unknown
+  if (typeof maybeMsg !== 'object' || maybeMsg === null) return false
+  const maybeRec = maybeMsg as Record<string, unknown>
+  const maybeAction = typeof maybeRec.action === 'string' ? maybeRec.action : undefined
+  const maybeKind = typeof maybeRec.kind === 'string' ? maybeRec.kind : undefined
+  const wantsAsync = maybeAction === 'request-tts' || maybeAction === 'test-tts' || maybeAction === 'play-via-player' || maybeKind === 'READ_SELECTION' || maybeKind === 'READ_TEXT'
+  if (!wantsAsync) return false
 
   ;(async () => {
-    try {
-      if (typeof msg !== 'object' || msg === null) {
-        // nothing to do
-        return
-      }
+      try {
+        if (typeof msg !== 'object' || msg === null) {
+          // nothing to do
+          return
+        }
       const m = msg as Record<string, unknown>
-      const action = (m as any).action as string | undefined
+      const action = typeof m.action === 'string' ? m.action : undefined
 
       // Support messages from popup to read the current selection or a
       // provided text string. These originate with { kind: 'READ_SELECTION' }
       // or { kind: 'READ_TEXT', text: '...' } and should trigger the same
       // pipeline used by keyboard shortcuts / context menu.
-      if ((m as any).kind === 'READ_SELECTION' || (m as any).kind === 'READ_TEXT') {
+      if (m.kind === 'READ_SELECTION' || m.kind === 'READ_TEXT') {
         try {
-          if ((m as any).kind === 'READ_TEXT') {
+          if (m.kind === 'READ_TEXT') {
             // caller supplied explicit text
-            await sendToActiveTabOrInject({ kind: 'READ_TEXT', text: String((m as any).text ?? '') } as any)
+            await sendToActiveTabOrInject({ kind: 'READ_TEXT', text: String(m.text ?? '') } as Msg)
           } else {
             // read selection from the active tab
-            await sendToActiveTabOrInject({ kind: 'READ_SELECTION' } as any)
+            await sendToActiveTabOrInject({ kind: 'READ_SELECTION' } as Msg)
           }
           sendResponse({ ok: true })
         } catch (err) {
@@ -421,7 +474,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
             }
             // Try to parse JSON status; return played flag so callers can
             // present friendly UI.
-            let js: any = null
+            let js: ({ played?: boolean } & Record<string, unknown>) | null = null
             try { js = await resp.json() } catch { js = null }
             sendResponse({ ok: true, played: js?.played === true, info: js })
             return
@@ -484,8 +537,8 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
               sendResponse({ ok: false, error: `tts service returned ${resp.status}` })
               return
             }
-            let js: any = null
-            try { js = await resp.json() } catch { js = null }
+            let js: Record<string, unknown> | null = null
+            try { js = await resp.json() } catch (e) { void e; js = null }
             // Forward a simple OK response; content script playback is not
             // applicable for play-only endpoints since audio is played on
             // the server.
@@ -563,9 +616,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
       console.warn('[readit] test-tts handler failed', err)
       try {
         sendResponse({ ok: false, error: String(err) })
-      } catch (_) {
-        // ignore if sendResponse is already closed
-      }
+      } catch (e) { void e }
     }
   })()
 

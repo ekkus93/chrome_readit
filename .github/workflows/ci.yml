@@ -75,10 +75,12 @@ jobs:
           fi
 
       - name: Upload coverage to Codecov
-        # Upload lcov coverage report to Codecov. For public repos a token is not required.
+        # Vitest (v8 reporter) emits coverage/coverage-final.json and other formats
+        # Update Codecov inputs to point to the JSON output instead of a non-existent lcov file.
         uses: codecov/codecov-action@v4
         with:
-          files: coverage/lcov-report/lcov.info
+          # coverage-final.json is produced by the v8 reporter used in this project
+          files: coverage/coverage-final.json
           flags: unit
           fail_ci_if_error: true
           verbose: true
