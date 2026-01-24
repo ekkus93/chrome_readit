@@ -1,6 +1,6 @@
 export type Settings = {
   voice?: string
-  rate: number // 0.5..2
+  rate: number // 0.5..10
   // Optional: URL to an opt-in TTS service (e.g., http://localhost:5002/api/tts)
   ttsUrl?: string
 }

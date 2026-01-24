@@ -90,6 +90,7 @@ export default function Popup() {
           const blob = new Blob([u8], { type: mime })
           const url = URL.createObjectURL(blob)
           const a = new Audio(url)
+          a.playbackRate = rate
           a.autoplay = true
           a.play().catch((e) => {
             console.warn('[readit] popup audio play failed', e)
@@ -165,7 +166,7 @@ export default function Popup() {
         <input
           id="rate"
           type="range"
-          min={0.5} max={2} step={0.05}
+          min={0.5} max={10} step={0.05}
           value={rate}
           onChange={e => { const r = Number(e.target.value); setRate(r); persist({ rate: r }) }}
           style={sliderStyle}

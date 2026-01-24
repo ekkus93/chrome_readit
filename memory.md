@@ -10,3 +10,7 @@
 2025-10-29T00:00:00Z - Success: Upgraded Coqui TTS docker server to multi-speaker VITS model (tts_models/en/vctk/vits) providing 109 voices instead of 1. Added espeak-ng dependency to Dockerfile, implemented model pre-download at build time to reduce startup delays, and verified /api/voices endpoint returns complete voice list. Service now running on port 5002 with voice selection support.
 
 2025-10-30T00:00:00Z - IMPORTANT POLICY NOTE (user instruction): Do NOT push any commits to GitHub unless the user explicitly instructs me to do so. Local commits may be created for checkpointing or to save work, but I must never push to remote (origin) or open PRs without explicit, affirmative permission from the user. If a push is requested I will first ask for confirmation and the target branch/remote. (User emphasized this verbally.)
+
+2026-01-23T00:00:00Z - Preference: Ensure npm scripts (e.g., build/lint) run on both Linux and Windows; avoid shell-specific commands like `sh -c`.
+
+2026-01-23T00:30:00Z - Decision: Speech rate control must take effect on playback (client-side audio) rather than synthesis; extension now applies the stored rate via HTMLAudio/WebAudio playbackRate.

@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import Popup from './Popup'
@@ -49,5 +49,22 @@ describe('Popup playback control buttons', () => {
     expect(calls.some((c) => (c[0] as Record<string, unknown>)?.action === 'pause-speech')).toBeTruthy()
     expect(calls.some((c) => (c[0] as Record<string, unknown>)?.action === 'resume-speech')).toBeTruthy()
     expect(calls.some((c) => (c[0] as Record<string, unknown>)?.action === 'cancel-speech')).toBeTruthy()
+  })
+
+  it('updates and persists speech rate changes', async () => {
+    render(<Popup />)
+
+    const slider = await screen.findByLabelText(/^Rate/i)
+    fireEvent.change(slider, { target: { value: '1.7' } })
+
+    const chromeObj = getGlobal(['chrome']) as unknown as { storage: { sync: { set: { mock?: { calls?: unknown[][] } } } } }
+    await waitFor(() => {
+      const calls = (chromeObj.storage.sync.set.mock?.calls as unknown[][]) || []
+      expect(calls.length).toBeGreaterThan(0)
+      const payload = calls[calls.length - 1][0] as Record<string, unknown>
+      expect(JSON.stringify(payload)).toContain('1.7')
+    })
+
+    expect(await screen.findByText(/Rate:\s*1\.70/)).toBeTruthy()
   })
 })

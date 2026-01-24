@@ -100,7 +100,7 @@ async function fetchTtsAudio(text: string, voice?: string): Promise<{ b64: strin
   } catch (err) { console.warn('[readit] fetchTtsAudio failed', err); return null }
 }
 
-async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[], voice?: string) {
+async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[], voice?: string, rate = 1) {
   // Producer-consumer: fetch audio for chunks ahead of playback
   cancelRequested = false
   paused = false
@@ -187,15 +187,16 @@ async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[],
                       await chrome.scripting.executeScript({
                         target: { tabId: tab.id },
                         world: 'MAIN',
-                        func: (b64: string, mime: string) => {
+                        func: (b64: string, mime: string, playbackRate: number) => {
                           try {
                             const audio = new Audio(`data:${mime};base64,${b64}`)
+                            if (typeof playbackRate === 'number' && !Number.isNaN(playbackRate)) audio.playbackRate = playbackRate
                             // play() returns a promise; swallow failures
                             void audio.play().catch(() => { /* ignore */ })
                             return true
                           } catch { return false }
                         },
-                        args: [entry.b64, entry.mime],
+                        args: [entry.b64, entry.mime, rate],
                       })
                     }
                   } catch (ex) {
@@ -255,7 +256,7 @@ export async function sendToActiveTabOrInject(msg: Msg) {
     if (s.ttsUrl?.toString().endsWith('/play')) { try { await fetch(s.ttsUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: textArg, voice: s.voice }) }) } catch (err) { console.warn('[readit] play-only POST failed', err) } ; return }
 
     const tab = await getActiveHttpTab()
-    if (tab && tab.id && textArg.length > MAX_CHUNK_CHARS) { const chunks = splitTextIntoChunks(textArg, MAX_CHUNK_CHARS); await processChunksSequentially(tab, chunks, s.voice); return }
+    if (tab && tab.id && textArg.length > MAX_CHUNK_CHARS) { const chunks = splitTextIntoChunks(textArg, MAX_CHUNK_CHARS); await processChunksSequentially(tab, chunks, s.voice, s.rate); return }
 
     const fetched = await fetchTtsAudio(textArg, s.voice)
     if (!fetched) return
@@ -271,14 +272,15 @@ export async function sendToActiveTabOrInject(msg: Msg) {
             await chrome.scripting.executeScript({
               target: { tabId: tab.id },
               world: 'MAIN',
-              func: (b64: string, mime: string) => {
+              func: (b64: string, mime: string, playbackRate: number) => {
                 try {
                   const audio = new Audio(`data:${mime};base64,${b64}`)
+                  if (typeof playbackRate === 'number' && !Number.isNaN(playbackRate)) audio.playbackRate = playbackRate
                   void audio.play().catch(() => { /* ignore */ })
                   return true
                 } catch { return false }
               },
-              args: [fetched.b64, fetched.mime],
+              args: [fetched.b64, fetched.mime, s.rate],
             })
           } catch (ex) {
             console.warn('[readit] executeScript fallback failed for forward audio', ex)

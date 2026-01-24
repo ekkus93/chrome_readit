@@ -1,10 +1,34 @@
 import { decodeBase64ToUint8Array } from './player'
 
+const MIN_RATE = 0.5
+const MAX_RATE = 10.0
+
+function clampRate(rate: number): number {
+  if (!Number.isFinite(rate)) return 1
+  return Math.min(MAX_RATE, Math.max(MIN_RATE, rate))
+}
+
 // PlaybackController encapsulates HTMLAudio + WebAudio fallback logic and
 // exposes a small, Promise-based API suitable for unit testing.
 export class PlaybackController {
   private currentAudio: HTMLAudioElement | null = null
   private currentAudioContextSource: { ctx: AudioContext; src: AudioBufferSourceNode } | null = null
+  private playbackRate = 1
+
+  setPlaybackRate(rate: number): void {
+    const clamped = clampRate(rate)
+    this.playbackRate = clamped
+    if (this.currentAudio) {
+      try { this.currentAudio.playbackRate = clamped } catch (e) { void e }
+    }
+    if (this.currentAudioContextSource) {
+      try { this.currentAudioContextSource.src.playbackRate.value = clamped } catch (e) { void e }
+    }
+  }
+
+  getPlaybackRate(): number {
+    return this.playbackRate
+  }
 
   async playBase64(b64: string, mime = 'audio/wav'): Promise<{ ok: boolean; error?: string }> {
     try {
@@ -23,9 +47,10 @@ export class PlaybackController {
   }
 
   private async playUint8Array(u8: Uint8Array, mime: string): Promise<{ ok: boolean; error?: string }> {
-  const blob = new Blob([u8.buffer as ArrayBuffer], { type: mime })
+    const blob = new Blob([u8.buffer as ArrayBuffer], { type: mime })
     const url = URL.createObjectURL(blob)
     const a = new Audio()
+    a.playbackRate = this.playbackRate
     this.currentAudio = a
 
     return new Promise((resolve) => {
@@ -65,6 +90,7 @@ export class PlaybackController {
           const audioBuffer = await ctx.decodeAudioData(ab)
           const src = ctx.createBufferSource()
           src.buffer = audioBuffer
+          try { src.playbackRate.value = this.playbackRate } catch (e) { void e }
           src.connect(ctx.destination)
           this.currentAudioContextSource = { ctx, src }
           src.onended = () => {
@@ -101,6 +127,7 @@ export class PlaybackController {
             const audioBuffer = await ctx.decodeAudioData(ab)
             const src = ctx.createBufferSource()
             src.buffer = audioBuffer
+            try { src.playbackRate.value = this.playbackRate } catch (e) { void e }
             src.connect(ctx.destination)
             this.currentAudioContextSource = { ctx, src }
             src.onended = () => {

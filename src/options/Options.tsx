@@ -3,7 +3,7 @@ import { fetchVoicesForTtsUrl } from './helpers'
 
 type Settings = {
   voice?: string
-  rate: number // 0.5..2.0
+  rate: number // 0.5..10.0
   ttsUrl?: string
 }
 
@@ -219,6 +219,7 @@ export default function Options() {
           const blob = new Blob([buf], { type: mime })
           const url = URL.createObjectURL(blob)
           const a = new Audio(url)
+          a.playbackRate = rate
           // keep a reference so the element isn't GC'd while playback runs
           testAudioRef.current = a
           a.autoplay = true
@@ -310,8 +311,8 @@ export default function Options() {
       </section>
       <section>
         <label htmlFor="rate" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>Speech rate: {rate.toFixed(2)}</label>
-        <input id="rate" type="range" min={0.5} max={2} step={0.05} value={rate} onChange={(e) => setRate(Number(e.target.value))} style={{ width: 360 }} />
-        <div style={{ color: 'GrayText' }}>0.5 (slow) … 2.0 (fast)</div>
+        <input id="rate" type="range" min={0.5} max={10} step={0.05} value={rate} onChange={(e) => setRate(Number(e.target.value))} style={{ width: 360 }} />
+        <div style={{ color: 'GrayText' }}>0.5 (slow) … 10.0 (max)</div>
       </section>
       <section style={{ marginTop: 24 }}>
         <label htmlFor="test" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>Test speech</label>

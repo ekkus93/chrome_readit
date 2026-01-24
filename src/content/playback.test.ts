@@ -30,6 +30,7 @@ describe('PlaybackController', () => {
         pause: () => {},
         src: '',
         autoplay: false,
+        playbackRate: 1,
       }
     } as unknown)
 
@@ -58,6 +59,7 @@ describe('PlaybackController', () => {
         pause: () => {},
         src: '',
         autoplay: false,
+        playbackRate: 1,
       }
     } as unknown)
 
@@ -96,6 +98,7 @@ describe('PlaybackController', () => {
         pause: () => {},
         src: '',
         autoplay: false,
+        playbackRate: 1,
       }
     } as unknown)
 
@@ -132,6 +135,7 @@ describe('PlaybackController', () => {
         pause: () => {},
         src: '',
         autoplay: false,
+        playbackRate: 1,
       }
   } as unknown)
 
@@ -159,6 +163,7 @@ describe('PlaybackController', () => {
         pause: () => {},
         src: '',
         autoplay: false,
+        playbackRate: 1,
       }
     } as unknown)
 
@@ -220,6 +225,7 @@ describe('PlaybackController', () => {
           if (v === '' && evs['error']) evs['error'].forEach((cb) => cb(new Error('aborted')))
         },
         autoplay: false,
+        playbackRate: 1,
       }
       return obj as unknown
   } as unknown)
@@ -247,6 +253,7 @@ describe('PlaybackController', () => {
         pause: () => {},
         src: '',
         autoplay: false,
+        playbackRate: 1,
       }
       secondListeners = evs
       return obj as unknown
@@ -260,5 +267,76 @@ describe('PlaybackController', () => {
     if (secondListeners['ended'] && secondListeners['ended'][0]) secondListeners['ended'][0]()
     const r2 = await p2
     expect(r2.ok).toBe(true)
+  })
+
+  it('setPlaybackRate updates current HTMLAudio playback speed', async () => {
+    const listeners: Record<string, Array<() => void>> = {}
+    let appliedRate = 1
+    vi.stubGlobal('Audio', function () {
+      return {
+        addEventListener: (ev: string, cb: (...args: unknown[]) => void) => {
+          listeners[ev] = listeners[ev] || []
+          listeners[ev].push(cb)
+        },
+        play: () => Promise.resolve(),
+        pause: () => {},
+        src: '',
+        autoplay: false,
+        get playbackRate() {
+          return appliedRate
+        },
+        set playbackRate(v: number) {
+          appliedRate = v
+        },
+      }
+    } as unknown)
+
+    const playback = new PlaybackController()
+    const buf = new Uint8Array([9, 9, 9]).buffer
+    const promise = playback.playArrayBuffer(buf, 'audio/wav')
+    playback.setPlaybackRate(1.8)
+    expect(appliedRate).toBeCloseTo(1.8)
+    listeners['ended'][0]()
+    const res = await promise
+    expect(res.ok).toBe(true)
+  })
+
+  it('setPlaybackRate affects WebAudio fallback playbackRate value', async () => {
+    vi.stubGlobal('Audio', function () {
+      return {
+        addEventListener: () => {},
+        play: () => Promise.reject(new Error('autoplay')), // force fallback
+        pause: () => {},
+        src: '',
+        autoplay: false,
+        playbackRate: 1,
+      }
+    } as unknown)
+
+    const playbackRateParam = { value: 1 }
+    vi.stubGlobal('AudioContext', function () {
+      return {
+        decodeAudioData: (_buf: ArrayBuffer) => { void _buf; return Promise.resolve({}) },
+        createBufferSource: () => {
+          const node = {
+            buffer: null as unknown | null,
+            connect: (_: unknown) => { void _ },
+            start: () => { setTimeout(() => { node.onended?.() }, 0) },
+            onended: undefined as (() => void) | undefined,
+            playbackRate: playbackRateParam,
+          }
+          return node
+        },
+        destination: {},
+      }
+    } as unknown)
+
+    const playback = new PlaybackController()
+    playback.setPlaybackRate(0.75)
+    const buf = new Uint8Array([1, 2]).buffer
+    const promise = playback.playArrayBuffer(buf, 'audio/wav')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(playbackRateParam.value).toBeCloseTo(0.75)
+    await promise
   })
 })

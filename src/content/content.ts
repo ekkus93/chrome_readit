@@ -11,6 +11,34 @@ const DEBUG = true
 // Central playback controller (HTMLAudio + WebAudio fallback)
 const playback = new PlaybackController()
 
+function applyPlaybackRate(rate: unknown) {
+  if (typeof rate !== 'number' || Number.isNaN(rate)) return
+  playback.setPlaybackRate(rate)
+}
+
+async function hydratePlaybackRateFromStorage() {
+  try {
+    if (!chrome?.storage?.sync) return
+    const stored = await chrome.storage.sync.get(['settings'])
+    applyPlaybackRate(stored?.settings?.rate)
+  } catch (err) {
+    console.warn('[readit] failed to hydrate playback rate', err)
+  }
+}
+
+void hydratePlaybackRateFromStorage()
+
+try {
+  chrome?.storage?.onChanged?.addListener?.((changes, areaName) => {
+    if (areaName !== 'sync') return
+    if (!changes?.settings) return
+    const next = changes.settings.newValue
+    if (next && typeof next === 'object' && 'rate' in next) applyPlaybackRate((next as Record<string, unknown>).rate)
+  })
+} catch (err) {
+  console.warn('[readit] failed to register storage rate listener', err)
+}
+
 // Ask the background/service worker to obtain TTS audio (avoids CORS)
 // and return the audio bytes which we then play in-page.
 async function speak(text: string) {
