@@ -131,6 +131,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
       console.debug('[readit] content PLAY_AUDIO: received audio message', { mime: msg.mime, audioType: typeof msg.audio, audioLength: typeof msg.audio === 'string' ? msg.audio.length : (msg.audio as ArrayBuffer)?.byteLength })
       try {
         const mime = msg.mime ?? 'audio/wav'
+        if (typeof (msg as Record<string, unknown>).rate === 'number') applyPlaybackRate((msg as Record<string, unknown>).rate)
   // Stop any previously playing audio (we'll replace it with the new chunk)
   try { playback.stop() } catch (e) { void e }
 

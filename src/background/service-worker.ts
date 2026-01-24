@@ -22,6 +22,45 @@ async function getActiveHttpTab() {
 // Set to false when not actively debugging to avoid noisy logs.
 const DEBUG = true
 
+const MIN_RATE = 0.5
+const MAX_RATE = 10
+let cachedPlaybackRate = 1
+
+function clampPlaybackRate(value: unknown, fallback = 1): number {
+  const num = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(num)) return fallback
+  return Math.min(MAX_RATE, Math.max(MIN_RATE, num))
+}
+
+function getCurrentPlaybackRate(): number {
+  return cachedPlaybackRate
+}
+
+async function primePlaybackRateCache() {
+  try {
+    const initial = await getSettings()
+    if (initial && typeof initial === 'object') {
+      cachedPlaybackRate = clampPlaybackRate((initial as Record<string, unknown>).rate, cachedPlaybackRate)
+    }
+  } catch (err) {
+    console.warn('[readit] primePlaybackRateCache failed', err)
+  }
+}
+
+void primePlaybackRateCache()
+
+try {
+  chrome.storage?.onChanged?.addListener?.((changes, area) => {
+    if (area !== 'sync') return
+    const next = changes.settings?.newValue
+    if (next && typeof next === 'object' && 'rate' in next) {
+      cachedPlaybackRate = clampPlaybackRate((next as Record<string, unknown>).rate, cachedPlaybackRate)
+    }
+  })
+} catch (err) {
+  console.warn('[readit] failed to attach playback rate storage listener', err)
+}
+
 function prefixHexFromBuffer(buf: ArrayBuffer | null | undefined, len = 32) {
   if (!buf) return '<empty>'
   try {
@@ -89,6 +128,7 @@ function arrayBufferToBase64(buf: ArrayBuffer) {
 
 async function fetchTtsAudio(text: string, voice?: string): Promise<{ b64: string; mime: string } | null> {
   const s = await getSettings()
+  cachedPlaybackRate = clampPlaybackRate(s.rate, cachedPlaybackRate)
   if (!s.ttsUrl) return null
   try {
     const resp = await fetch(s.ttsUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: voice ?? s.voice }) })
@@ -100,7 +140,7 @@ async function fetchTtsAudio(text: string, voice?: string): Promise<{ b64: strin
   } catch (err) { console.warn('[readit] fetchTtsAudio failed', err); return null }
 }
 
-async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[], voice?: string, rate = 1) {
+async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[], voice?: string) {
   // Producer-consumer: fetch audio for chunks ahead of playback
   cancelRequested = false
   paused = false
@@ -168,10 +208,14 @@ async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[],
         }
 
         // Send to content script and wait for ack or timeout
-                try {
+        const playbackRate = getCurrentPlaybackRate()
+          try {
                   // Try the normal content-script path first. If the tab has a
                   // content script registered and listening this will resolve.
-                  const sendPromise = (async () => { if (!tab.id) return null; return await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: entry.b64, mime: entry.mime }) })()
+                  const sendPromise = (async () => {
+                    if (!tab.id) return null
+                    return await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: entry.b64, mime: entry.mime, rate: playbackRate })
+                  })()
                   const timeout = new Promise((res) => setTimeout(() => res({ timeout: true }), CHUNK_TIMEOUT_MS))
                   const res = await Promise.race([sendPromise, timeout])
                   if (res && typeof res === 'object' && res !== null && 'timeout' in (res as Record<string, unknown>) && (res as Record<string, unknown>).timeout) console.warn('[readit] chunk ack timeout; proceeding')
@@ -196,7 +240,7 @@ async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[],
                             return true
                           } catch { return false }
                         },
-                        args: [entry.b64, entry.mime, rate],
+                        args: [entry.b64, entry.mime, playbackRate],
                       })
                     }
                   } catch (ex) {
@@ -234,6 +278,7 @@ async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[],
 export async function sendToActiveTabOrInject(msg: Msg) {
   try {
     const s = await getSettings()
+    cachedPlaybackRate = clampPlaybackRate(s.rate, cachedPlaybackRate)
     let textArg: string | null = null
     if (msg.kind === 'READ_TEXT') textArg = msg.text
     else {
@@ -256,7 +301,7 @@ export async function sendToActiveTabOrInject(msg: Msg) {
     if (s.ttsUrl?.toString().endsWith('/play')) { try { await fetch(s.ttsUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: textArg, voice: s.voice }) }) } catch (err) { console.warn('[readit] play-only POST failed', err) } ; return }
 
     const tab = await getActiveHttpTab()
-    if (tab && tab.id && textArg.length > MAX_CHUNK_CHARS) { const chunks = splitTextIntoChunks(textArg, MAX_CHUNK_CHARS); await processChunksSequentially(tab, chunks, s.voice, s.rate); return }
+    if (tab && tab.id && textArg.length > MAX_CHUNK_CHARS) { const chunks = splitTextIntoChunks(textArg, MAX_CHUNK_CHARS); await processChunksSequentially(tab, chunks, s.voice); return }
 
     const fetched = await fetchTtsAudio(textArg, s.voice)
     if (!fetched) return
@@ -264,7 +309,7 @@ export async function sendToActiveTabOrInject(msg: Msg) {
       if (DEBUG) console.debug('[readit][DBG] forward audio prepared', { mime: fetched.mime, b64len: fetched.b64.length, firstBytesBase64: fetched.b64.slice(0, 64) })
       if (tab && tab.id) {
         try {
-          await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: fetched.b64, mime: fetched.mime })
+          await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: fetched.b64, mime: fetched.mime, rate: getCurrentPlaybackRate() })
         } catch (err) {
           // Fallback: attempt to play via executeScript (inject small in-page player)
           console.warn('[readit] forward audio sendMessage failed; trying executeScript fallback', err)
@@ -280,7 +325,7 @@ export async function sendToActiveTabOrInject(msg: Msg) {
                   return true
                 } catch { return false }
               },
-              args: [fetched.b64, fetched.mime, s.rate],
+              args: [fetched.b64, fetched.mime, getCurrentPlaybackRate()],
             })
           } catch (ex) {
             console.warn('[readit] executeScript fallback failed for forward audio', ex)
@@ -347,6 +392,7 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
       if (anyReq.action === 'probe-tts' || anyReq.kind === 'probe-tts' || anyReq.kind === 'TEST_TTS') {
         ;(async () => {
           const s = await getSettings()
+          cachedPlaybackRate = clampPlaybackRate(s.rate, cachedPlaybackRate)
           try {
             if (!s.ttsUrl) { sendResponse({ ok: false, error: 'no ttsUrl' }); return }
             const resp = await fetch(s.ttsUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'test', voice: s.voice }) })
@@ -456,6 +502,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           return
         }
         const s = await getSettings()
+        cachedPlaybackRate = clampPlaybackRate(s.rate, cachedPlaybackRate)
         if (!s.ttsUrl) {
           sendResponse({ ok: false, error: 'no ttsUrl configured' })
           return
@@ -520,6 +567,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           return
         }
         const s = await getSettings()
+        cachedPlaybackRate = clampPlaybackRate(s.rate, cachedPlaybackRate)
         if (!s.ttsUrl) {
           sendResponse({ ok: false, error: 'no ttsUrl configured' })
           return
@@ -566,7 +614,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
               // Forward the raw ArrayBuffer to the content script so it can
               // perform structured-clone playback. Tests expect the forwarded
               // audio to be an ArrayBuffer with the same byteLength.
-              await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: buf, mime: contentType })
+              await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: buf, mime: contentType, rate: getCurrentPlaybackRate() })
               console.debug('[readit] test-tts: forwarded ArrayBuffer audio to content script')
             } catch (err) {
               console.warn('[readit] test-tts: failed to send audio to content script', err)
@@ -591,6 +639,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           return
         }
         const s = await getSettings()
+        cachedPlaybackRate = clampPlaybackRate(s.rate, cachedPlaybackRate)
         if (!s.ttsUrl) {
           sendResponse({ ok: false, error: 'no ttsUrl configured' })
           return

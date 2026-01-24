@@ -78,6 +78,8 @@ describe('background.sendToActiveTabOrInject', () => {
   // mocked getSettings is a vi mock
   const mockedGetSettingsCalled = vi.mocked(getSettings)
   expect(mockedGetSettingsCalled).toHaveBeenCalled()
+  const sendCalls = (g.chrome.tabs.sendMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls
+  expect(sendCalls[0]?.[1]).toMatchObject({ rate: 1 })
   })
 
   it('falls back to executeScript when sendMessage throws and passes READ_TEXT', async () => {
@@ -94,6 +96,9 @@ describe('background.sendToActiveTabOrInject', () => {
     await mod.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: 'hello world' })
 
     expect(mockedGetSettings2).toHaveBeenCalled()
+  const execCalls = (g.chrome.scripting.executeScript as unknown as { mock: { calls: unknown[][] } }).mock.calls
+  const argsObj = execCalls[0]?.[0] as { args?: unknown[] } | undefined
+  expect(argsObj?.args?.[2]).toBe(1.5)
   // ensure we did not open any legacy player window (no-op for this test)
   })
 

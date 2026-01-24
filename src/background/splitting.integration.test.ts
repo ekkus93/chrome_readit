@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Use the exported sendToActiveTabOrInject function from the service worker
-vi.mock('./../lib/storage', () => ({ getSettings: vi.fn(async () => ({ rate: 1.0, ttsUrl: 'http://localhost:5002/api/tts', voice: 'v' })) }))
+vi.mock('./../lib/storage', () => ({ getSettings: vi.fn(async () => ({ rate: 2.25, ttsUrl: 'http://localhost:5002/api/tts', voice: 'v' })) }))
 
 describe('large text splitting and pipeline', () => {
   const sample = `Just look at the White House’s website right now. There’s a new “Major Events Timeline,” which begins as a seemingly standard sequence of events depicting the evolution of the People’s House, all the way back to George Washington selecting the site, rebuilding after it was set aflame in the War of 1812, and all the way through Richard Nixon’s bowling alley renovation. When the timeline gets to 1998, though, it abruptly transforms into a crude MAGA troll job with a caption highlighting Bill Clinton’s Oval Office sex scandal.
@@ -9,6 +9,10 @@ describe('large text splitting and pipeline', () => {
 Trump’s “big lie” is, at its core, a witless tantrum thrown by a malignant narcissist who lacks the integrity to accept defeat.
 
 That’s followed by a caption reading “Obama hosts members of the Muslim Brotherhood, a group that promotes Islamist extremism and has ties to Hamas.” This is an apparent reference to a 2012 meeting between mid-level National Security Council officials and political representatives of the Muslim Brotherhood in the aftermath of the overthrow of Egypt's longtime dictator Hosni Mubarak. If the trolling weren’t obvious enough, the caption is accompanied by a photo of Barack Obama wearing a turban during a visit to Kenya in 2006 — nowhere near the White House and years before Obama was president.`
+
+  type ViMock = ReturnType<typeof vi.fn>
+  let sendMessageMock: ViMock
+  let executeScriptMock: ViMock
 
   beforeEach(() => {
     vi.resetModules()
@@ -21,12 +25,15 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
       runtime: { onMessage: { addListener: (...args: unknown[]) => unknown }, onInstalled: { addListener: (...args: unknown[]) => unknown }, sendMessage: (...args: unknown[]) => unknown }
       contextMenus: { create: (...args: unknown[]) => unknown, onClicked: { addListener: (...args: unknown[]) => unknown } }
     }
+    sendMessageMock = vi.fn().mockResolvedValue(undefined)
+    executeScriptMock = vi.fn().mockResolvedValue([{ result: true }])
+
     const chromeObj = {
       tabs: {
         query: vi.fn(() => Promise.resolve([{ id: 201, url: 'https://example.com' }])),
-        sendMessage: vi.fn(() => Promise.resolve(undefined)),
+        sendMessage: sendMessageMock,
       },
-      scripting: { executeScript: vi.fn() },
+      scripting: { executeScript: executeScriptMock },
       commands: { onCommand: { addListener: vi.fn() } },
       runtime: { onMessage: { addListener: vi.fn() }, onInstalled: { addListener: vi.fn() }, sendMessage: vi.fn() },
       contextMenus: { create: vi.fn(), onClicked: { addListener: vi.fn() } },
@@ -54,10 +61,12 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
     }))
 
     // import module after mocks set up
+    sendMessageMock.mockRejectedValueOnce(new Error('no content script'))
+
     const mod = await import('./service-worker')
 
-  // call the exported helper to send the text
-  await (mod.sendToActiveTabOrInject as unknown as (x: unknown) => Promise<unknown>)({ kind: 'READ_TEXT', text: long })
+    // call the exported helper to send the text
+    await (mod.sendToActiveTabOrInject as unknown as (x: unknown) => Promise<unknown>)({ kind: 'READ_TEXT', text: long })
 
   // The fetch mock should have been called and captured chunk texts
   expect((globalThis as unknown as Record<string, unknown>).fetch).toHaveBeenCalled()
@@ -82,9 +91,17 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
     }
 
     // Ensure we forwarded audio to the content script once per fetched chunk
-  const sendCalls = ((globalThis as unknown as Record<string, unknown>).chrome as unknown as { tabs: { sendMessage?: { mock?: { calls?: unknown[][] } } } }).tabs.sendMessage?.mock?.calls?.length ?? 0
-    expect(sendCalls).toBeGreaterThanOrEqual(fetchedTexts.length)
-    // If the producer/consumer worked normally, they should match
-    expect(sendCalls).toBe(fetchedTexts.length)
+    const sendCalls = sendMessageMock.mock.calls
+    expect(sendCalls.length).toBeGreaterThanOrEqual(fetchedTexts.length)
+    expect(sendCalls.length).toBe(fetchedTexts.length)
+    for (const [, payload] of sendCalls) {
+      expect((payload as Record<string, unknown>)).toMatchObject({ kind: 'PLAY_AUDIO', rate: 2.25 })
+    }
+
+    const fallbackCall = executeScriptMock.mock.calls.find((call) => {
+      const opts = call?.[0] as { args?: unknown[] } | undefined
+      return Array.isArray(opts?.args) && opts.args.length === 3
+    })
+    expect((fallbackCall?.[0] as { args?: unknown[] } | undefined)?.args?.[2]).toBe(2.25)
   })
 })

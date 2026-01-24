@@ -38,7 +38,7 @@ describe('background TTS service (test-tts)', () => {
 
   // configure mocked getSettings
   const mockedGetSettings = vi.mocked(getSettings)
-  mockedGetSettings.mockResolvedValue({ rate: 1, ttsUrl: 'http://localhost:5002/api/tts' } as Settings)
+  mockedGetSettings.mockResolvedValue({ rate: 1.4, ttsUrl: 'http://localhost:5002/api/tts' } as Settings)
 
     // mock fetch to return audio
     global.fetch = vi.fn().mockResolvedValue({
@@ -96,6 +96,7 @@ describe('background TTS service (test-tts)', () => {
     const smCall = tabsCalls[0]
     expect((smCall[1] as Record<string, unknown>).kind).toBe('PLAY_AUDIO')
     expect(((smCall[1] as Record<string, unknown>).audio as ArrayBuffer).byteLength).toBe((fakeBuf as ArrayBuffer).byteLength)
+    expect((smCall[1] as Record<string, unknown>).rate).toBe(1.4)
   })
 
   it('returns error when no ttsUrl configured', async () => {
