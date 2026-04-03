@@ -327,11 +327,15 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 # Phase 7 — Fix content-side fallback cleanup
 
+**Status:** Done
+
 ## Task 7.1 — Close `AudioContext` on normal completion
 
+**Status:** Done
+
 ### Subtasks
-- In `src/content/playback.ts`, update WebAudio fallback `onended` handlers to close the associated `AudioContext`.
-- Clear internal source/context references after completion.
+- [x] In `src/content/playback.ts`, update WebAudio fallback `onended` handlers to close the associated `AudioContext`.
+- [x] Clear internal source/context references after completion.
 
 ### Acceptance criteria
 - WebAudio fallback does not leak `AudioContext` instances on normal completion.
@@ -340,10 +344,12 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 7.2 — Verify cleanup on stop/cancel/error paths
 
+**Status:** Done
+
 ### Subtasks
-- Audit stop/cancel/error handling in `src/content/playback.ts`.
-- Ensure `AudioContext` and source references are cleaned up in all non-success paths.
-- Ensure cleanup is idempotent.
+- [x] Audit stop/cancel/error handling in `src/content/playback.ts`.
+- [x] Ensure `AudioContext` and source references are cleaned up in all non-success paths.
+- [x] Ensure cleanup is idempotent.
 
 ### Acceptance criteria
 - Repeated play/stop/play cycles do not accumulate stale fallback resources.

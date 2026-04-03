@@ -89,6 +89,48 @@ describe('PlaybackController', () => {
   expect(res.ok).toBe(true)
   })
 
+  it('closes AudioContext on normal WebAudio fallback completion', async () => {
+    vi.stubGlobal('Audio', function () {
+      return {
+        addEventListener: () => {},
+        play: () => Promise.reject(new Error('autoplay')),
+        pause: () => {},
+        src: '',
+        autoplay: false,
+        playbackRate: 1,
+      }
+    } as unknown)
+
+    const closeMock = vi.fn(() => Promise.resolve())
+    let createdSrc: { onended?: (() => void) | undefined } | null = null
+    vi.stubGlobal('AudioContext', function () {
+      return {
+        decodeAudioData: (_buf: ArrayBuffer) => { void _buf; return Promise.resolve({}) },
+        createBufferSource: () => {
+          const src = {
+            buffer: null as unknown | null,
+            connect: (_: unknown) => { void _ },
+            start: () => {},
+            onended: undefined as (() => void) | undefined,
+            playbackRate: { value: 1 },
+          }
+          createdSrc = src
+          return src
+        },
+        destination: {},
+        close: closeMock,
+      }
+    } as unknown)
+
+    const playback = new PlaybackController()
+    const promise = playback.playArrayBuffer(new Uint8Array([1, 2, 3]).buffer, 'audio/wav')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    createdSrc?.onended?.()
+    const result = await promise
+    expect(result.ok).toBe(true)
+    expect(closeMock).toHaveBeenCalled()
+  })
+
   it('returns webaudio-unavailable when fallback missing', async () => {
     // mock Audio.play to reject
     vi.stubGlobal('Audio', function () {
@@ -207,6 +249,45 @@ describe('PlaybackController', () => {
   ;(createdSrc as unknown as { onended?: () => void })?.onended?.()
     const res = await p
     expect(res.ok).toBe(true)
+  })
+
+  it('cleans up WebAudio fallback idempotently on stop', async () => {
+    vi.stubGlobal('Audio', function () {
+      return {
+        addEventListener: () => {},
+        play: () => Promise.reject(new Error('autoplay')),
+        pause: () => {},
+        src: '',
+        autoplay: false,
+        playbackRate: 1,
+      }
+    } as unknown)
+
+    const closeMock = vi.fn(() => Promise.resolve())
+    const stopMock = vi.fn()
+    vi.stubGlobal('AudioContext', function () {
+      return {
+        decodeAudioData: (_buf: ArrayBuffer) => { void _buf; return Promise.resolve({}) },
+        createBufferSource: () => ({
+          buffer: null as unknown | null,
+          connect: (_: unknown) => { void _ },
+          start: () => {},
+          onended: undefined as (() => void) | undefined,
+          stop: stopMock,
+          playbackRate: { value: 1 },
+        }),
+        destination: {},
+        close: closeMock,
+      }
+    } as unknown)
+
+    const playback = new PlaybackController()
+    void playback.playArrayBuffer(new Uint8Array([1, 2, 3]).buffer, 'audio/wav')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    playback.stop()
+    playback.stop()
+    expect(stopMock).toHaveBeenCalledTimes(1)
+    expect(closeMock).toHaveBeenCalledTimes(1)
   })
 
   it('handles rapid stop followed by new play (race) correctly', async () => {

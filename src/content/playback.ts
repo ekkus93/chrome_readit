@@ -15,6 +15,71 @@ export class PlaybackController {
   private currentAudioContextSource: { ctx: AudioContext; src: AudioBufferSourceNode } | null = null
   private playbackRate = 1
 
+  private clearCurrentAudio(): void {
+    if (!this.currentAudio) return
+    try {
+      this.currentAudio.pause()
+      this.currentAudio.src = ''
+    } catch (e) {
+      void e
+    }
+    this.currentAudio = null
+  }
+
+  private cleanupWebAudioSource(sourceRef: { ctx: AudioContext; src: AudioBufferSourceNode } | null, stopSource = false): void {
+    if (!sourceRef) return
+    if (this.currentAudioContextSource === sourceRef) {
+      this.currentAudioContextSource = null
+    }
+    if (stopSource) {
+      try {
+        sourceRef.src.stop?.()
+      } catch (e) {
+        void e
+      }
+    }
+    try {
+      sourceRef.ctx.close?.()
+    } catch (e) {
+      void e
+    }
+  }
+
+  private async playViaWebAudio(u8: Uint8Array): Promise<{ ok: boolean; error?: string }> {
+    const win = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }
+    const AudioCtx = win.AudioContext || win.webkitAudioContext
+    if (!AudioCtx) {
+      return { ok: false, error: 'webaudio-unavailable' }
+    }
+
+    const ctx = new AudioCtx()
+    let sourceRef: { ctx: AudioContext; src: AudioBufferSourceNode } | null = null
+    try {
+      const audioBuffer = await ctx.decodeAudioData(u8.buffer.slice(0) as ArrayBuffer)
+      const src = ctx.createBufferSource()
+      src.buffer = audioBuffer
+      try {
+        src.playbackRate.value = this.playbackRate
+      } catch (e) {
+        void e
+      }
+      src.connect(ctx.destination)
+      sourceRef = { ctx, src }
+      this.currentAudioContextSource = sourceRef
+
+      return await new Promise((resolve) => {
+        src.onended = () => {
+          this.cleanupWebAudioSource(sourceRef)
+          resolve({ ok: true })
+        }
+        src.start(0)
+      })
+    } catch (err) {
+      this.cleanupWebAudioSource(sourceRef ?? { ctx, src: { stop: () => {}, playbackRate: { value: this.playbackRate } } as AudioBufferSourceNode })
+      return { ok: false, error: String(err) }
+    }
+  }
+
   setPlaybackRate(rate: number): void {
     const clamped = clampRate(rate)
     this.playbackRate = clamped
@@ -55,17 +120,26 @@ export class PlaybackController {
 
     return new Promise((resolve) => {
       let responded = false
-  const finish = (ok: boolean, info?: Record<string, unknown>) => {
+      let fallbackStarted = false
+      const finish = (ok: boolean, info?: Record<string, unknown>) => {
         if (responded) return
         responded = true
-        try {
-          a.pause()
-  } catch (e) { void e }
-        this.currentAudio = null
+        this.clearCurrentAudio()
         try {
           URL.revokeObjectURL(url)
-  } catch (e) { void e }
+        } catch (e) { void e }
         resolve({ ok, ...info })
+      }
+
+      const tryWebAudioFallback = async () => {
+        if (fallbackStarted) return
+        fallbackStarted = true
+        try {
+          URL.revokeObjectURL(url)
+        } catch (e) { void e }
+        this.currentAudio = null
+        const result = await this.playViaWebAudio(u8)
+        finish(result.ok, result.ok ? undefined : { error: result.error })
       }
 
       const done = () => finish(true)
@@ -73,36 +147,7 @@ export class PlaybackController {
 
       a.addEventListener('error', async (err) => {
         void err
-        // HTMLAudio failed; attempt WebAudio fallback
-        try {
-          try {
-            URL.revokeObjectURL(url)
-    } catch (e) { void e }
-          this.currentAudio = null
-          const win = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }
-          const AudioCtx = win.AudioContext || win.webkitAudioContext
-          if (!AudioCtx) {
-            finish(false, { error: 'webaudio-unavailable' })
-            return
-          }
-          const ctx = new AudioCtx()
-          const ab = u8.buffer.slice(0) as ArrayBuffer
-          const audioBuffer = await ctx.decodeAudioData(ab)
-          const src = ctx.createBufferSource()
-          src.buffer = audioBuffer
-          try { src.playbackRate.value = this.playbackRate } catch (e) { void e }
-          src.connect(ctx.destination)
-          this.currentAudioContextSource = { ctx, src }
-          src.onended = () => {
-            try {
-              this.currentAudioContextSource = null
-            } catch (e) { void e }
-            finish(true)
-          }
-          src.start(0)
-        } catch (fallbackErr) {
-          finish(false, { error: String(fallbackErr) })
-        }
+        await tryWebAudioFallback()
       })
 
       a.src = url
@@ -110,36 +155,7 @@ export class PlaybackController {
       if (p && typeof (p as Promise<unknown>).catch === 'function') {
         ;(p as Promise<unknown>).catch(async (err) => {
           void err
-          // play() rejected (autoplay/codec); attempt WebAudio fallback
-          try {
-            try {
-              URL.revokeObjectURL(url)
-            } catch (e) { void e }
-            this.currentAudio = null
-            const win = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }
-            const AudioCtx = win.AudioContext || win.webkitAudioContext
-            if (!AudioCtx) {
-              finish(false, { error: 'webaudio-unavailable' })
-              return
-            }
-            const ctx = new AudioCtx()
-            const ab = u8.buffer.slice(0) as ArrayBuffer
-            const audioBuffer = await ctx.decodeAudioData(ab)
-            const src = ctx.createBufferSource()
-            src.buffer = audioBuffer
-            try { src.playbackRate.value = this.playbackRate } catch (e) { void e }
-            src.connect(ctx.destination)
-            this.currentAudioContextSource = { ctx, src }
-            src.onended = () => {
-              try {
-                this.currentAudioContextSource = null
-              } catch (e) { void e }
-              finish(true)
-            }
-            src.start(0)
-          } catch (fallbackErr) {
-            finish(false, { error: String(fallbackErr) })
-          }
+          await tryWebAudioFallback()
         })
       }
     })
@@ -170,21 +186,9 @@ export class PlaybackController {
   }
 
   stop(): void {
-    if (this.currentAudio) {
-      try {
-        this.currentAudio.pause()
-        this.currentAudio.src = ''
-  } catch (e) { void e }
-      this.currentAudio = null
-    }
+    this.clearCurrentAudio()
     if (this.currentAudioContextSource) {
-      try {
-        this.currentAudioContextSource.src.stop?.()
-  } catch (e) { void e }
-      try {
-        this.currentAudioContextSource.ctx.close?.()
-  } catch (e) { void e }
-      this.currentAudioContextSource = null
+      this.cleanupWebAudioSource(this.currentAudioContextSource, true)
     }
   }
 }
