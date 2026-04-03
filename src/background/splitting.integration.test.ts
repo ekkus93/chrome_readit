@@ -92,16 +92,15 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
 
     // Ensure we forwarded audio to the content script once per fetched chunk
     const sendCalls = sendMessageMock.mock.calls
-    expect(sendCalls.length).toBeGreaterThanOrEqual(fetchedTexts.length)
-    expect(sendCalls.length).toBe(fetchedTexts.length)
-    for (const [, payload] of sendCalls) {
+    const playCalls = sendCalls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO')
+    expect(playCalls.length).toBeGreaterThanOrEqual(fetchedTexts.length)
+    for (const [, payload] of playCalls) {
       expect((payload as Record<string, unknown>)).toMatchObject({ kind: 'PLAY_AUDIO', rate: 2.25 })
     }
 
-    const fallbackCall = executeScriptMock.mock.calls.find((call) => {
-      const opts = call?.[0] as { args?: unknown[] } | undefined
-      return Array.isArray(opts?.args) && opts.args.length === 3
+    expect(executeScriptMock).toHaveBeenCalledWith({
+      target: { tabId: 201 },
+      files: ['src/content/content.ts'],
     })
-    expect((fallbackCall?.[0] as { args?: unknown[] } | undefined)?.args?.[2]).toBe(2.25)
   })
 })

@@ -18,6 +18,36 @@ async function getActiveHttpTab() {
   return tab
 }
 
+const UNSUPPORTED_PLAYBACK_ERROR = 'Playback not supported on this page'
+const CONTENT_SCRIPT_FILE = 'src/content/content.ts'
+
+async function requireActivePlaybackTab(): Promise<chrome.tabs.Tab> {
+  const tab = await getActiveHttpTab()
+  if (!tab?.id) throw new Error(UNSUPPORTED_PLAYBACK_ERROR)
+  return tab
+}
+
+async function ensurePlaybackBridge(tabId: number): Promise<void> {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: [CONTENT_SCRIPT_FILE],
+    })
+  } catch (err) {
+    throw new Error(`${UNSUPPORTED_PLAYBACK_ERROR}: ${String(err)}`)
+  }
+}
+
+async function sendTabMessageWithBootstrap(tabId: number, message: Record<string, unknown>): Promise<unknown> {
+  try {
+    return await chrome.tabs.sendMessage(tabId, message)
+  } catch (err) {
+    console.warn('[readit] tab sendMessage failed; attempting playback bridge bootstrap', err)
+    await ensurePlaybackBridge(tabId)
+    return await chrome.tabs.sendMessage(tabId, message)
+  }
+}
+
 // Temporary diagnostics flag - enable when debugging TTS/selection issues.
 // Set to false when not actively debugging to avoid noisy logs.
 const DEBUG = true
@@ -214,40 +244,15 @@ async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[],
                   // content script registered and listening this will resolve.
                   const sendPromise = (async () => {
                     if (!tab.id) return null
-                    return await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: entry.b64, mime: entry.mime, rate: playbackRate })
+                    return await sendTabMessageWithBootstrap(tab.id, { kind: 'PLAY_AUDIO', audio: entry.b64, mime: entry.mime, rate: playbackRate })
                   })()
                   const timeout = new Promise((res) => setTimeout(() => res({ timeout: true }), CHUNK_TIMEOUT_MS))
                   const res = await Promise.race([sendPromise, timeout])
                   if (res && typeof res === 'object' && res !== null && 'timeout' in (res as Record<string, unknown>) && (res as Record<string, unknown>).timeout) console.warn('[readit] chunk ack timeout; proceeding')
                 } catch (err) {
-                  // If sendMessage fails because no content script exists in the
-                  // page, attempt to play the chunk by injecting a small script
-                  // that creates an HTMLAudio element with a data: URI. This
-                  // avoids cancelling the entire pipeline for pages where the
-                  // manifest content script wasn't present or was blocked.
-                  console.warn('[readit] send chunk failed - attempting executeScript fallback', err)
-                  try {
-                    if (tab.id) {
-                      await chrome.scripting.executeScript({
-                        target: { tabId: tab.id },
-                        world: 'MAIN',
-                        func: (b64: string, mime: string, playbackRate: number) => {
-                          try {
-                            const audio = new Audio(`data:${mime};base64,${b64}`)
-                            if (typeof playbackRate === 'number' && !Number.isNaN(playbackRate)) audio.playbackRate = playbackRate
-                            // play() returns a promise; swallow failures
-                            void audio.play().catch(() => { /* ignore */ })
-                            return true
-                          } catch { return false }
-                        },
-                        args: [entry.b64, entry.mime, playbackRate],
-                      })
-                    }
-                  } catch (ex) {
-                    console.warn('[readit] executeScript fallback failed', ex)
-                    cancelRequested = true
-                    break
-                  }
+                  console.warn('[readit] send chunk failed after playback bridge bootstrap', err)
+                  cancelRequested = true
+                  break
                 }
 
         // Free memory for this chunk and move to next
@@ -282,8 +287,7 @@ export async function sendToActiveTabOrInject(msg: Msg) {
     let textArg: string | null = null
     if (msg.kind === 'READ_TEXT') textArg = msg.text
     else {
-      const tab = await getActiveHttpTab()
-      if (!tab) return
+      const tab = await requireActivePlaybackTab()
         try {
           const r = await chrome.scripting.executeScript({ target: { tabId: tab.id! }, world: 'MAIN', func: () => window.getSelection?.()?.toString().trim() ?? '' })
           if (Array.isArray(r) && r.length > 0) {
@@ -298,38 +302,14 @@ export async function sendToActiveTabOrInject(msg: Msg) {
     }
     if (!textArg || !s.ttsUrl) return
 
-    const tab = await getActiveHttpTab()
-    if (tab && tab.id && textArg.length > MAX_CHUNK_CHARS) { const chunks = splitTextIntoChunks(textArg, MAX_CHUNK_CHARS); await processChunksSequentially(tab, chunks, s.voice); return }
+    const tab = await requireActivePlaybackTab()
+    if (textArg.length > MAX_CHUNK_CHARS) { const chunks = splitTextIntoChunks(textArg, MAX_CHUNK_CHARS); await processChunksSequentially(tab, chunks, s.voice); return }
 
     const fetched = await fetchTtsAudio(textArg, s.voice)
     if (!fetched) return
     try {
       if (DEBUG) console.debug('[readit][DBG] forward audio prepared', { mime: fetched.mime, b64len: fetched.b64.length, firstBytesBase64: fetched.b64.slice(0, 64) })
-      if (tab && tab.id) {
-        try {
-          await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: fetched.b64, mime: fetched.mime, rate: getCurrentPlaybackRate() })
-        } catch (err) {
-          // Fallback: attempt to play via executeScript (inject small in-page player)
-          console.warn('[readit] forward audio sendMessage failed; trying executeScript fallback', err)
-          try {
-            await chrome.scripting.executeScript({
-              target: { tabId: tab.id },
-              world: 'MAIN',
-              func: (b64: string, mime: string, playbackRate: number) => {
-                try {
-                  const audio = new Audio(`data:${mime};base64,${b64}`)
-                  if (typeof playbackRate === 'number' && !Number.isNaN(playbackRate)) audio.playbackRate = playbackRate
-                  void audio.play().catch(() => { /* ignore */ })
-                  return true
-                } catch { return false }
-              },
-              args: [fetched.b64, fetched.mime, getCurrentPlaybackRate()],
-            })
-          } catch (ex) {
-            console.warn('[readit] executeScript fallback failed for forward audio', ex)
-          }
-        }
-      }
+      await sendTabMessageWithBootstrap(tab.id!, { kind: 'PLAY_AUDIO', audio: fetched.b64, mime: fetched.mime, rate: getCurrentPlaybackRate() })
     } catch (err) { console.warn('[readit] forward audio failed', err) }
   } catch (err) { console.warn('[readit] sendToActiveTabOrInject failed', err) }
 }

@@ -112,12 +112,16 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 # Phase 3 — Make the content script the only playback engine
 
+**Status:** Done
+
 ## Task 3.1 — Remove direct fallback page playback from the background
 
+**Status:** Done
+
 ### Subtasks
-- Find the fallback path in `src/background/service-worker.ts` that uses `chrome.scripting.executeScript()` to create an ad-hoc `Audio()` object.
-- Remove the direct playback logic.
-- Do not leave any path where the background can start unmanaged audio playback outside the content playback controller.
+- [x] Find the fallback path in `src/background/service-worker.ts` that uses `chrome.scripting.executeScript()` to create an ad-hoc `Audio()` object.
+- [x] Remove the direct playback logic.
+- [x] Do not leave any path where the background can start unmanaged audio playback outside the content playback controller.
 
 ### Acceptance criteria
 - Background code no longer plays speech directly via injected `Audio()`.
@@ -127,11 +131,13 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 3.2 — Replace fallback with bootstrap/retry of content playback
 
+**Status:** Done
+
 ### Subtasks
-- Add a helper like `ensurePlaybackBridge(tabId)` that injects or re-injects the content script/player bridge when messaging fails.
-- On message failure for an ordinary supported tab, attempt bridge bootstrap once.
-- Retry the original `chrome.tabs.sendMessage()` playback message after bootstrap.
-- If retry fails, abort the playback session cleanly rather than spawning an unmanaged fallback player or any second playback engine.
+- [x] Add a helper like `ensurePlaybackBridge(tabId)` that injects or re-injects the content script/player bridge when messaging fails.
+- [x] On message failure for an ordinary supported tab, attempt bridge bootstrap once.
+- [x] Retry the original `chrome.tabs.sendMessage()` playback message after bootstrap.
+- [x] If retry fails, abort the playback session cleanly rather than spawning an unmanaged fallback player or any second playback engine.
 
 ### Acceptance criteria
 - Playback fallback preserves the same message-based flow as the primary path.
@@ -141,10 +147,12 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 3.3 — Harden content-script readiness assumptions
 
+**Status:** Done
+
 ### Subtasks
-- Verify the content script is available on all supported pages where reading is allowed.
-- Handle unsupported pages gracefully and fail fast on restricted pages.
-- Make error reporting explicit when playback cannot proceed because no content player is available.
+- [x] Verify the content script is available on all supported pages where reading is allowed.
+- [x] Handle unsupported pages gracefully and fail fast on restricted pages.
+- [x] Make error reporting explicit when playback cannot proceed because no content player is available.
 
 ### Acceptance criteria
 - Unsupported pages fail cleanly.
