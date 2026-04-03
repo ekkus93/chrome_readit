@@ -25,6 +25,7 @@ describe('background.sendToActiveTabOrInject', () => {
 
   beforeEach(() => {
     vi.resetAllMocks()
+    vi.mocked(getSettings).mockResolvedValue({ voice: 'V', rate: 1.0, ttsUrl: 'http://localhost/tts' })
 
     // Minimal chrome mock to allow module import and to inspect calls.
     ;(globalThis as unknown as { chrome?: ChromeMock }).chrome = {

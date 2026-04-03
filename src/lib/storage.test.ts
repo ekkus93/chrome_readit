@@ -22,8 +22,10 @@ describe('storage.getSettings / saveSettings', () => {
   it('returns defaults when storage empty', async () => {
     // Replace get with a mock that resolves the desired value
     ;(globalThis as unknown as { chrome: { storage: { sync: { get: (...a: unknown[]) => unknown } } } }).chrome.storage.sync.get = vi.fn(() => Promise.resolve({}))
-  const s = await storage.getSettings()
-  expect(s).toEqual(DEFAULTS)
+    const s = await storage.getSettings()
+    expect(s).toEqual(DEFAULTS)
+    expect(storage.DEFAULT_TTS_URL).toBe('http://localhost:5002/api/tts')
+    expect(storage.DEFAULT_SETTINGS.ttsUrl).toBe('http://localhost:5002/api/tts')
   })
 
   it('merges stored settings with defaults', async () => {

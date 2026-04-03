@@ -389,12 +389,16 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 # Phase 9 — Add tests and validation coverage
 
+**Status:** Automated coverage done; manual QA checklist added
+
 ## Task 9.1 — Add storage tests
 
+**Status:** Done
+
 ### Subtasks
-- Add tests for shared settings defaults.
-- Add tests for merged persisted settings.
-- Add tests ensuring default URL remains `/api/tts`.
+- [x] Add tests for shared settings defaults.
+- [x] Add tests for merged persisted settings.
+- [x] Add tests ensuring default URL remains `/api/tts`.
 
 ### Acceptance criteria
 - Settings behavior is covered by automated tests.
@@ -403,10 +407,12 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 9.2 — Add playback session tests
 
+**Status:** Done
+
 ### Subtasks
-- Add tests for starting a second session canceling the first.
-- Add tests for stale async work exiting when session ID changes.
-- Add tests ensuring only one active playback session is possible.
+- [x] Add tests for starting a second session canceling the first.
+- [x] Add tests for stale async work exiting when session ID changes.
+- [x] Add tests ensuring only one active playback session is possible.
 
 ### Acceptance criteria
 - Playback session ownership is validated automatically.
@@ -415,11 +421,13 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 9.3 — Add sequencing tests for fallback/bootstrap behavior
 
+**Status:** Done
+
 ### Subtasks
-- Add tests that simulate content-script message failure.
-- Verify reinjection/bootstrap is attempted.
-- Verify playback only continues via the normal content-script path.
-- Verify the queue does not advance early due to unmanaged fallback playback.
+- [x] Add tests that simulate content-script message failure.
+- [x] Verify reinjection/bootstrap is attempted.
+- [x] Verify playback only continues via the normal content-script path.
+- [x] Verify the queue does not advance early due to unmanaged fallback playback.
 
 ### Acceptance criteria
 - Message-failure recovery does not reintroduce overlapping playback.
@@ -428,10 +436,12 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 9.4 — Add popup behavior tests
 
+**Status:** Done
+
 ### Subtasks
-- Add tests for popup play success/failure handling.
-- Add tests ensuring a failed `play()` does not flip UI into success state.
-- Add tests for server-voice loading behavior.
+- [x] Add tests for popup play success/failure handling.
+- [x] Add tests ensuring a failed `play()` does not flip UI into success state.
+- [x] Add tests for server-voice loading behavior.
 
 ### Acceptance criteria
 - Popup diagnostics are reliable.
@@ -440,14 +450,16 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 9.5 — Add manual QA checklist
 
+**Status:** Checklist added; manual execution pending in Chrome
+
 ### Subtasks
-- Verify changing rate while reading changes audible playback every time.
-- Verify repeated reads do not overlap.
-- Verify starting a second read interrupts the first cleanly.
-- Verify popup and options show the same TTS URL.
-- Verify popup and options show the same voice list.
-- Verify browser speech-synthesis voices are no longer part of the UI.
-- Verify fallback recovery works after content script reinjection.
+- [ ] Verify changing rate while reading changes audible playback every time.
+- [ ] Verify repeated reads do not overlap.
+- [ ] Verify starting a second read interrupts the first cleanly.
+- [ ] Verify popup and options show the same TTS URL.
+- [ ] Verify popup and options show the same voice list.
+- [ ] Verify browser speech-synthesis voices are no longer part of the UI.
+- [ ] Verify fallback recovery works after content script reinjection.
 
 ### Acceptance criteria
 - Manual verification confirms the two originally reported bugs are fixed.

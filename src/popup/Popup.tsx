@@ -211,8 +211,8 @@ export default function Popup() {
             {tryStatus === 'sending' ? 'Sending…' : 'Try speech'}
           </button>
         </div>
-        {tryStatus === 'ok' && <div style={{ color: '#006400', marginTop: 8 }}>Requested speech on the active tab.</div>}
-        {tryStatus === 'error' && <div style={{ color: '#8b0000', marginTop: 8 }}>Failed to request speech. See background console.</div>}
+        {tryStatus === 'ok' && <div style={{ color: '#006400', marginTop: 8 }}>Played test speech in the popup.</div>}
+        {tryStatus === 'error' && <div style={{ color: '#8b0000', marginTop: 8 }}>Failed to play returned speech audio.</div>}
       </section>
 
       <section style={{ marginTop: 12 }}>
