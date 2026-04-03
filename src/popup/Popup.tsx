@@ -79,44 +79,59 @@ export default function Popup() {
     if (!text) return
     setTryStatus('sending')
     try {
-      // Request TTS audio from the background and play it directly in the popup
-      chrome.runtime.sendMessage({ action: 'request-tts', text }, (resp) => {
-        try {
-          if (!resp || !resp.ok) {
-            console.warn('[readit] popup tts failed', resp?.error)
-            setTryStatus('error')
+      const resp = await new Promise<Record<string, unknown> | undefined>((resolve, reject) => {
+        chrome.runtime.sendMessage({ action: 'request-tts', text }, (response) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message ?? 'unknown runtime error'))
             return
           }
-          const audio = resp.audio
-          const mime = resp.mime || 'audio/wav'
-          if (!audio) {
-            console.warn('[readit] popup tts: no audio in response')
-            setTryStatus('error')
-            return
-          }
-          // audio is base64 string from background
-          const bin = atob(audio)
-          const len = bin.length
-          const u8 = new Uint8Array(len)
-          for (let i = 0; i < len; i++) u8[i] = bin.charCodeAt(i)
-          const blob = new Blob([u8], { type: mime })
-          const url = URL.createObjectURL(blob)
-          const a = new Audio(url)
-          a.playbackRate = rate
-          a.autoplay = true
-          a.play().catch((e) => {
-            console.warn('[readit] popup audio play failed', e)
-            setTryStatus('error')
-          }).then(() => {
-            setTryStatus('ok')
-            setTimeout(() => setTryStatus('idle'), 1200)
-          })
-          setTimeout(() => URL.revokeObjectURL(url), 60_000)
-        } catch (err) {
-          console.warn('[readit] popup tts handler error', err)
-          setTryStatus('error')
-        }
+          resolve(response as Record<string, unknown> | undefined)
+        })
       })
+
+      if (!resp || !resp.ok) {
+        console.warn('[readit] popup tts failed', resp?.error)
+        setTryStatus('error')
+        return
+      }
+
+      const audio = resp.audio
+      const mime = typeof resp.mime === 'string' ? resp.mime : 'audio/wav'
+      if (typeof audio !== 'string' || audio.length === 0) {
+        console.warn('[readit] popup tts: no playable audio in response')
+        setTryStatus('error')
+        return
+      }
+      if (!mime.startsWith('audio/')) {
+        console.warn('[readit] popup tts: non-audio payload returned', mime)
+        setTryStatus('error')
+        return
+      }
+
+      const bin = atob(audio)
+      const len = bin.length
+      if (len === 0) {
+        console.warn('[readit] popup tts: decoded audio payload is empty')
+        setTryStatus('error')
+        return
+      }
+      const u8 = new Uint8Array(len)
+      for (let i = 0; i < len; i++) u8[i] = bin.charCodeAt(i)
+      const blob = new Blob([u8], { type: mime })
+      const url = URL.createObjectURL(blob)
+      const player = new Audio(url)
+      player.playbackRate = rate
+      player.autoplay = true
+      try {
+        await player.play()
+        setTryStatus('ok')
+        setTimeout(() => setTryStatus('idle'), 1200)
+      } catch (err) {
+        console.warn('[readit] popup audio play failed', err)
+        setTryStatus('error')
+      } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 60_000)
+      }
     } catch (err) {
       console.warn('readit: try speech failed', err)
       setTryStatus('error')

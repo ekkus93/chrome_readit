@@ -293,13 +293,17 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 # Phase 6 — Fix popup test playback handling
 
+**Status:** Done
+
 ## Task 6.1 — Replace broken promise chaining with `try/catch`
 
+**Status:** Done
+
 ### Subtasks
-- Find the popup test-play path where playback uses `.catch(...).then(...)`.
-- Replace it with `await a.play()` inside `try/catch`.
-- Report success only if `play()` actually succeeds.
-- Report failure only from the catch block.
+- [x] Find the popup test-play path where playback uses `.catch(...).then(...)`.
+- [x] Replace it with `await a.play()` inside `try/catch`.
+- [x] Report success only if `play()` actually succeeds.
+- [x] Report failure only from the catch block.
 
 ### Acceptance criteria
 - Popup no longer reports success after a failed `play()` call.
@@ -308,10 +312,12 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 6.2 — Make popup test playback require returned audio
 
+**Status:** Done
+
 ### Subtasks
-- Update popup test logic so success requires actual returned audio data.
-- Remove any legacy handling for `/api/tts/play` response shapes from the popup.
-- Fail clearly if the response contains no playable audio.
+- [x] Update popup test logic so success requires actual returned audio data.
+- [x] Remove any legacy handling for `/api/tts/play` response shapes from the popup.
+- [x] Fail clearly if the response contains no playable audio.
 
 ### Acceptance criteria
 - Popup test playback reflects the client-side-only architecture.
