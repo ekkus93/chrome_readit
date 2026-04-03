@@ -56,6 +56,7 @@ This will:
 - Start the FastAPI server on `http://localhost:5002`
 - Pre-download the TTS model (may take a few minutes on first run)
 - Make 109 voices available via `/api/voices` endpoint
+- Leave host-side playback disabled for the normal extension workflow
 
 **Note:** Keep this terminal running. The extension requires the TTS server to be running.
 
@@ -113,8 +114,8 @@ Below are remaining recommended improvements, prioritized by impact.
 The extension uses a local Coqui TTS Docker server that provides 109 high-quality voices. The server runs a FastAPI application with the following endpoints:
 
 - `GET /api/voices` — List all available voices
-- `POST /api/tts` — Generate speech audio (returns WAV file)
-- `POST /api/tts/play` — Generate and play audio on host (server-side playback)
+- `POST /api/tts` — Generate speech audio for browser playback (returns WAV file)
+- `POST /api/tts/play` — Manual debug endpoint for host/server playback
 
 ### Quick Start
 
@@ -132,6 +133,7 @@ The Docker setup includes:
 - **espeak-ng phonemizer** for better text processing
 - **FastAPI server** with automatic voice fallback to 'p225'
 - **Model caching** to avoid re-downloads
+- **Host playback disabled** in the normal extension workflow so only the browser plays audio
 
 ### Voice Selection
 
@@ -153,6 +155,5 @@ The extension defaults to voice 'p225' but you can change this in the extension 
 - The VITS model provides high-quality speech
 - Voice 'p225' is a good default for clear, natural speech
 - Some voices may work better for different types of text
-
 
 

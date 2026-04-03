@@ -10,7 +10,6 @@ app = FastAPI(title="Coqui-local TTS")
 
 class TTSRequest(BaseModel):
     text: str
-    play_only: bool = False
     voice: str | None = None
     # optional fields left for future: voice, speaker, format
 
@@ -66,54 +65,6 @@ def synth(req: TTSRequest):
         except Exception as e:
             # Re-raise as generic error handled below
             raise
-        # Optionally play the generated audio on the host's sound device.
-        # This requires the container to have access to the host PulseAudio socket
-        # (or /dev/snd) and paplay/aplay installed. Enable by setting
-        # the environment variable PLAY_ON_HOST=1 in your docker-compose or
-        # docker run environment.
-        # If the caller explicitly requests server-side playback only, try to
-        # play the generated WAV on the server and return a JSON status instead
-        # of sending the file back. This makes the endpoint useful for remote
-        # devices that should cause the server to read text aloud.
-        if getattr(req, "play_only", False):
-            # Launch playback in the background (non-blocking) and return
-            # immediately so callers aren't blocked while audio plays.
-            from subprocess import Popen
-            try:
-                if os.path.exists("/usr/bin/paplay"):
-                    p = Popen(["/usr/bin/paplay", out_path])
-                elif os.path.exists("/usr/bin/aplay"):
-                    p = Popen(["/usr/bin/aplay", out_path])
-                else:
-                    # No local playback utility available
-                    raise RuntimeError("No playback utility found (paplay or aplay)")
-                # record process
-                with app.state._play_lock:
-                    app.state._play_procs.append(p)
-                return {"ok": True, "played": True}
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-
-        # Otherwise behave as before: optionally spawn a non-blocking player if
-        # the container is configured to do so (PLAY_ON_HOST), but still return
-        # the generated file to the caller.
-        try:
-            play_on_host = os.environ.get("PLAY_ON_HOST", "0")
-            if play_on_host.lower() in ("1", "true", "yes"):
-                # Use paplay (PulseAudio) if available, otherwise fall back to aplay
-                from subprocess import Popen
-                if os.path.exists("/usr/bin/paplay"):
-                    p = Popen(["/usr/bin/paplay", out_path])
-                elif os.path.exists("/usr/bin/aplay"):
-                    p = Popen(["/usr/bin/aplay", out_path])
-                else:
-                    p = None
-                if p is not None:
-                    with app.state._play_lock:
-                        app.state._play_procs.append(p)
-        except Exception:
-            # Don't fail the request if playback fails; continue to return the file
-            pass
         return FileResponse(out_path, media_type="audio/wav", filename="speech.wav")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -63,13 +63,17 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 # Phase 2 — Enforce client-side playback only
 
+**Status:** Done
+
 ## Task 2.1 — Remove extension dependency on `/api/tts/play`
 
+**Status:** Done
+
 ### Subtasks
-- Audit `src/background/service-worker.ts` for any logic that branches on `/play`.
-- Remove special handling for `ttsUrl.endsWith('/play')` or equivalent.
-- Ensure all extension TTS requests go to `/api/tts` and expect audio data.
-- Remove or rewrite any JSON-success path that assumes server-side playback.
+- [x] Audit `src/background/service-worker.ts` for any logic that branches on `/play`.
+- [x] Remove special handling for `ttsUrl.endsWith('/play')` or equivalent.
+- [x] Ensure all extension TTS requests go to `/api/tts` and expect audio data.
+- [x] Remove or rewrite any JSON-success path that assumes server-side playback.
 
 ### Acceptance criteria
 - The extension’s normal playback path only uses `/api/tts`.
@@ -80,9 +84,11 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 2.2 — Disable host playback in Docker/runtime config
 
+**Status:** Done
+
 ### Subtasks
-- Update `docker/docker-compose.yml` to set `PLAY_ON_HOST=0`, or remove the variable if host playback is no longer needed.
-- Verify any local dev or README instructions do not tell the extension workflow to rely on host-side playback.
+- [x] Update `docker/docker-compose.yml` to set `PLAY_ON_HOST=0`, or remove the variable if host playback is no longer needed.
+- [x] Verify any local dev or README instructions do not tell the extension workflow to rely on host-side playback.
 
 ### Acceptance criteria
 - Dockerized dev setup does not play speech on the host during normal extension use.
@@ -91,10 +97,12 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 2.3 — Make `/api/tts` audio-return only in the server
 
+**Status:** Done
+
 ### Subtasks
-- Update `docker/coqui-local/app.py` so `/api/tts` returns audio only.
-- Remove any “also play on host” behavior from `/api/tts`.
-- Keep `/api/tts/play` only if useful for manual debugging, but make sure extension code does not use it.
+- [x] Update `docker/coqui-local/app.py` so `/api/tts` returns audio only.
+- [x] Remove any “also play on host” behavior from `/api/tts`.
+- [x] Keep `/api/tts/play` only if useful for manual debugging, but make sure extension code does not use it.
 
 ### Acceptance criteria
 - Calling `/api/tts` from the extension does not also play audio on the server host.

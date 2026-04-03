@@ -9,7 +9,7 @@ type ChromeMock = {
 }
 
 // Mock storage.getSettings since the module imports it at top-level
-vi.mock('./../lib/storage', () => ({ getSettings: vi.fn(async () => ({ rate: 1.0, ttsUrl: 'http://localhost:5002/api/tts/play', voice: 'v' })) }))
+vi.mock('./../lib/storage', () => ({ getSettings: vi.fn(async () => ({ rate: 1.0, ttsUrl: 'http://localhost:5002/api/tts', voice: 'v' })) }))
 
 describe('commands.onCommand handlers', () => {
   beforeEach(() => {

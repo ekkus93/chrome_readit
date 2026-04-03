@@ -298,8 +298,6 @@ export async function sendToActiveTabOrInject(msg: Msg) {
     }
     if (!textArg || !s.ttsUrl) return
 
-    if (s.ttsUrl?.toString().endsWith('/play')) { try { await fetch(s.ttsUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: textArg, voice: s.voice }) }) } catch (err) { console.warn('[readit] play-only POST failed', err) } ; return }
-
     const tab = await getActiveHttpTab()
     if (tab && tab.id && textArg.length > MAX_CHUNK_CHARS) { const chunks = splitTextIntoChunks(textArg, MAX_CHUNK_CHARS); await processChunksSequentially(tab, chunks, s.voice); return }
 
@@ -508,27 +506,6 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           return
         }
         try {
-          // If the configured URL is a play-only endpoint (server-side playback),
-          // POST and treat the response as JSON status instead of audio. This
-          // avoids attempting to play non-audio responses in the extension UI.
-          if (s.ttsUrl?.toString().endsWith('/play')) {
-            const resp = await fetch(s.ttsUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text, voice: s.voice }),
-            })
-            if (!resp.ok) {
-              sendResponse({ ok: false, error: `tts service returned ${resp.status}` })
-              return
-            }
-            // Try to parse JSON status; return played flag so callers can
-            // present friendly UI.
-            let js: ({ played?: boolean } & Record<string, unknown>) | null = null
-            try { js = await resp.json() } catch { js = null }
-            sendResponse({ ok: true, played: js?.played === true, info: js })
-            return
-          }
-
           const resp = await fetch(s.ttsUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -573,29 +550,6 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           return
         }
         try {
-          // If the configured URL is a play-only endpoint, call it and
-          // surface the JSON status to the caller; also attempt to forward
-          // playback to the content script when the endpoint returned
-          // audio (non-play-only).
-          if (s.ttsUrl?.toString().endsWith('/play')) {
-            const resp = await fetch(s.ttsUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text, voice: s.voice }),
-            })
-            if (!resp.ok) {
-              sendResponse({ ok: false, error: `tts service returned ${resp.status}` })
-              return
-            }
-            let js: Record<string, unknown> | null = null
-            try { js = await resp.json() } catch (e) { void e; js = null }
-            // Forward a simple OK response; content script playback is not
-            // applicable for play-only endpoints since audio is played on
-            // the server.
-            sendResponse({ ok: true, played: js?.played === true, info: js })
-            return
-          }
-
           const resp = await fetch(s.ttsUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

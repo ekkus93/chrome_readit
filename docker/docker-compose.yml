@@ -13,8 +13,8 @@ services:
       # Persist downloaded model files to a named volume to avoid re-downloading
       # and to keep image sizes smaller across rebuilds.
       - TTS_CACHE_DIR=/root/.local/share/tts
-      # Enable host audio playback
-      - PLAY_ON_HOST=1
+      # Host audio playback is disabled for the normal extension workflow.
+      - PLAY_ON_HOST=0
       - PULSE_SERVER=unix:/tmp/pulse/native
 
 volumes:
