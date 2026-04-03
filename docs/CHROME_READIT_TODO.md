@@ -232,12 +232,16 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 # Phase 5 — Use server voices everywhere
 
+**Status:** Done
+
 ## Task 5.1 — Remove browser voice enumeration from popup
 
+**Status:** Done
+
 ### Subtasks
-- Delete any use of `window.speechSynthesis.getVoices()` in `src/popup/Popup.tsx`.
-- Remove browser `SpeechSynthesisVoice` state from popup UI.
-- Remove logic that persists browser-only voice names.
+- [x] Delete any use of `window.speechSynthesis.getVoices()` in `src/popup/Popup.tsx`.
+- [x] Remove browser `SpeechSynthesisVoice` state from popup UI.
+- [x] Remove logic that persists browser-only voice names.
 
 ### Acceptance criteria
 - Popup no longer depends on browser speech-synthesis voices.
@@ -246,10 +250,12 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 5.2 — Add a shared server-voice loader helper
 
+**Status:** Done
+
 ### Subtasks
-- Create or extract a helper to fetch voices from the configured TTS server, for example via `/api/voices`.
-- Use the configured TTS base URL consistently.
-- Normalize returned voice data into a shared UI-friendly shape.
+- [x] Create or extract a helper to fetch voices from the configured TTS server, for example via `/api/voices`.
+- [x] Use the configured TTS base URL consistently.
+- [x] Normalize returned voice data into a shared UI-friendly shape.
 
 ### Acceptance criteria
 - Voice loading logic exists in one reusable place.
@@ -259,10 +265,12 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 5.3 — Use server voices in both Popup and Options
 
+**Status:** Done
+
 ### Subtasks
-- Update `src/options/Options.tsx` to use the shared server-voice loader if it does not already.
-- Update `src/popup/Popup.tsx` to use the same helper and same voice data model.
-- Ensure the selected voice is persisted in shared settings.
+- [x] Update `src/options/Options.tsx` to use the shared server-voice loader if it does not already.
+- [x] Update `src/popup/Popup.tsx` to use the same helper and same voice data model.
+- [x] Ensure the selected voice is persisted in shared settings.
 
 ### Acceptance criteria
 - Popup and Options display the same server-provided voice list.
@@ -272,9 +280,11 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 5.4 — Update UI copy to match reality
 
+**Status:** Done
+
 ### Subtasks
-- Remove any UI text that says voice availability depends on browser/OS speech synthesis.
-- Replace it with text that says voice availability depends on the configured TTS server/model.
+- [x] Remove any UI text that says voice availability depends on browser/OS speech synthesis.
+- [x] Replace it with text that says voice availability depends on the configured TTS server/model.
 
 ### Acceptance criteria
 - UI descriptions match actual runtime behavior.

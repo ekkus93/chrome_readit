@@ -15,8 +15,13 @@ describe('Popup playback control buttons', () => {
       runtime: { sendMessage: vi.fn() },
       storage: { sync: { get: vi.fn(() => Promise.resolve({ settings: { rate: 1.0, voice: '' } })), set: vi.fn(() => Promise.resolve()) } },
     }
-    // speechSynthesis used by Popup; provide minimal API
-    ;(globalThis as unknown as Record<string, unknown>).speechSynthesis = { getVoices: () => [], onvoiceschanged: null, addEventListener: () => {}, removeEventListener: () => {} }
+    vi.stubGlobal('fetch', vi.fn((input: unknown) => {
+      const url = String(input)
+      if (url.endsWith('/api/voices')) {
+        return Promise.resolve(new Response(JSON.stringify({ voices: ['p225'] }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      return Promise.resolve(new Response(null, { status: 404 }))
+    }))
   })
 
   function getGlobal(path: string[]) {

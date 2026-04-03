@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react'
-import { fetchVoicesForTtsUrl } from './helpers'
 import { DEFAULT_SETTINGS, DEFAULT_TTS_URL, getSettings, saveSettings } from '../lib/storage'
+import { fetchServerVoices, type VoiceOption } from '../lib/voices'
 
 export default function Options() {
   const [voice, setVoice] = useState<string | ''>(DEFAULT_SETTINGS.voice)
@@ -10,7 +10,7 @@ export default function Options() {
   const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
   const [testError, setTestError] = useState<string | null>(null)
   const [ttsUrl, setTtsUrl] = useState<string>(DEFAULT_SETTINGS.ttsUrl)
-  const [voicesList, setVoicesList] = useState<Array<{ name: string; label: string }>>([])
+  const [voicesList, setVoicesList] = useState<VoiceOption[]>([])
   const [serverPlaying, setServerPlaying] = useState<boolean>(false)
   const [checkingPlaying, setCheckingPlaying] = useState(false)
   const testAudioRef = useRef<HTMLAudioElement | null>(null)
@@ -32,16 +32,19 @@ export default function Options() {
   useEffect(() => { if (!loaded) return; void saveSettings({ voice: voice || DEFAULT_SETTINGS.voice }) }, [voice, loaded])
   useEffect(() => { if (!loaded) return; void saveSettings({ ttsUrl: ttsUrl || DEFAULT_TTS_URL }) }, [ttsUrl, loaded])
 
-  const voiceOptions = useMemo(() => [{ name: DEFAULT_SETTINGS.voice, label: DEFAULT_SETTINGS.voice }, ...voicesList], [voicesList])
+  const voiceOptions = useMemo(() => {
+    if (voicesList.some((option) => option.name === voice)) return voicesList
+    return [{ name: voice, label: voice }, ...voicesList]
+  }, [voice, voicesList])
 
   useEffect(() => {
     if (!ttsUrl) return
     let mounted = true
     async function fetchVoices() {
       try {
-        const voices = await fetchVoicesForTtsUrl(ttsUrl)
+        const voices = await fetchServerVoices(ttsUrl)
         if (!mounted) return
-        setVoicesList(voices.map((v: string) => ({ name: v, label: v })))
+        setVoicesList(voices)
       } catch (e) { void e }
     }
     fetchVoices()
@@ -261,7 +264,7 @@ export default function Options() {
         <select id="voice" value={voice} onChange={(e) => setVoice(e.target.value)} style={{ width: 360, padding: 8 }}>
           {voiceOptions.map(v => (<option key={v.name || 'default'} value={v.name}>{v.label}</option>))}
         </select>
-        <p style={{ color: 'GrayText' }}>Choose a TTS voice. Availability depends on your OS and browser.</p>
+        <p style={{ color: 'GrayText' }}>Choose a voice exposed by the configured TTS server/model.</p>
       </section>
       <section style={{ marginTop: 24 }}>
         <label htmlFor="ttsUrl" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>TTS service URL (optional, opt‑in)</label>

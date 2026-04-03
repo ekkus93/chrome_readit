@@ -1,46 +1,59 @@
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { DEFAULT_SETTINGS, getSettings, saveSettings } from '../lib/storage'
+import { fetchServerVoices, type VoiceOption } from '../lib/voices'
 // Use real Chrome typings from @types/chrome when installed; avoid file-scoped
 // shims so TypeScript can check extension APIs correctly.
 
 export default function Popup() {
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
+  const [voices, setVoices] = useState<VoiceOption[]>([])
   const [rate, setRate] = useState(DEFAULT_SETTINGS.rate)
   const [voice, setVoice] = useState<string>(DEFAULT_SETTINGS.voice)
-  const [ttsHelperUp, setTtsHelperUp] = useState<boolean | null>(null)
+  const [ttsUrl, setTtsUrl] = useState(DEFAULT_SETTINGS.ttsUrl)
+  const [ttsServerUp, setTtsServerUp] = useState<boolean | null>(null)
   const [tryText, setTryText] = useState<string>('Hello from the popup')
   const [tryStatus, setTryStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
 
   useEffect(() => {
-    const load = () => setVoices(window.speechSynthesis.getVoices())
-    load()
-    if (speechSynthesis.onvoiceschanged === null) {
-      // Firefox compat; Chrome also fires this
-      speechSynthesis.addEventListener('voiceschanged', load)
-      return () => speechSynthesis.removeEventListener('voiceschanged', load)
-    } else {
-      speechSynthesis.onvoiceschanged = load
+    let mounted = true
+    void getSettings().then((s) => {
+      if (!mounted) return
+      setRate(s.rate)
+      setVoice(s.voice)
+      setTtsUrl(s.ttsUrl)
+    })
+    return () => {
+      mounted = false
     }
   }, [])
 
-  useEffect(() => { getSettings().then(s => { setRate(s.rate); setVoice(s.voice) }) }, [])
+  useEffect(() => {
+    if (!ttsUrl) return
+    let mounted = true
+    void fetchServerVoices(ttsUrl).then((serverVoices) => {
+      if (!mounted) return
+      setVoices(serverVoices)
+    })
+    return () => {
+      mounted = false
+    }
+  }, [ttsUrl])
 
-  // Probe the local TTS helper via the background proxy. Background will
-  // perform a GET /ping to the helper and return { ok: true } when present.
+  // Probe the configured TTS server through the background so the popup can
+  // surface whether the extension can currently reach it.
   useEffect(() => {
     let mounted = true
     const probe = () => {
       try {
         chrome.runtime.sendMessage({ action: 'probe-tts' }, (resp) => {
           if (!mounted) return
-          if (resp && resp.ok) setTtsHelperUp(true)
-          else setTtsHelperUp(false)
+          if (resp && resp.ok) setTtsServerUp(true)
+          else setTtsServerUp(false)
         })
       } catch (err) {
         if (!mounted) return
         console.warn('readit: probe-tts failed', err)
-        setTtsHelperUp(false)
+        setTtsServerUp(false)
       }
     }
     probe()
@@ -110,7 +123,9 @@ export default function Popup() {
     }
   }
 
-  async function persist(part: Partial<typeof DEFAULT_SETTINGS>) { await saveSettings(part) }
+  async function persist(part: Partial<typeof DEFAULT_SETTINGS>) {
+    await saveSettings(part)
+  }
 
   const labelStyle = { display: 'block', fontWeight: 600 }
   const buttonStyle = { width: '100%', padding: '12px', fontSize: '1rem' } as const
@@ -151,13 +166,14 @@ export default function Popup() {
           onChange={e => { const nextVoice = e.target.value || DEFAULT_SETTINGS.voice; setVoice(nextVoice); void persist({ voice: nextVoice }) }}
           style={selectStyle}
         >
-          <option value={DEFAULT_SETTINGS.voice}>{DEFAULT_SETTINGS.voice}</option>
+          {!voices.some((option) => option.name === voice) && <option value={voice}>{voice}</option>}
           {voices.map(v => (
-            <option key={v.name} value={v.name}>
-              {v.name} {v.lang ? `(${v.lang})` : ''}
-            </option>
+            <option key={v.name} value={v.name}>{v.label}</option>
           ))}
         </select>
+        <p style={{ fontSize: '.8rem', color: 'GrayText', marginTop: 6 }}>
+          Voices come from the configured TTS server/model.
+        </p>
       </div>
 
       <div style={{ marginTop: 12 }}>
@@ -196,14 +212,14 @@ export default function Popup() {
       <p style={{ fontSize: '.85rem', marginTop: 12 }}>
         Tip: Everything here is fully keyboard accessible. Use Tab / Shift+Tab to move, Space/Enter to activate.
       </p>
-      {ttsHelperUp === false && (
+      {ttsServerUp === false && (
         <div style={{ marginTop: 12, padding: 8, background: '#fff4f4', color: '#8b0000', borderRadius: 4 }}>
-          Local TTS helper not running. Start the helper (see project scripts/README.md) if you rely on local system voices.
+          Configured TTS server unavailable.
         </div>
       )}
-      {ttsHelperUp === true && (
+      {ttsServerUp === true && (
         <div style={{ marginTop: 12, padding: 8, background: '#f4fff7', color: '#006400', borderRadius: 4 }}>
-          Local TTS helper available.
+          Configured TTS server available.
         </div>
       )}
     </div>

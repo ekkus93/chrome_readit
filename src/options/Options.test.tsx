@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchVoicesForTtsUrl } from './helpers'
+import { fetchServerVoices } from '../lib/voices'
 
 describe('Options voice list', () => {
   beforeEach(() => {
@@ -25,8 +25,8 @@ describe('Options voice list', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const res = await fetchVoicesForTtsUrl('http://localhost:5002/api/tts')
-    expect(res).toEqual(['alice', 'bob'])
+    const res = await fetchServerVoices('http://localhost:5002/api/tts')
+    expect(res).toEqual([{ name: 'alice', label: 'alice' }, { name: 'bob', label: 'bob' }])
 
     vi.restoreAllMocks()
   })
