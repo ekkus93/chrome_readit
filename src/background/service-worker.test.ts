@@ -85,7 +85,8 @@ describe('background.sendToActiveTabOrInject', () => {
   it('bootstraps the content script and retries when sendMessage throws for READ_TEXT', async () => {
     const g = globalThis as unknown as { chrome: ChromeMock }
     ;(g.chrome.tabs.query as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.([{ id: 55, url: 'https://example.com' }])
-    ;(g.chrome.tabs.sendMessage as unknown as { mockRejectedValue?: (e: unknown) => void }).mockRejectedValue?.(new Error('no content script'))
+    ;(g.chrome.tabs.sendMessage as unknown as { mockRejectedValueOnce?: (e: unknown) => void; mockResolvedValue?: (v: unknown) => void }).mockRejectedValueOnce?.(new Error('no content script'))
+    ;(g.chrome.tabs.sendMessage as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.(undefined)
     ;(g.chrome.scripting.executeScript as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.(undefined)
     const mockedGetSettings2 = vi.mocked(getSettings)
     mockedGetSettings2.mockResolvedValue({ voice: 'V', rate: 1.5, ttsUrl: 'http://localhost/tts' })

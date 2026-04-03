@@ -114,16 +114,51 @@ const MAX_CHUNK_CHARS = 400
 const CHUNK_TIMEOUT_MS = ((globalThis as unknown as { __CHUNK_TIMEOUT_MS?: number }).__CHUNK_TIMEOUT_MS) ?? 60_000 // default 1 minute
 const PREFETCH_COUNT = 2 // how many chunks to fetch ahead of playback
 
-let cancelRequested = false
-let paused = false
-let currentChunks: string[] | null = null
-let currentIndex = 0
+type PlaybackSession = {
+  id: number
+  tabId: number
+  cancelRequested: boolean
+  paused: boolean
+  chunks: string[]
+  currentIndex: number
+}
 
-function resetQueue() {
-  currentChunks = null
-  currentIndex = 0
-  cancelRequested = false
-  paused = false
+let nextSessionId = 1
+let activeSession: PlaybackSession | null = null
+
+function isSessionActive(sessionId: number): boolean {
+  return activeSession?.id === sessionId
+}
+
+function createPlaybackSession(tabId: number, chunks: string[]): PlaybackSession {
+  return {
+    id: nextSessionId++,
+    tabId,
+    cancelRequested: false,
+    paused: false,
+    chunks,
+    currentIndex: 0,
+  }
+}
+
+function finishPlaybackSession(sessionId: number): void {
+  if (isSessionActive(sessionId)) activeSession = null
+}
+
+async function stopSessionPlayback(tabId: number): Promise<void> {
+  try {
+    await chrome.tabs.sendMessage(tabId, { kind: 'STOP_SPEECH' })
+  } catch (err) {
+    void err
+  }
+}
+
+async function cancelPlaybackSession(session: PlaybackSession | null): Promise<void> {
+  if (!session) return
+  session.cancelRequested = true
+  session.paused = false
+  if (isSessionActive(session.id)) activeSession = null
+  await stopSessionPlayback(session.tabId)
 }
 
 function splitTextIntoChunks(text: string, maxLen = MAX_CHUNK_CHARS): string[] {
@@ -170,12 +205,10 @@ async function fetchTtsAudio(text: string, voice?: string): Promise<{ b64: strin
   } catch (err) { console.warn('[readit] fetchTtsAudio failed', err); return null }
 }
 
-async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[], voice?: string) {
+async function processChunksSequentially(session: PlaybackSession, voice?: string) {
   // Producer-consumer: fetch audio for chunks ahead of playback
-  cancelRequested = false
-  paused = false
-  currentChunks = chunks
-  currentIndex = 0
+  const sessionId = session.id
+  const { tabId, chunks } = session
 
   const audioMap = new Map<number, { b64: string; mime: string }>()
   let nextFetchIndex = 0
@@ -186,10 +219,10 @@ async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[],
 
   const producer = async () => {
     try {
-      while (nextFetchIndex < chunks.length && !cancelRequested) {
+      while (nextFetchIndex < chunks.length && isSessionActive(sessionId) && !session.cancelRequested) {
         // Pause fetching while paused to respect user intent
-        while (paused && !cancelRequested) await sleep(200)
-        if (cancelRequested) break
+        while (session.paused && isSessionActive(sessionId) && !session.cancelRequested) await sleep(200)
+        if (!isSessionActive(sessionId) || session.cancelRequested) break
 
         // Don't prefetch beyond the configured window
         if (audioMap.size >= PREFETCH_COUNT) {
@@ -203,14 +236,15 @@ async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[],
         if (!fetched) {
           console.warn('[readit] failed to fetch chunk', i)
           // Abort the whole pipeline on fetch failure
-          cancelRequested = true
+          session.cancelRequested = true
           break
         }
+        if (!isSessionActive(sessionId) || session.cancelRequested) break
         audioMap.set(i, fetched)
       }
     } catch (err) {
       console.warn('[readit] producer failed', err)
-      cancelRequested = true
+      session.cancelRequested = true
     } finally {
       producerDone = true
     }
@@ -218,22 +252,22 @@ async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[],
 
   const consumer = async () => {
     try {
-      while (nextSendIndex < chunks.length && !cancelRequested) {
-        currentIndex = nextSendIndex
+      while (nextSendIndex < chunks.length && isSessionActive(sessionId) && !session.cancelRequested) {
+        session.currentIndex = nextSendIndex
 
-  // Wait for the audio to be available (or for producer to finish)
-        while (!audioMap.has(nextSendIndex) && !producerDone && !cancelRequested) {
+        // Wait for the audio to be available (or for producer to finish)
+        while (!audioMap.has(nextSendIndex) && !producerDone && isSessionActive(sessionId) && !session.cancelRequested) {
           await sleep(100)
           // If paused, wait until resumed
-          while (paused && !cancelRequested) await sleep(200)
+          while (session.paused && isSessionActive(sessionId) && !session.cancelRequested) await sleep(200)
         }
-        if (cancelRequested) break
+        if (!isSessionActive(sessionId) || session.cancelRequested) break
 
         const entry = audioMap.get(nextSendIndex)
         if (!entry) {
           // No audio available (producer finished or failed). Abort.
           console.warn('[readit] no audio available for chunk', nextSendIndex)
-          cancelRequested = true
+          session.cancelRequested = true
           break
         }
 
@@ -243,15 +277,14 @@ async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[],
                   // Try the normal content-script path first. If the tab has a
                   // content script registered and listening this will resolve.
                   const sendPromise = (async () => {
-                    if (!tab.id) return null
-                    return await sendTabMessageWithBootstrap(tab.id, { kind: 'PLAY_AUDIO', audio: entry.b64, mime: entry.mime, rate: playbackRate })
+                    return await sendTabMessageWithBootstrap(tabId, { kind: 'PLAY_AUDIO', audio: entry.b64, mime: entry.mime, rate: playbackRate })
                   })()
                   const timeout = new Promise((res) => setTimeout(() => res({ timeout: true }), CHUNK_TIMEOUT_MS))
                   const res = await Promise.race([sendPromise, timeout])
                   if (res && typeof res === 'object' && res !== null && 'timeout' in (res as Record<string, unknown>) && (res as Record<string, unknown>).timeout) console.warn('[readit] chunk ack timeout; proceeding')
                 } catch (err) {
                   console.warn('[readit] send chunk failed after playback bridge bootstrap', err)
-                  cancelRequested = true
+                  session.cancelRequested = true
                   break
                 }
 
@@ -261,7 +294,7 @@ async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[],
       }
     } catch (err) {
       console.warn('[readit] consumer failed', err)
-      cancelRequested = true
+      session.cancelRequested = true
     }
   }
 
@@ -270,14 +303,10 @@ async function processChunksSequentially(tab: chrome.tabs.Tab, chunks: string[],
   const cons = consumer()
   await Promise.all([prod, cons])
 
-  if (cancelRequested) {
-    try { if (tab.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch (e) { void e }
-    resetQueue()
-    return
+  if (session.cancelRequested && isSessionActive(sessionId)) {
+    await stopSessionPlayback(tabId)
   }
-
-  // Finished successfully
-  resetQueue()
+  finishPlaybackSession(sessionId)
 }
 
 export async function sendToActiveTabOrInject(msg: Msg) {
@@ -303,14 +332,10 @@ export async function sendToActiveTabOrInject(msg: Msg) {
     if (!textArg || !s.ttsUrl) return
 
     const tab = await requireActivePlaybackTab()
-    if (textArg.length > MAX_CHUNK_CHARS) { const chunks = splitTextIntoChunks(textArg, MAX_CHUNK_CHARS); await processChunksSequentially(tab, chunks, s.voice); return }
-
-    const fetched = await fetchTtsAudio(textArg, s.voice)
-    if (!fetched) return
-    try {
-      if (DEBUG) console.debug('[readit][DBG] forward audio prepared', { mime: fetched.mime, b64len: fetched.b64.length, firstBytesBase64: fetched.b64.slice(0, 64) })
-      await sendTabMessageWithBootstrap(tab.id!, { kind: 'PLAY_AUDIO', audio: fetched.b64, mime: fetched.mime, rate: getCurrentPlaybackRate() })
-    } catch (err) { console.warn('[readit] forward audio failed', err) }
+    await cancelPlaybackSession(activeSession)
+    const session = createPlaybackSession(tab.id, splitTextIntoChunks(textArg, MAX_CHUNK_CHARS))
+    activeSession = session
+    await processChunksSequentially(session, s.voice)
   } catch (err) { console.warn('[readit] sendToActiveTabOrInject failed', err) }
 }
 
@@ -322,42 +347,43 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
     if (req && typeof req === 'object') {
       const anyReq = req as unknown as Record<string, unknown>
       if (anyReq.action === 'speech-status' || anyReq.kind === 'speech-status') {
-        const state = cancelRequested ? 'cancelled' : paused ? 'paused' : currentChunks ? 'playing' : 'idle'
-        sendResponse({ ok: true, state, current: currentIndex + 1, total: currentChunks ? currentChunks.length : 0 })
+        const state = activeSession ? (activeSession.cancelRequested ? 'cancelled' : activeSession.paused ? 'paused' : 'playing') : 'idle'
+        sendResponse({ ok: true, state, current: activeSession ? activeSession.currentIndex + 1 : 0, total: activeSession ? activeSession.chunks.length : 0 })
         return true
       }
-        if (anyReq.action === 'cancel-speech' || anyReq.kind === 'cancel-speech') {
-        cancelRequested = true
-        paused = false
-        // Also notify the active tab to stop any in-page playback immediately.
+      if (anyReq.action === 'cancel-speech' || anyReq.kind === 'cancel-speech') {
         ;(async () => {
+          if (activeSession) {
+            await cancelPlaybackSession(activeSession)
+            return
+          }
           try {
-            const tab = await getActiveHttpTab()
-            if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' })
-          } catch (e) { void e }
+            const tabId = (await getActiveHttpTab())?.id
+            if (tabId) await chrome.tabs.sendMessage(tabId, { kind: 'STOP_SPEECH' })
+          } catch (err) {
+            void err
+          }
         })()
         sendResponse({ ok: true })
         return true
       }
       if (anyReq.action === 'pause-speech' || anyReq.kind === 'pause-speech') {
-        paused = true
-        // Notify active tab to pause current audio playback
         ;(async () => {
           try {
-            const tab = await getActiveHttpTab()
-            if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'PAUSE_SPEECH' })
+            if (activeSession) activeSession.paused = true
+            const tabId = activeSession?.tabId ?? (await getActiveHttpTab())?.id
+            if (tabId) await chrome.tabs.sendMessage(tabId, { kind: 'PAUSE_SPEECH' })
           } catch (e) { void e }
         })()
         sendResponse({ ok: true })
         return true
       }
       if (anyReq.action === 'resume-speech' || anyReq.kind === 'resume-speech') {
-        paused = false
-        // Notify active tab to resume current audio playback
         ;(async () => {
           try {
-            const tab = await getActiveHttpTab()
-            if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'RESUME_SPEECH' })
+            if (activeSession) activeSession.paused = false
+            const tabId = activeSession?.tabId ?? (await getActiveHttpTab())?.id
+            if (tabId) await chrome.tabs.sendMessage(tabId, { kind: 'RESUME_SPEECH' })
           } catch (e) { void e }
         })()
         sendResponse({ ok: true })
@@ -400,24 +426,26 @@ chrome.commands.onCommand.addListener(async (command: string) => {
     // control actions exposed via runtime messages. We update internal
     // flags and also notify the active tab so in-page playback is
     // controlled immediately.
-    const tab = await getActiveHttpTab()
     if (command === 'pause-speech') {
-      paused = true
-      try { if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'PAUSE_SPEECH' }) } catch (e) { void e }
+      if (activeSession) activeSession.paused = true
+      const tabId = activeSession?.tabId ?? (await getActiveHttpTab())?.id
+      try { if (tabId) await chrome.tabs.sendMessage(tabId, { kind: 'PAUSE_SPEECH' }) } catch (e) { void e }
       return
     }
     if (command === 'resume-speech') {
-      paused = false
-      try { if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'RESUME_SPEECH' }) } catch (e) { void e }
+      if (activeSession) activeSession.paused = false
+      const tabId = activeSession?.tabId ?? (await getActiveHttpTab())?.id
+      try { if (tabId) await chrome.tabs.sendMessage(tabId, { kind: 'RESUME_SPEECH' }) } catch (e) { void e }
       return
     }
     if (command === 'cancel-speech') {
-      cancelRequested = true
-      paused = false
-      try { if (tab?.id) await chrome.tabs.sendMessage(tab.id, { kind: 'STOP_SPEECH' }) } catch (e) { void e }
-      // resetQueue will be performed by running code path where appropriate
-      // but ensure state is reset here for safety.
-      resetQueue()
+      if (activeSession) {
+        activeSession.paused = false
+        await cancelPlaybackSession(activeSession)
+        return
+      }
+      const tabId = (await getActiveHttpTab())?.id
+      try { if (tabId) await chrome.tabs.sendMessage(tabId, { kind: 'STOP_SPEECH' }) } catch (e) { void e }
       return
     }
   } catch (err) {

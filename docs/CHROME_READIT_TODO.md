@@ -163,17 +163,21 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 # Phase 4 — Add single active playback session support
 
+**Status:** Done
+
 ## Task 4.1 — Replace loose globals with a session object
 
+**Status:** Done
+
 ### Subtasks
-- Introduce a `PlaybackSession` type in `src/background/service-worker.ts`.
-- Include fields such as:
+- [x] Introduce a `PlaybackSession` type in `src/background/service-worker.ts`.
+- [x] Include fields such as:
   - `id`
   - `cancelRequested`
   - `paused`
   - `chunks`
   - `currentIndex`
-- Add `activeSession` and monotonic `nextSessionId` state.
+- [x] Add `activeSession` and monotonic `nextSessionId` state.
 
 ### Acceptance criteria
 - Background playback state is attached to an explicit session object.
@@ -183,10 +187,12 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 4.2 — Cancel old session before starting a new session
 
+**Status:** Done
+
 ### Subtasks
-- Before starting a new read, cancel the current active session if one exists.
-- Send a stop signal to content playback before beginning the new session.
-- Replace the old active session with a new session ID.
+- [x] Before starting a new read, cancel the current active session if one exists.
+- [x] Send a stop signal to content playback before beginning the new session.
+- [x] Replace the old active session with a new session ID.
 
 ### Acceptance criteria
 - Starting a new read reliably stops the previous read.
@@ -196,10 +202,12 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 4.3 — Guard producer/consumer loops by session ID
 
+**Status:** Done
+
 ### Subtasks
-- Capture the session ID at the start of each async playback pipeline.
-- Before each major async step, verify that the current work still belongs to `activeSession`.
-- Exit immediately if the session ID is stale.
+- [x] Capture the session ID at the start of each async playback pipeline.
+- [x] Before each major async step, verify that the current work still belongs to `activeSession`.
+- [x] Exit immediately if the session ID is stale.
 
 ### Acceptance criteria
 - Old producer/consumer loops cannot continue mutating state after a newer session starts.
@@ -209,10 +217,12 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 4.4 — Make pause/resume/cancel session-aware
 
+**Status:** Done
+
 ### Subtasks
-- Route pause/resume/cancel operations through the active session object.
-- Ensure popup and background controls act on the current session only.
-- Verify stop/cancel cleans up queue state and playback state.
+- [x] Route pause/resume/cancel operations through the active session object.
+- [x] Ensure popup and background controls act on the current session only.
+- [x] Verify stop/cancel cleans up queue state and playback state.
 
 ### Acceptance criteria
 - Pause/resume/cancel commands apply only to the current active session.
