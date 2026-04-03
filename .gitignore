@@ -49,3 +49,5 @@ __pycache__/
 *.pem
 *.key
 tmp*/
+
+run_copilot.sh
