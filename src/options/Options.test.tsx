@@ -4,10 +4,10 @@ import { fetchVoicesForTtsUrl } from './helpers'
 
 describe('Options voice list', () => {
   beforeEach(() => {
-  ;(globalThis as unknown as { chrome?: unknown }).chrome = {
+    ;(globalThis as unknown as { chrome?: unknown }).chrome = {
       storage: {
         sync: {
-          get: vi.fn(() => Promise.resolve({ settings: { ttsUrl: 'http://localhost:5002/api/tts/play' } })),
+          get: vi.fn(() => Promise.resolve({ settings: { ttsUrl: 'http://localhost:5002/api/tts' } })),
           set: vi.fn(() => Promise.resolve()),
         },
       },
@@ -25,7 +25,7 @@ describe('Options voice list', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const res = await fetchVoicesForTtsUrl('http://localhost:5002/api/tts/play')
+    const res = await fetchVoicesForTtsUrl('http://localhost:5002/api/tts')
     expect(res).toEqual(['alice', 'bob'])
 
     vi.restoreAllMocks()

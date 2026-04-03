@@ -1,34 +1,15 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react'
 import { fetchVoicesForTtsUrl } from './helpers'
-
-type Settings = {
-  voice?: string
-  rate: number // 0.5..10.0
-  ttsUrl?: string
-}
-
-const DEFAULTS: Settings = { rate: 1.0, voice: 'p225' }
-
-const DEFAULT_TTS_URL = 'http://localhost:5002/api/tts'
-
-async function getSettings(): Promise<Settings> {
-  const s = await chrome.storage.sync.get(['settings'])
-  return { ...DEFAULTS, ...(s.settings ?? {}) }
-}
-
-async function saveSettings(patch: Partial<Settings>) {
-  const curr = await getSettings()
-  await chrome.storage.sync.set({ settings: { ...curr, ...patch } })
-}
+import { DEFAULT_SETTINGS, DEFAULT_TTS_URL, getSettings, saveSettings } from '../lib/storage'
 
 export default function Options() {
-  const [voice, setVoice] = useState<string | ''>('')
-  const [rate, setRate] = useState<number>(1)
+  const [voice, setVoice] = useState<string | ''>(DEFAULT_SETTINGS.voice)
+  const [rate, setRate] = useState<number>(DEFAULT_SETTINGS.rate)
   const [loaded, setLoaded] = useState<boolean>(false)
   const [testText, setTestText] = useState<string>('Hello — this is a quick test of Read It.')
   const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
   const [testError, setTestError] = useState<string | null>(null)
-  const [ttsUrl, setTtsUrl] = useState<string>(DEFAULT_TTS_URL)
+  const [ttsUrl, setTtsUrl] = useState<string>(DEFAULT_SETTINGS.ttsUrl)
   const [voicesList, setVoicesList] = useState<Array<{ name: string; label: string }>>([])
   const [serverPlaying, setServerPlaying] = useState<boolean>(false)
   const [checkingPlaying, setCheckingPlaying] = useState(false)
@@ -41,17 +22,17 @@ export default function Options() {
   useEffect(() => {
     getSettings().then(s => {
       setRate(s.rate)
-      setVoice(s.voice ?? '')
-      setTtsUrl(s.ttsUrl ?? DEFAULT_TTS_URL)
+      setVoice(s.voice)
+      setTtsUrl(s.ttsUrl)
       setLoaded(true)
     })
   }, [])
 
   useEffect(() => { if (!loaded) return; saveSettings({ rate }) }, [rate, loaded])
-  useEffect(() => { if (!loaded) return; saveSettings({ voice: voice || undefined }) }, [voice, loaded])
-  useEffect(() => { if (!loaded) return; saveSettings({ ttsUrl: ttsUrl || undefined }) }, [ttsUrl, loaded])
+  useEffect(() => { if (!loaded) return; void saveSettings({ voice: voice || DEFAULT_SETTINGS.voice }) }, [voice, loaded])
+  useEffect(() => { if (!loaded) return; void saveSettings({ ttsUrl: ttsUrl || DEFAULT_TTS_URL }) }, [ttsUrl, loaded])
 
-  const voiceOptions = useMemo(() => [{ name: '', label: 'System default' }, ...voicesList], [voicesList])
+  const voiceOptions = useMemo(() => [{ name: DEFAULT_SETTINGS.voice, label: DEFAULT_SETTINGS.voice }, ...voicesList], [voicesList])
 
   useEffect(() => {
     if (!ttsUrl) return

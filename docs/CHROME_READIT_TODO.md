@@ -10,14 +10,18 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 # Phase 1 — Make shared storage the single source of truth
 
+**Status:** Done
+
 ## Task 1.1 — Canonicalize settings in `src/lib/storage.ts`
 
+**Status:** Done
+
 ### Subtasks
-- Export a single canonical `Settings` type from `src/lib/storage.ts`.
-- Export a canonical `DEFAULT_TTS_URL` set to `http://localhost:5002/api/tts`.
-- Export canonical default settings, for example `DEFAULT_SETTINGS`.
-- Ensure `getSettings()` returns merged defaults plus persisted values.
-- Ensure `saveSettings()` persists partial updates safely.
+- [x] Export a single canonical `Settings` type from `src/lib/storage.ts`.
+- [x] Export a canonical `DEFAULT_TTS_URL` set to `http://localhost:5002/api/tts`.
+- [x] Export canonical default settings, for example `DEFAULT_SETTINGS`.
+- [x] Ensure `getSettings()` returns merged defaults plus persisted values.
+- [x] Ensure `saveSettings()` persists partial updates safely.
 
 ### Acceptance criteria
 - There is exactly one canonical settings definition.
@@ -28,11 +32,13 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 1.2 — Remove duplicate settings logic from `src/options/Options.tsx`
 
+**Status:** Done
+
 ### Subtasks
-- Delete local `Settings` type definitions in `Options.tsx`.
-- Delete local `DEFAULTS` / `DEFAULT_TTS_URL` definitions in `Options.tsx`.
-- Delete local `getSettings()` / `saveSettings()` wrappers in `Options.tsx`.
-- Import and use shared helpers from `src/lib/storage.ts`.
+- [x] Delete local `Settings` type definitions in `Options.tsx`.
+- [x] Delete local `DEFAULTS` / `DEFAULT_TTS_URL` definitions in `Options.tsx`.
+- [x] Delete local `getSettings()` / `saveSettings()` wrappers in `Options.tsx`.
+- [x] Import and use shared helpers from `src/lib/storage.ts`.
 
 ### Acceptance criteria
 - `Options.tsx` no longer defines a separate settings model.
@@ -42,10 +48,12 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 1.3 — Remove duplicate settings assumptions from other UI modules
 
+**Status:** Done
+
 ### Subtasks
-- Audit `Popup.tsx` and any other UI modules for local copies of defaults or storage behavior.
-- Replace any local default URL assumptions with imports from `src/lib/storage.ts`.
-- Ensure popup and options read/write the same settings schema.
+- [x] Audit `Popup.tsx` and any other UI modules for local copies of defaults or storage behavior.
+- [x] Replace any local default URL assumptions with imports from `src/lib/storage.ts`.
+- [x] Ensure popup and options read/write the same settings schema.
 
 ### Acceptance criteria
 - Popup and Options persist and load the same settings values.

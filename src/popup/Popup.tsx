@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { Settings } from '../lib/storage'
+import { DEFAULT_SETTINGS, getSettings, saveSettings } from '../lib/storage'
 // Use real Chrome typings from @types/chrome when installed; avoid file-scoped
 // shims so TypeScript can check extension APIs correctly.
-import { getSettings, saveSettings } from '../lib/storage'
 
 export default function Popup() {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
-  const [rate, setRate] = useState(1)
-  const [voice, setVoice] = useState<string | undefined>()
+  const [rate, setRate] = useState(DEFAULT_SETTINGS.rate)
+  const [voice, setVoice] = useState<string>(DEFAULT_SETTINGS.voice)
   const [ttsHelperUp, setTtsHelperUp] = useState<boolean | null>(null)
   const [tryText, setTryText] = useState<string>('Hello from the popup')
   const [tryStatus, setTryStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
@@ -111,7 +110,7 @@ export default function Popup() {
     }
   }
 
-  async function persist(part: Partial<Settings>) { await saveSettings(part) }
+  async function persist(part: Partial<typeof DEFAULT_SETTINGS>) { await saveSettings(part) }
 
   const labelStyle = { display: 'block', fontWeight: 600 }
   const buttonStyle = { width: '100%', padding: '12px', fontSize: '1rem' } as const
@@ -148,11 +147,11 @@ export default function Popup() {
         <label htmlFor="voice" style={labelStyle}>Voice</label>
         <select
           id="voice"
-          value={voice ?? ''}
-          onChange={e => { setVoice(e.target.value || undefined); persist({ voice: e.target.value || undefined }) }}
+          value={voice}
+          onChange={e => { const nextVoice = e.target.value || DEFAULT_SETTINGS.voice; setVoice(nextVoice); void persist({ voice: nextVoice }) }}
           style={selectStyle}
         >
-          <option value="">System default</option>
+          <option value={DEFAULT_SETTINGS.voice}>{DEFAULT_SETTINGS.voice}</option>
           {voices.map(v => (
             <option key={v.name} value={v.name}>
               {v.name} {v.lang ? `(${v.lang})` : ''}
@@ -217,4 +216,3 @@ const root = document.getElementById('root')
 if (root) {
   createRoot(root).render(<Popup />)
 }
-

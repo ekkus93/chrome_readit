@@ -7,7 +7,7 @@ import userEvent from '@testing-library/user-event'
 import Options from './Options'
 
 describe('Options Test speech uses selected voice', () => {
-  let storedSettings: unknown = { ttsUrl: 'http://localhost:5002/api/tts/play' }
+  let storedSettings: unknown = { ttsUrl: 'http://localhost:5002/api/tts' }
 
   function getGlobal(path: string[]) {
     let obj: unknown = globalThis
@@ -22,7 +22,7 @@ describe('Options Test speech uses selected voice', () => {
   }
 
   beforeEach(() => {
-    storedSettings = { ttsUrl: 'http://localhost:5002/api/tts/play' }
+    storedSettings = { ttsUrl: 'http://localhost:5002/api/tts' }
   ;(globalThis as unknown as { chrome?: unknown }).chrome = {
       storage: {
         sync: {
@@ -47,7 +47,7 @@ describe('Options Test speech uses selected voice', () => {
     vi.restoreAllMocks()
   })
 
-  it('sends request-tts via runtime and background posts voice to /api/tts/play', async () => {
+  it('sends request-tts via runtime and background posts voice to /api/tts', async () => {
     // stub fetch: voices endpoint and play endpoint
     const voicesResp = { voices: ['alice', 'bob'] }
   const playMock = vi.fn((input: unknown, _init?: unknown) => {
@@ -56,7 +56,7 @@ describe('Options Test speech uses selected voice', () => {
       if (url.endsWith('/api/voices')) {
         return Promise.resolve(new Response(JSON.stringify(voicesResp), { status: 200, headers: { 'content-type': 'application/json' } }))
       }
-      if (url.endsWith('/api/tts/play')) {
+      if (url.endsWith('/api/tts')) {
         // record body
         return Promise.resolve(new Response(JSON.stringify({ ok: true, played: true }), { status: 200, headers: { 'content-type': 'application/json' } }))
       }
@@ -97,9 +97,9 @@ describe('Options Test speech uses selected voice', () => {
     // allow async handler to run
     await new Promise((r) => setTimeout(r, 0))
 
-    // ensure fetch to /api/tts/play was made and included voice
+    // ensure fetch to /api/tts was made and included voice
   const playCalls = (playMock.mock as unknown as { calls?: unknown[][] })?.calls || []
-  const playCall = (playCalls as unknown[][]).find((c: unknown[]) => String(c[0]).endsWith('/api/tts/play')) as unknown[] | undefined
+  const playCall = (playCalls as unknown[][]).find((c: unknown[]) => String(c[0]).endsWith('/api/tts')) as unknown[] | undefined
   expect(playCall).toBeDefined()
   const maybeInit = playCall ? (playCall[1] as Record<string, unknown>) : undefined
   const body = maybeInit && maybeInit.body ? JSON.parse(String(maybeInit.body)) : null
