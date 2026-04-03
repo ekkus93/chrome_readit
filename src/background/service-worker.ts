@@ -100,11 +100,6 @@ function prefixHexFromBuffer(buf: ArrayBuffer | null | undefined, len = 32) {
   } catch (e) { void e; return '<err>' }
 }
 
-// Wait for the player window to announce readiness. The player page
-// sends { action: 'player_ready' } when its script runs. Resolve when
-// that message arrives or when the timeout elapses.
-
-
 // Replace the background worker implementation with a chunking + queueing
 // implementation that avoids splitting sentences where possible and supports
 // pause/resume/cancel and a simple speech-status API for the popup.
@@ -468,7 +463,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
   const maybeRec = maybeMsg as Record<string, unknown>
   const maybeAction = typeof maybeRec.action === 'string' ? maybeRec.action : undefined
   const maybeKind = typeof maybeRec.kind === 'string' ? maybeRec.kind : undefined
-  const wantsAsync = maybeAction === 'request-tts' || maybeAction === 'test-tts' || maybeAction === 'play-via-player' || maybeKind === 'READ_SELECTION' || maybeKind === 'READ_TEXT'
+  const wantsAsync = maybeAction === 'request-tts' || maybeAction === 'test-tts' || maybeKind === 'READ_SELECTION' || maybeKind === 'READ_TEXT'
   if (!wantsAsync) return false
 
   ;(async () => {
@@ -590,41 +585,6 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
         }
       }
 
-      if (action === 'play-via-player') {
-        // Legacy entrypoint kept for callers that still use play-via-player.
-        // Instead of opening a player window, return the fetched audio so
-        // the caller (popup/options) can play it in-page. This removes the
-        // spawned window behavior.
-        const text = typeof m.text === 'string' ? m.text : String(m.text ?? '')
-        if (!text) {
-          sendResponse({ ok: false, error: 'empty text' })
-          return
-        }
-        const s = await getSettings()
-        cachedPlaybackRate = clampPlaybackRate(s.rate, cachedPlaybackRate)
-        if (!s.ttsUrl) {
-          sendResponse({ ok: false, error: 'no ttsUrl configured' })
-          return
-        }
-        try {
-          const resp = await fetch(s.ttsUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
-          })
-          if (!resp.ok) {
-            sendResponse({ ok: false, error: `tts service returned ${resp.status}` })
-            return
-          }
-          const contentType = resp.headers.get('content-type') || 'audio/wav'
-          const buf = await resp.arrayBuffer()
-          sendResponse({ ok: true, audio: buf, mime: contentType })
-          return
-        } catch (err) {
-          sendResponse({ ok: false, error: String(err) })
-          return
-        }
-      }
     } catch (err) {
       console.warn('[readit] test-tts handler failed', err)
       try {

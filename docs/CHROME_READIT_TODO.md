@@ -358,12 +358,16 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 # Phase 8 — Remove stale server-playback UI and behavior
 
+**Status:** Done
+
 ## Task 8.1 — Remove server-speaking status UX if no longer relevant
 
+**Status:** Done
+
 ### Subtasks
-- Audit Options and Popup for any UI tied to host/server playback state.
-- Remove polling for endpoints like `/api/playing` if those are now irrelevant to the extension flow.
-- Remove or rewrite cancel controls that only make sense for host-side playback.
+- [x] Audit Options and Popup for any UI tied to host/server playback state.
+- [x] Remove polling for endpoints like `/api/playing` if those are now irrelevant to the extension flow.
+- [x] Remove or rewrite cancel controls that only make sense for host-side playback.
 
 ### Acceptance criteria
 - UI reflects the new architecture instead of exposing stale server-playback concepts.
@@ -372,9 +376,11 @@ This TODO is intended to be handed to GitHub Copilot or another coding agent for
 
 ## Task 8.2 — Remove dead code branches related to `/api/tts/play`
 
+**Status:** Done
+
 ### Subtasks
-- Audit background, popup, and options code for `/play`-specific response handling.
-- Remove dead code and simplify state transitions accordingly.
+- [x] Audit background, popup, and options code for `/play`-specific response handling.
+- [x] Remove dead code and simplify state transitions accordingly.
 
 ### Acceptance criteria
 - Codebase no longer carries normal-path complexity for server-side playback.

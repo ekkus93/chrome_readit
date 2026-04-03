@@ -11,8 +11,6 @@ export default function Options() {
   const [testError, setTestError] = useState<string | null>(null)
   const [ttsUrl, setTtsUrl] = useState<string>(DEFAULT_SETTINGS.ttsUrl)
   const [voicesList, setVoicesList] = useState<VoiceOption[]>([])
-  const [serverPlaying, setServerPlaying] = useState<boolean>(false)
-  const [checkingPlaying, setCheckingPlaying] = useState(false)
   const testAudioRef = useRef<HTMLAudioElement | null>(null)
   
 
@@ -50,45 +48,6 @@ export default function Options() {
     fetchVoices()
     return () => { mounted = false }
   }, [ttsUrl])
-
-  useEffect(() => {
-    async function checkPlaying() {
-      if (!ttsUrl) return
-      setCheckingPlaying(true)
-      try {
-        const url = new URL(ttsUrl)
-        url.pathname = '/api/playing'
-        const res = await fetch(url.toString())
-        if (!res.ok) {
-          setServerPlaying(false)
-        } else {
-          const js = await res.json().catch(() => null)
-          setServerPlaying(Boolean(js?.playing))
-        }
-      } catch (e) { void e } finally {
-        setCheckingPlaying(false)
-      }
-    }
-    // poll while serverPlaying is true (to detect end) and otherwise do a single check
-    checkPlaying()
-    const poll = window.setInterval(checkPlaying, 2500)
-    return () => { clearInterval(poll) }
-  }, [ttsUrl])
-
-  async function cancelPlayback() {
-    if (!ttsUrl) return
-    try {
-      const url = new URL(ttsUrl)
-      url.pathname = '/api/tts/cancel'
-      const res = await fetch(url.toString(), { method: 'POST' })
-      if (!res.ok) {
-        // ignore for now
-      } else {
-        const js = await res.json().catch(() => null)
-  if (js && Boolean((js as Record<string, unknown>)['canceled'])) setServerPlaying(false)
-      }
-    } catch (e) { void e }
-  }
 
   // UI controls to pause/resume/cancel in-page playback (sends messages
   // to the background which will notify the active tab/content script).
@@ -280,15 +239,10 @@ export default function Options() {
             <div style={{ width: 12, height: 12, borderRadius: 12, background: serverHealth === 'ok' ? '#00c853' : serverHealth === 'error' ? '#d50000' : '#bdbdbd' }} />
             <div style={{ color: serverHealth === 'ok' ? '#006400' : serverHealth === 'error' ? '#8b0000' : 'GrayText' }}>{serverHealth === 'ok' ? 'Server reachable' : serverHealth === 'error' ? `Server error${serverTestError ? `: ${serverTestError}` : ''}` : 'Server status unknown'}</div>
           </div>
-          <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: 12, height: 12, borderRadius: 12, background: serverPlaying ? '#00c853' : '#bdbdbd' }} />
-            <div style={{ color: serverPlaying ? '#006400' : 'GrayText' }}>{serverPlaying ? 'Server speaking' : 'Server idle'}</div>
-            <button onClick={cancelPlayback} disabled={!serverPlaying || checkingPlaying} style={{ padding: '6px 10px' }}>Cancel playback</button>
-            <div style={{ display: 'flex', gap: 8, marginLeft: 12 }}>
-              <button onClick={handlePause} style={{ padding: '6px 10px' }}>Pause</button>
-              <button onClick={handleResume} style={{ padding: '6px 10px' }}>Resume</button>
-              <button onClick={handleCancel} style={{ padding: '6px 10px' }}>Stop</button>
-            </div>
+          <div style={{ display: 'flex', gap: 8, marginLeft: 12 }}>
+            <button onClick={handlePause} style={{ padding: '6px 10px' }}>Pause</button>
+            <button onClick={handleResume} style={{ padding: '6px 10px' }}>Resume</button>
+            <button onClick={handleCancel} style={{ padding: '6px 10px' }}>Stop</button>
           </div>
         </div>
         <div style={{ color: 'GrayText', marginTop: 6 }}>If set, Read It will POST text to this URL and play returned audio. The default points to a local Coqui helper ({DEFAULT_TTS_URL}).</div>
@@ -303,7 +257,7 @@ export default function Options() {
         <textarea id="test" rows={3} value={testText} onChange={e => setTestText(e.target.value)} style={{ width: 520, padding: 8 }} />
         <div style={{ marginTop: 8 }}>
           <button onClick={handleTestSpeech} style={{ padding: '8px 12px' }}>Test speech</button>
-          <span style={{ marginLeft: 12 }}>{testStatus === 'sending' && 'Sending…'}{testStatus === 'ok' && <span style={{ color: '#006400' }}> Spoken via local helper</span>}{testStatus === 'error' && <span style={{ color: '#8b0000' }}> Error: {testError}</span>}</span>
+          <span style={{ marginLeft: 12 }}>{testStatus === 'sending' && 'Sending…'}{testStatus === 'ok' && <span style={{ color: '#006400' }}> Played in the browser</span>}{testStatus === 'error' && <span style={{ color: '#8b0000' }}> Error: {testError}</span>}</span>
         </div>
       </section>
     </main>
