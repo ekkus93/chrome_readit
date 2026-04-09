@@ -277,16 +277,18 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 # Phase 7 — Final validation and regression coverage
 
-**Status:** Pending
+**Status:** Blocked
+
+**Blocked on:** Manual Chrome QA in a real browser session is not available from this CLI environment.
 
 ## Task 7.1 — Update automated tests for all review-driven fixes
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Update or add tests covering queue handoff delay, `test-tts` single-play behavior, stale WebAudio resolution, tab reuse, ack recovery, and message typing assumptions.
-- [ ] Keep tests focused on production behavior rather than implementation trivia.
-- [ ] Reuse existing test files and patterns where possible.
+- [x] Update or add tests covering queue handoff delay, `test-tts` single-play behavior, stale WebAudio resolution, tab reuse, ack recovery, and message typing assumptions.
+- [x] Keep tests focused on production behavior rather than implementation trivia.
+- [x] Reuse existing test files and patterns where possible.
 
 ### Acceptance criteria
 - The affected regression areas are all represented in automated coverage.
@@ -295,7 +297,9 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 ## Task 7.2 — Manual playback QA for the overlap/stumble path
 
-**Status:** Pending
+**Status:** Blocked
+
+**Blocked on:** Manual Chrome interaction is required to execute this checklist.
 
 ### Subtasks
 - [ ] Verify reading across multiple paragraphs no longer produces audible overlap.
@@ -311,12 +315,12 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 ## Task 7.3 — Run repo validation before closing the review TODO
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Run `npm run lint`.
-- [ ] Run `npm run test`.
-- [ ] Fix any resulting issues rather than suppressing warnings or weakening behavior.
+- [x] Run `npm run lint`.
+- [x] Run `npm run test`.
+- [x] Fix any resulting issues rather than suppressing warnings or weakening behavior.
 
 ### Acceptance criteria
 - Lint passes cleanly.

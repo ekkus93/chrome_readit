@@ -36,3 +36,7 @@
 
 ## 2026-04-09T21:06:22Z - GPT-5.4 - Created review-fix todo document
 - Added `docs/CS_CODE_REVIEW1_TODO.md` as a comprehensive implementation plan derived from Claude Sonnet's review. It breaks the work into phases for chunk-boundary pacing, duplicate playback-path removal, playback lifecycle fixes, background ack/session hardening, message-schema cleanup, debug-log cleanup, and final validation.
+
+## 2026-04-09T21:25:30Z - GPT-5.4 - Completed automated code-review fixes
+- Implemented Phases 1-6 from `docs/CS_CODE_REVIEW1_TODO.md` and pushed each green checkpoint to `origin/master`. The background queue now applies explicit chunk-gap pacing with paragraph-aware metadata, `test-tts` no longer triggers tab playback, stale WebAudio fallback completions resolve as `stopped`, selection playback reuses one active tab reference, ack registration recovers instead of throwing, `PLAY_AUDIO` typing includes `rate` and `playbackToken`, and internal playback controls now use canonical uppercase `kind` messages.
+- Production debug noise was reduced by switching debug logging to `import.meta.env.DEV`-gated paths. Final automated validation still uses `npm run lint` and `npm run test`; the only remaining blocked item in the review TODO is manual Chrome QA that cannot be executed from this CLI environment.
