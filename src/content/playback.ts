@@ -73,6 +73,7 @@ export class PlaybackController {
         src.onended = () => {
           if (this.activePlaybackToken !== playbackToken) {
             this.cleanupWebAudioSource(sourceRef)
+            resolve({ ok: false, error: 'stopped' })
             return
           }
           this.cleanupWebAudioSource(sourceRef)

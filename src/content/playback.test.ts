@@ -282,12 +282,66 @@ describe('PlaybackController', () => {
     } as unknown)
 
     const playback = new PlaybackController()
-    void playback.playArrayBuffer(new Uint8Array([1, 2, 3]).buffer, 'audio/wav')
+    const promise = playback.playArrayBuffer(new Uint8Array([1, 2, 3]).buffer, 'audio/wav')
     await new Promise((resolve) => setTimeout(resolve, 0))
     playback.stop()
     playback.stop()
+    await expect(promise).resolves.toMatchObject({ ok: false, error: 'stopped' })
     expect(stopMock).toHaveBeenCalledTimes(1)
     expect(closeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('resolves stale WebAudio fallback completion as stopped', async () => {
+    vi.stubGlobal('Audio', function () {
+      return {
+        addEventListener: () => {},
+        play: () => Promise.reject(new Error('autoplay')),
+        pause: () => {},
+        src: '',
+        autoplay: false,
+        playbackRate: 1,
+      }
+    } as unknown)
+
+    const closeMock = vi.fn(() => Promise.resolve())
+    let firstSource: { onended?: (() => void) | undefined; stop: () => void; playbackRate: { value: number } } | null = null
+    let secondSource: { onended?: (() => void) | undefined; stop: () => void; playbackRate: { value: number } } | null = null
+
+    vi.stubGlobal('AudioContext', function () {
+      return {
+        decodeAudioData: (_buf: ArrayBuffer) => { void _buf; return Promise.resolve({}) },
+        createBufferSource: () => {
+          const src = {
+            buffer: null as unknown | null,
+            connect: (_: unknown) => { void _ },
+            start: () => {},
+            onended: undefined as (() => void) | undefined,
+            stop: () => {},
+            playbackRate: { value: 1 },
+          }
+          if (!firstSource) firstSource = src
+          else secondSource = src
+          return src
+        },
+        destination: {},
+        close: closeMock,
+      }
+    } as unknown)
+
+    const playback = new PlaybackController()
+    const buf = new Uint8Array([1, 2, 3]).buffer
+
+    const firstPromise = playback.playArrayBuffer(buf, 'audio/wav')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const secondPromise = playback.playArrayBuffer(buf, 'audio/wav')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    firstSource?.onended?.()
+    secondSource?.onended?.()
+
+    await expect(firstPromise).resolves.toMatchObject({ ok: false, error: 'stopped' })
+    await expect(secondPromise).resolves.toMatchObject({ ok: true })
+    expect(closeMock.mock.calls.length).toBeGreaterThanOrEqual(2)
   })
 
   it('handles rapid stop followed by new play (race) correctly', async () => {

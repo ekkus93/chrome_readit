@@ -112,16 +112,16 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 # Phase 3 — Harden `PlaybackController` lifecycle correctness
 
-**Status:** Pending
+**Status:** Done
 
 ## Task 3.1 — Fix the stale-token WebAudio Promise leak
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Update `playViaWebAudio()` in `src/content/playback.ts` so stale-token completion resolves the Promise instead of returning without resolution.
-- [ ] Preserve cleanup behavior for the WebAudio source and context in both stale and normal completion paths.
-- [ ] Ensure the stale-resolution result is compatible with the outer `finish()` logic and does not accidentally report success.
+- [x] Update `playViaWebAudio()` in `src/content/playback.ts` so stale-token completion resolves the Promise instead of returning without resolution.
+- [x] Preserve cleanup behavior for the WebAudio source and context in both stale and normal completion paths.
+- [x] Ensure the stale-resolution result is compatible with the outer `finish()` logic and does not accidentally report success.
 
 ### Acceptance criteria
 - A stopped or superseded WebAudio fallback cannot leave a hanging Promise behind.
@@ -131,12 +131,12 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 ## Task 3.2 — Expand lifecycle tests around fallback and stop behavior
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Add or update tests in `src/content/playback.test.ts` for the stale WebAudio completion path.
-- [ ] Verify `stop()` resolves the active play Promise in all supported playback modes.
-- [ ] Confirm repeated stop/replace cycles do not leak unresolved operations.
+- [x] Add or update tests in `src/content/playback.test.ts` for the stale WebAudio completion path.
+- [x] Verify `stop()` resolves the active play Promise in all supported playback modes.
+- [x] Confirm repeated stop/replace cycles do not leak unresolved operations.
 
 ### Acceptance criteria
 - Playback controller tests cover HTMLAudio success, WebAudio fallback success, stale fallback completion, and explicit stop behavior.
