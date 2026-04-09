@@ -145,16 +145,16 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 # Phase 4 — Harden background session and acknowledgement handling
 
-**Status:** Pending
+**Status:** Done
 
 ## Task 4.1 — Reuse a single active-tab reference in `sendToActiveTabOrInject`
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Refactor `sendToActiveTabOrInject()` so `READ_SELECTION` captures the active playback tab once and reuses it for both selection capture and session creation.
-- [ ] Keep the supported-page validation in the shared path rather than duplicating it.
-- [ ] Ensure `READ_TEXT` still works without unnecessary tab lookups.
+- [x] Refactor `sendToActiveTabOrInject()` so `READ_SELECTION` captures the active playback tab once and reuses it for both selection capture and session creation.
+- [x] Keep the supported-page validation in the shared path rather than duplicating it.
+- [x] Ensure `READ_TEXT` still works without unnecessary tab lookups.
 
 ### Acceptance criteria
 - Selection text and playback session always target the same tab instance for a given read request.
@@ -164,13 +164,13 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 ## Task 4.2 — Make `waitForPlaybackAck()` recover instead of throw
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Replace the hard throw when `pendingPlaybackAck` already exists with a controlled recovery path.
-- [ ] Decide on the recovery policy: resolve the older ack as cancelled/stale, log a warning, and register the new ack.
-- [ ] Ensure the recovery behavior is compatible with cancellation and latest-session rules.
-- [ ] Keep the failure mode visible in logs rather than silently swallowing the situation.
+- [x] Replace the hard throw when `pendingPlaybackAck` already exists with a controlled recovery path.
+- [x] Decide on the recovery policy: resolve the older ack as cancelled/stale, log a warning, and register the new ack.
+- [x] Ensure the recovery behavior is compatible with cancellation and latest-session rules.
+- [x] Keep the failure mode visible in logs rather than silently swallowing the situation.
 
 ### Acceptance criteria
 - Unexpected ack overlap no longer crashes the queue via a thrown exception.
@@ -180,12 +180,12 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 ## Task 4.3 — Add coverage for ack overlap and recovery behavior
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Add or update tests in background/session/bootstrap coverage to simulate a second ack registration while one is still pending.
-- [ ] Verify the old pending ack is resolved deterministically.
-- [ ] Verify the queue remains cancellable and does not leave `pendingPlaybackAck` stuck.
+- [x] Add or update tests in background/session/bootstrap coverage to simulate a second ack registration while one is still pending.
+- [x] Verify the old pending ack is resolved deterministically.
+- [x] Verify the queue remains cancellable and does not leave `pendingPlaybackAck` stuck.
 
 ### Acceptance criteria
 - Background tests prove the ack state machine is self-healing rather than exception-driven.

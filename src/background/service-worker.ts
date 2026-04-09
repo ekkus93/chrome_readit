@@ -134,6 +134,15 @@ let pendingPlaybackAck: {
   timeoutId: ReturnType<typeof setTimeout>
 } | null = null
 
+function clearPendingPlaybackAck(result: { ok: boolean; error?: string }): boolean {
+  if (!pendingPlaybackAck) return false
+  clearTimeout(pendingPlaybackAck.timeoutId)
+  const { resolve } = pendingPlaybackAck
+  pendingPlaybackAck = null
+  resolve(result)
+  return true
+}
+
 function isSessionActive(sessionId: number): boolean {
   return activeSession?.id === sessionId
 }
@@ -186,16 +195,14 @@ function createPlaybackToken(sessionId: number, chunkIndex: number): string {
 
 function resolvePendingPlaybackAck(token: string, result: { ok: boolean; error?: string }): boolean {
   if (!pendingPlaybackAck || pendingPlaybackAck.token !== token) return false
-  clearTimeout(pendingPlaybackAck.timeoutId)
-  const { resolve } = pendingPlaybackAck
-  pendingPlaybackAck = null
-  resolve(result)
-  return true
+  return clearPendingPlaybackAck(result)
 }
 
 function waitForPlaybackAck(token: string): Promise<{ ok: boolean; error?: string }> {
   if (pendingPlaybackAck) {
-    throw new Error(`playback ack already pending for ${pendingPlaybackAck.token}`)
+    const staleToken = pendingPlaybackAck.token
+    console.warn('[readit] replacing pending playback acknowledgement', { staleToken, nextToken: token })
+    clearPendingPlaybackAck({ ok: false, error: `superseded by ${token}` })
   }
 
   return new Promise((resolve) => {
@@ -207,6 +214,17 @@ function waitForPlaybackAck(token: string): Promise<{ ok: boolean; error?: strin
 
     pendingPlaybackAck = { token, resolve, timeoutId }
   })
+}
+
+export const __testing = {
+  waitForPlaybackAck,
+  resolvePendingPlaybackAck,
+  resetPlaybackAckState() {
+    if (pendingPlaybackAck) {
+      clearTimeout(pendingPlaybackAck.timeoutId)
+      pendingPlaybackAck = null
+    }
+  },
 }
 
 function splitTextIntoChunks(text: string, maxLen = MAX_CHUNK_CHARS): PlaybackChunk[] {
@@ -356,24 +374,25 @@ export async function sendToActiveTabOrInject(msg: Msg) {
     const s = await getSettings()
     cachedPlaybackRate = clampPlaybackRate(s.rate, cachedPlaybackRate)
     let textArg: string | null = null
+    let playbackTab: chrome.tabs.Tab | null = null
     if (msg.kind === 'READ_TEXT') textArg = msg.text
     else {
-      const tab = await requireActivePlaybackTab()
-        try {
-          const r = await chrome.scripting.executeScript({ target: { tabId: tab.id! }, world: 'MAIN', func: () => window.getSelection?.()?.toString().trim() ?? '' })
-          if (Array.isArray(r) && r.length > 0) {
-            const first = r[0] as unknown as Record<string, unknown>
-            if ('result' in first) textArg = String(first.result ?? '')
-          } else if (r && typeof r === 'object' && 'result' in (r as unknown as Record<string, unknown>)) {
-            const obj = r as unknown as Record<string, unknown>
-            textArg = String(obj.result ?? '')
-          }
-        } catch (err) { console.warn('[readit] executeScript failed', err); return }
-      if (DEBUG) console.debug('[readit][DBG] selection from tab', { tabId: tab.id, tabUrl: tab.url, textLength: textArg?.length ?? 0 })
+      playbackTab = await requireActivePlaybackTab()
+      try {
+        const r = await chrome.scripting.executeScript({ target: { tabId: playbackTab.id! }, world: 'MAIN', func: () => window.getSelection?.()?.toString().trim() ?? '' })
+        if (Array.isArray(r) && r.length > 0) {
+          const first = r[0] as unknown as Record<string, unknown>
+          if ('result' in first) textArg = String(first.result ?? '')
+        } else if (r && typeof r === 'object' && 'result' in (r as unknown as Record<string, unknown>)) {
+          const obj = r as unknown as Record<string, unknown>
+          textArg = String(obj.result ?? '')
+        }
+      } catch (err) { console.warn('[readit] executeScript failed', err); return }
+      if (DEBUG) console.debug('[readit][DBG] selection from tab', { tabId: playbackTab.id, tabUrl: playbackTab.url, textLength: textArg?.length ?? 0 })
     }
     if (!textArg || !s.ttsUrl) return
 
-    const tab = await requireActivePlaybackTab()
+    const tab = playbackTab ?? await requireActivePlaybackTab()
     if (playbackRequestId !== latestPlaybackRequestId) return
     await cancelPlaybackSession(activeSession)
     if (playbackRequestId !== latestPlaybackRequestId) return

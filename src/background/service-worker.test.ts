@@ -87,6 +87,31 @@ describe('background.sendToActiveTabOrInject', () => {
   expect(sendCalls[0]?.[1]).toMatchObject({ rate: 1 })
   })
 
+  it('reuses the same active tab for selection capture and playback', async () => {
+    const g = globalThis as unknown as { chrome: ChromeMock }
+    ;(g.chrome.tabs.query as unknown as { mockResolvedValueOnce?: (v: unknown) => void }).mockResolvedValueOnce?.([{ id: 123, url: 'https://first.example.com' }])
+    ;(g.chrome.tabs.query as unknown as { mockResolvedValueOnce?: (v: unknown) => void }).mockResolvedValueOnce?.([{ id: 999, url: 'https://second.example.com' }])
+    ;(g.chrome.tabs.sendMessage as unknown as { mockImplementation?: (fn: (...args: unknown[]) => unknown) => void }).mockImplementation?.((_: unknown, payload: Record<string, unknown>) => {
+      if (payload.kind === 'PLAY_AUDIO') return Promise.resolve({ ok: true })
+      return Promise.resolve(undefined)
+    })
+    ;(g.chrome.scripting.executeScript as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.([{ result: 'selected text' }])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new ArrayBuffer(8) }))
+
+    const mod = await import('./service-worker')
+
+    await mod.sendToActiveTabOrInject({ kind: 'READ_SELECTION' })
+
+    expect(g.chrome.tabs.query).toHaveBeenCalledTimes(1)
+    expect(g.chrome.scripting.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 123 },
+      world: 'MAIN',
+      func: expect.any(Function),
+    })
+    const sendCalls = (g.chrome.tabs.sendMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls
+    expect(sendCalls.every(([tabId]) => tabId === 123)).toBe(true)
+  })
+
   it('bootstraps the content script and retries when sendMessage throws for READ_TEXT', async () => {
     const g = globalThis as unknown as { chrome: ChromeMock }
     ;(g.chrome.tabs.query as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.([{ id: 55, url: 'https://example.com' }])
@@ -160,5 +185,17 @@ describe('background.sendToActiveTabOrInject', () => {
     // legacy player window is not used; ensure we logged a warning
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
+  })
+
+  it('recovers when a new playback acknowledgement replaces an older pending acknowledgement', async () => {
+    const mod = await import('./service-worker')
+
+    const firstAck = mod.__testing.waitForPlaybackAck('session-1:0')
+    const secondAck = mod.__testing.waitForPlaybackAck('session-2:0')
+
+    await expect(firstAck).resolves.toMatchObject({ ok: false, error: 'superseded by session-2:0' })
+    expect(mod.__testing.resolvePendingPlaybackAck('session-2:0', { ok: true })).toBe(true)
+    await expect(secondAck).resolves.toMatchObject({ ok: true })
+    mod.__testing.resetPlaybackAckState()
   })
 })
