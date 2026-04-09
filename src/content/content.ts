@@ -1,8 +1,9 @@
 import { isPlayAudio } from '../lib/messaging'
+import { getSettings } from '../lib/storage'
 import { decodeBase64ToUint8Array, prefixHexFromU8 } from './player'
 import { PlaybackController } from './playback'
 
-const DEBUG = Boolean(import.meta.env.DEV)
+const DEBUG = Boolean(import.meta.env.DEV) && import.meta.env.MODE !== 'test'
 
 type ContentBridgeState = {
   initialized: boolean
@@ -35,8 +36,8 @@ function applyPlaybackRate(rate: unknown) {
 async function hydratePlaybackRateFromStorage() {
   try {
     if (!chrome?.storage?.sync) return
-    const stored = await chrome.storage.sync.get(['settings'])
-    applyPlaybackRate(stored?.settings?.rate)
+    const stored = await getSettings()
+    applyPlaybackRate(stored.rate)
   } catch (err) {
     console.warn('[readit] failed to hydrate playback rate', err)
   }
@@ -53,9 +54,14 @@ if (bridgeState.initialized) {
   try {
     chrome?.storage?.onChanged?.addListener?.((changes, areaName) => {
       if (areaName !== 'sync') return
-      if (!changes?.settings) return
-      const next = changes.settings.newValue
-      if (next && typeof next === 'object' && 'rate' in next) applyPlaybackRate((next as Record<string, unknown>).rate)
+      if (typeof changes?.rate?.newValue === 'number') {
+        applyPlaybackRate(changes.rate.newValue)
+        return
+      }
+      const nextLegacySettings = changes?.settings?.newValue
+      if (nextLegacySettings && typeof nextLegacySettings === 'object' && 'rate' in nextLegacySettings) {
+        applyPlaybackRate((nextLegacySettings as Record<string, unknown>).rate)
+      }
     })
   } catch (err) {
     console.warn('[readit] failed to register storage rate listener', err)

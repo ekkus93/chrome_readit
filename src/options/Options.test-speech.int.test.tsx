@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import Options from './Options'
@@ -26,11 +26,17 @@ describe('Options Test speech uses selected voice', () => {
   ;(globalThis as unknown as { chrome?: unknown }).chrome = {
       storage: {
         sync: {
-          get: vi.fn(() => Promise.resolve({ settings: storedSettings })),
+          get: vi.fn(() => Promise.resolve({ settings: storedSettings, ...(storedSettings as Record<string, unknown>) })),
           set: vi.fn((obj: unknown) => {
             const patched = obj as Record<string, unknown>
-            const settingsPart = (patched && patched['settings']) ? (patched['settings'] as Record<string, unknown>) : {}
-            storedSettings = { ...(storedSettings as Record<string, unknown>), ...settingsPart }
+            const settingsPart = (patched && patched.settings && typeof patched.settings === 'object')
+              ? (patched.settings as Record<string, unknown>)
+              : {}
+            storedSettings = {
+              ...(storedSettings as Record<string, unknown>),
+              ...settingsPart,
+              ...Object.fromEntries(Object.entries(patched).filter(([key]) => key !== 'settings')),
+            }
             return Promise.resolve()
           }),
         },
@@ -73,6 +79,9 @@ describe('Options Test speech uses selected voice', () => {
     // choose alice
     const user = userEvent.setup()
     await user.selectOptions(select as HTMLSelectElement, 'alice')
+    await waitFor(() => {
+      expect((storedSettings as Record<string, unknown>).voice).toBe('alice')
+    })
 
     // click Test speech button
     const btn = screen.getByRole('button', { name: /Test speech/i })

@@ -1,10 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { resetBackgroundPlaybackState, resetBackgroundTestGlobals } from './test-helpers'
 
-vi.mock('./../lib/storage', () => ({
-  getSettings: vi.fn(async () => ({ rate: 1.0, ttsUrl: 'http://localhost:5002/api/tts', voice: 'v' })),
-}))
+vi.mock('./../lib/storage', () => ({ getSettings: vi.fn(async () => ({ rate: 1.0, ttsUrl: 'http://localhost:5002/api/tts', voice: 'v' })) }))
 
 describe('background playback sessions', () => {
+  let mod: typeof import('./service-worker') | undefined
   beforeEach(async () => {
     vi.resetModules()
     vi.resetAllMocks()
@@ -15,10 +15,10 @@ describe('background playback sessions', () => {
     vi.mocked(storage.getSettings).mockResolvedValue({ rate: 1.0, ttsUrl: 'http://localhost:5002/api/tts', voice: 'v' })
 
     type ChromeMock = {
-      tabs: { query: (...args: unknown[]) => Promise<unknown>; sendMessage: (...args: unknown[]) => unknown }
+      tabs: { query: (...args: unknown[]) => Promise<unknown>; sendMessage: ReturnType<typeof vi.fn> }
       scripting: { executeScript: (...args: unknown[]) => unknown }
       commands: { onCommand: { addListener: (...args: unknown[]) => unknown } }
-      runtime: { onMessage: { addListener: (...args: unknown[]) => unknown }; onInstalled: { addListener: (...args: unknown[]) => unknown }; sendMessage: (...args: unknown[]) => unknown }
+      runtime: { onMessage: { addListener: ReturnType<typeof vi.fn> }; onInstalled: { addListener: (...args: unknown[]) => unknown }; sendMessage: (...args: unknown[]) => unknown }
       contextMenus: { create: (...args: unknown[]) => unknown; onClicked: { addListener: (...args: unknown[]) => unknown } }
     }
 
@@ -34,6 +34,18 @@ describe('background playback sessions', () => {
     } satisfies ChromeMock
   })
 
+  afterEach(() => {
+    resetBackgroundPlaybackState(mod)
+    resetBackgroundTestGlobals()
+    mod = undefined
+  })
+
+  function acknowledgePlayback(mod: typeof import('./service-worker'), token: unknown, result: { ok: boolean; error?: string } = { ok: true }) {
+    queueMicrotask(() => {
+      if (typeof token === 'string') mod.__testing.resolvePendingPlaybackAck(token, result)
+    })
+  }
+
   it('starting a new session stops the previous session before new playback starts', async () => {
     let firstPlaybackResolved = false
     vi.stubGlobal('fetch', vi.fn(async () => ({
@@ -43,16 +55,23 @@ describe('background playback sessions', () => {
     })))
 
     const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { tabs: { sendMessage: ReturnType<typeof vi.fn> } }
-    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: { kind: string }) => {
+    mod = await import('./service-worker')
+    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: Record<string, unknown>) => {
       if (message.kind === 'PLAY_AUDIO' && !firstPlaybackResolved) {
         firstPlaybackResolved = true
-        return new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 40))
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            acknowledgePlayback(mod!, message.playbackToken)
+            resolve({ ok: true })
+          }, 40)
+        })
       }
-      if (message.kind === 'PLAY_AUDIO') return Promise.resolve({ ok: true })
+      if (message.kind === 'PLAY_AUDIO') {
+        acknowledgePlayback(mod!, message.playbackToken)
+        return Promise.resolve({ ok: true })
+      }
       return Promise.resolve(undefined)
     })
-
-    const mod = await import('./service-worker')
 
     const first = mod.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: 'First session text.' })
     await new Promise((resolve) => setTimeout(resolve, 0))
@@ -85,12 +104,14 @@ describe('background playback sessions', () => {
     }))
 
     const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { tabs: { sendMessage: ReturnType<typeof vi.fn> } }
-    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: { kind: string }) => {
-      if (message.kind === 'PLAY_AUDIO') return Promise.resolve({ ok: true })
+    mod = await import('./service-worker')
+    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: Record<string, unknown>) => {
+      if (message.kind === 'PLAY_AUDIO') {
+        acknowledgePlayback(mod!, message.playbackToken)
+        return Promise.resolve({ ok: true })
+      }
       return Promise.resolve(undefined)
     })
-
-    const mod = await import('./service-worker')
 
     const first = mod.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: 'First session text.' })
     await new Promise((resolve) => setTimeout(resolve, 0))
@@ -117,12 +138,15 @@ describe('background playback sessions', () => {
     })))
 
     const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { tabs: { sendMessage: ReturnType<typeof vi.fn> } }
-    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: { kind: string }) => {
-      if (message.kind === 'PLAY_AUDIO') return Promise.resolve({ ok: true })
+    mod = await import('./service-worker')
+    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: Record<string, unknown>) => {
+      if (message.kind === 'PLAY_AUDIO') {
+        acknowledgePlayback(mod!, message.playbackToken)
+        return Promise.resolve({ ok: true })
+      }
       return Promise.resolve(undefined)
     })
 
-    const mod = await import('./service-worker')
     const first = mod.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: `${'First session sentence. '.repeat(25)}\n\n${'Next paragraph sentence. '.repeat(25)}` })
     await new Promise((resolve) => setTimeout(resolve, 10))
     const second = mod.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: 'Second session text.' })
@@ -144,16 +168,19 @@ describe('background playback sessions', () => {
     })))
 
     const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { tabs: { sendMessage: ReturnType<typeof vi.fn> }; runtime: { onMessage: { addListener: ReturnType<typeof vi.fn> } } }
-    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: { kind: string }) => {
+    mod = await import('./service-worker')
+    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: Record<string, unknown>) => {
       if (message.kind === 'PLAY_AUDIO') {
         return new Promise((resolve) => {
-          releasePlayback = () => resolve({ ok: true })
+          releasePlayback = () => {
+            acknowledgePlayback(mod!, message.playbackToken)
+            resolve({ ok: true })
+          }
         })
       }
       return Promise.resolve(undefined)
     })
 
-    const mod = await import('./service-worker')
     void mod.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: 'First session text.' })
     await new Promise((resolve) => setTimeout(resolve, 0))
     void mod.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: 'Second session text.' })

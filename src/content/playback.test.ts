@@ -3,17 +3,23 @@ import { PlaybackController } from './playback'
 
 describe('PlaybackController', () => {
   let _originalWindow: unknown
+  let createObjectURLSpy: ReturnType<typeof vi.spyOn> | null
+  let revokeObjectURLSpy: ReturnType<typeof vi.spyOn> | null
   beforeEach(() => {
     // ensure code that references `window` has a value in this test env
     _originalWindow = (globalThis as unknown as { window?: unknown }).window
     if (!_originalWindow) (globalThis as unknown as Record<string, unknown>).window = (globalThis as unknown as Record<string, unknown>)
     // use vitest helpers to stub globals; restoreAllMocks will undo
     vi.restoreAllMocks()
+    createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockImplementation(() => 'blob:test-audio')
+    revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
   })
 
   afterEach(() => {
     // restore window only if we set it
     if (!_originalWindow) delete (globalThis as unknown as Record<string, unknown>).window
+    createObjectURLSpy?.mockRestore()
+    revokeObjectURLSpy?.mockRestore()
     vi.restoreAllMocks()
   })
 
@@ -289,6 +295,113 @@ describe('PlaybackController', () => {
     await expect(promise).resolves.toMatchObject({ ok: false, error: 'stopped' })
     expect(stopMock).toHaveBeenCalledTimes(1)
     expect(closeMock).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:test-audio')
+  })
+
+  it('shuts down HTMLAudio before starting WebAudio fallback', async () => {
+    const listeners: Record<string, Array<(...args: unknown[]) => void>> = {}
+    const pauseMock = vi.fn()
+    let assignedSrc = ''
+    vi.stubGlobal('Audio', function () {
+      return {
+        addEventListener: (ev: string, cb: (...args: unknown[]) => void) => {
+          listeners[ev] = listeners[ev] || []
+          listeners[ev].push(cb)
+        },
+        play: () => Promise.resolve(),
+        pause: pauseMock,
+        get src() {
+          return assignedSrc
+        },
+        set src(value: string) {
+          assignedSrc = value
+        },
+        autoplay: false,
+        playbackRate: 1,
+      }
+    } as unknown)
+
+    let createdSrc: { onended?: (() => void) | undefined } | null = null
+    vi.stubGlobal('AudioContext', function () {
+      return {
+        decodeAudioData: (_buf: ArrayBuffer) => { void _buf; return Promise.resolve({}) },
+        createBufferSource: () => {
+          const src = {
+            buffer: null as unknown | null,
+            connect: (_: unknown) => { void _ },
+            start: () => {
+              setTimeout(() => createdSrc?.onended?.(), 0)
+            },
+            onended: undefined as (() => void) | undefined,
+            playbackRate: { value: 1 },
+          }
+          createdSrc = src
+          return src
+        },
+        destination: {},
+        close: vi.fn(() => Promise.resolve()),
+      }
+    } as unknown)
+
+    const playback = new PlaybackController()
+    const promise = playback.playArrayBuffer(new Uint8Array([1, 2, 3]).buffer, 'audio/wav')
+    listeners['error']?.[0]?.(new Error('decode failure'))
+    const result = await promise
+
+    expect(result.ok).toBe(true)
+    expect(pauseMock).toHaveBeenCalled()
+    expect(assignedSrc).toBe('')
+    expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:test-audio')
+  })
+
+  it('starts WebAudio fallback only once when multiple fallback triggers fire', async () => {
+    const listeners: Record<string, Array<(...args: unknown[]) => void>> = {}
+    let rejectPlay: ((reason?: unknown) => void) | null = null
+    vi.stubGlobal('Audio', function () {
+      return {
+        addEventListener: (ev: string, cb: (...args: unknown[]) => void) => {
+          listeners[ev] = listeners[ev] || []
+          listeners[ev].push(cb)
+        },
+        play: () => new Promise((_, reject) => {
+          rejectPlay = reject
+        }),
+        pause: () => {},
+        src: '',
+        autoplay: false,
+        playbackRate: 1,
+      }
+    } as unknown)
+
+    const createBufferSourceMock = vi.fn(() => {
+      const src = {
+        buffer: null as unknown | null,
+        connect: (_: unknown) => { void _ },
+        start: () => {
+          setTimeout(() => src.onended?.(), 0)
+        },
+        onended: undefined as (() => void) | undefined,
+        playbackRate: { value: 1 },
+      }
+      return src
+    })
+    vi.stubGlobal('AudioContext', function () {
+      return {
+        decodeAudioData: (_buf: ArrayBuffer) => { void _buf; return Promise.resolve({}) },
+        createBufferSource: createBufferSourceMock,
+        destination: {},
+        close: vi.fn(() => Promise.resolve()),
+      }
+    } as unknown)
+
+    const playback = new PlaybackController()
+    const promise = playback.playArrayBuffer(new Uint8Array([1, 2, 3]).buffer, 'audio/wav')
+    listeners['error']?.[0]?.(new Error('stream error'))
+    rejectPlay?.(new Error('autoplay'))
+    const result = await promise
+
+    expect(result.ok).toBe(true)
+    expect(createBufferSourceMock).toHaveBeenCalledTimes(1)
   })
 
   it('resolves stale WebAudio fallback completion as stopped', async () => {

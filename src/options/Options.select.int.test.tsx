@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import Options from './Options'
@@ -27,11 +27,17 @@ describe('Options select saves and background uses voice', () => {
   ;(globalThis as unknown as { chrome?: unknown }).chrome = {
       storage: {
         sync: {
-          get: vi.fn(() => Promise.resolve({ settings: storedSettings })),
+          get: vi.fn(() => Promise.resolve({ settings: storedSettings, ...(storedSettings as Record<string, unknown>) })),
           set: vi.fn((obj: unknown) => {
             const patched = obj as Record<string, unknown>
-            const settingsPart = (patched && patched['settings']) ? (patched['settings'] as Record<string, unknown>) : {}
-            storedSettings = { ...(storedSettings as Record<string, unknown>), ...settingsPart }
+            const settingsPart = (patched && patched.settings && typeof patched.settings === 'object')
+              ? (patched.settings as Record<string, unknown>)
+              : {}
+            storedSettings = {
+              ...(storedSettings as Record<string, unknown>),
+              ...settingsPart,
+              ...Object.fromEntries(Object.entries(patched).filter(([key]) => key !== 'settings')),
+            }
             return Promise.resolve()
           }),
         },
@@ -75,8 +81,9 @@ describe('Options select saves and background uses voice', () => {
     const user = userEvent.setup()
     await user.selectOptions(select as HTMLSelectElement, 'alice')
 
-    // storage.set mutates storedSettings; verify the stored value instead of inspecting the mock directly
-    expect((storedSettings as Record<string, unknown>).voice).toBe('alice')
+    await waitFor(() => {
+      expect((storedSettings as Record<string, unknown>).voice).toBe('alice')
+    })
 
     // Now import background module and trigger request-tts handler to ensure fetch includes voice
     // The background module reads chrome.storage.sync.get when handling messages, so storedSettings will be used

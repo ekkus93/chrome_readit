@@ -1,4 +1,5 @@
 import type { Msg } from '../lib/messaging'
+import { encodeArrayBufferToBase64 } from '../lib/base64'
 import { getSettings } from '../lib/storage'
 // lib/messaging guards are available for other modules; this background
 // worker does not directly reference them here to keep runtime size small.
@@ -48,7 +49,7 @@ async function sendTabMessageWithBootstrap(tabId: number, message: Record<string
   }
 }
 
-const DEBUG = Boolean(import.meta.env.DEV)
+const DEBUG = Boolean(import.meta.env.DEV) && import.meta.env.MODE !== 'test'
 
 const MIN_RATE = 0.5
 const MAX_RATE = 10
@@ -84,9 +85,13 @@ void primePlaybackRateCache()
 try {
   chrome.storage?.onChanged?.addListener?.((changes, area) => {
     if (area !== 'sync') return
-    const next = changes.settings?.newValue
-    if (next && typeof next === 'object' && 'rate' in next) {
-      cachedPlaybackRate = clampPlaybackRate((next as Record<string, unknown>).rate, cachedPlaybackRate)
+    if (typeof changes.rate?.newValue === 'number') {
+      cachedPlaybackRate = clampPlaybackRate(changes.rate.newValue, cachedPlaybackRate)
+      return
+    }
+    const nextLegacySettings = changes.settings?.newValue
+    if (nextLegacySettings && typeof nextLegacySettings === 'object' && 'rate' in nextLegacySettings) {
+      cachedPlaybackRate = clampPlaybackRate((nextLegacySettings as Record<string, unknown>).rate, cachedPlaybackRate)
     }
   })
 } catch (err) {
@@ -112,9 +117,13 @@ const CHUNK_TIMEOUT_MS = ((globalThis as unknown as { __CHUNK_TIMEOUT_MS?: numbe
 const DEFAULT_CHUNK_GAP_MS = ((globalThis as unknown as { __CHUNK_GAP_MS?: number }).__CHUNK_GAP_MS) ?? 150
 const PARAGRAPH_CHUNK_GAP_MS = ((globalThis as unknown as { __CHUNK_PARAGRAPH_GAP_MS?: number }).__CHUNK_PARAGRAPH_GAP_MS) ?? 700
 
+type PlaybackTransition = 'sentence' | 'paragraph' | 'end'
+
 type PlaybackChunk = {
   text: string
-  gapAfterMs: number
+  paragraphIndex: number
+  chunkIndexInParagraph: number
+  transitionAfter: PlaybackTransition
 }
 
 type PlaybackSession = {
@@ -125,6 +134,12 @@ type PlaybackSession = {
   paused: boolean
   chunks: PlaybackChunk[]
   currentIndex: number
+  fetchControllers: Set<AbortController>
+}
+
+type ReadPipelineResult = {
+  ok: boolean
+  error?: string
 }
 
 let nextSessionId = 1
@@ -162,6 +177,7 @@ function createPlaybackSession(requestId: number, tabId: number, chunks: Playbac
     paused: false,
     chunks,
     currentIndex: 0,
+    fetchControllers: new Set(),
   }
 }
 
@@ -181,6 +197,8 @@ async function cancelPlaybackSession(session: PlaybackSession | null): Promise<v
   if (!session) return
   session.cancelRequested = true
   session.paused = false
+  session.fetchControllers.forEach((controller) => controller.abort())
+  session.fetchControllers.clear()
   if (isSessionActive(session.id)) activeSession = null
   if (pendingPlaybackAck?.token.startsWith(`${session.id}:`)) {
     clearTimeout(pendingPlaybackAck.timeoutId)
@@ -222,6 +240,7 @@ export const __testing = {
   waitForPlaybackAck,
   resolvePendingPlaybackAck,
   splitTextIntoChunks,
+  getGapAfterTransition,
   resetPlaybackAckState() {
     if (pendingPlaybackAck) {
       clearTimeout(pendingPlaybackAck.timeoutId)
@@ -230,59 +249,91 @@ export const __testing = {
   },
 }
 
-function splitTextIntoChunks(text: string, maxLen = MAX_CHUNK_CHARS): PlaybackChunk[] {
-  const out: PlaybackChunk[] = []
-  let remaining = text.trim()
+function getGapAfterTransition(transitionAfter: PlaybackTransition): number {
+  if (transitionAfter === 'paragraph') return PARAGRAPH_CHUNK_GAP_MS
+  if (transitionAfter === 'sentence') return DEFAULT_CHUNK_GAP_MS
+  return 0
+}
+
+function splitTextIntoParagraphs(text: string): string[] {
+  return text
+    .split(/\n\s*\n+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+}
+
+function splitParagraphIntoChunkTexts(paragraph: string, maxLen = MAX_CHUNK_CHARS): string[] {
+  const out: string[] = []
+  let remaining = paragraph.trim()
   while (remaining.length > 0) {
     if (remaining.length <= maxLen) {
-      out.push({ text: remaining, gapAfterMs: DEFAULT_CHUNK_GAP_MS })
+      out.push(remaining)
       break
     }
     const slice = remaining.slice(0, maxLen)
-    const boundary = Math.max(slice.lastIndexOf('.'), slice.lastIndexOf('!'), slice.lastIndexOf('?'), slice.lastIndexOf('\n'), slice.lastIndexOf(';'))
+    const boundary = Math.max(slice.lastIndexOf('.'), slice.lastIndexOf('!'), slice.lastIndexOf('?'), slice.lastIndexOf(';'))
     let cut = boundary >= 0 ? boundary + 1 : boundary
     if (cut <= 0) {
       const ws = slice.lastIndexOf(' ')
       cut = ws > 0 ? ws : maxLen
     }
-    let separatorEnd = cut
-    while (separatorEnd < remaining.length && /\s/.test(remaining[separatorEnd])) {
-      separatorEnd += 1
-    }
-    const separatorContext = remaining.slice(Math.max(0, cut - 2), separatorEnd)
-    const gapAfterMs = /\n\s*\n/.test(separatorContext)
-      ? PARAGRAPH_CHUNK_GAP_MS
-      : DEFAULT_CHUNK_GAP_MS
     const part = remaining.slice(0, cut).trim()
-    if (part) out.push({ text: part, gapAfterMs })
-    remaining = remaining.slice(separatorEnd).trim()
+    if (part) out.push(part)
+    remaining = remaining.slice(cut).trim()
   }
   return out
 }
 
-function arrayBufferToBase64(buf: ArrayBuffer) {
-  const bytes = new Uint8Array(buf)
-  const CHUNK = 0x8000
-  let binary = ''
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    const sub = bytes.subarray(i, i + CHUNK)
-    binary += String.fromCharCode.apply(null, Array.from(sub))
-  }
-  return btoa(binary)
+function splitTextIntoChunks(text: string, maxLen = MAX_CHUNK_CHARS): PlaybackChunk[] {
+  const paragraphs = splitTextIntoParagraphs(text)
+  const out: PlaybackChunk[] = []
+
+  paragraphs.forEach((paragraph, paragraphIndex) => {
+    const chunkTexts = splitParagraphIntoChunkTexts(paragraph, maxLen)
+    chunkTexts.forEach((chunkText, chunkIndexInParagraph) => {
+      const isLastChunkInParagraph = chunkIndexInParagraph === chunkTexts.length - 1
+      const isLastParagraph = paragraphIndex === paragraphs.length - 1
+      out.push({
+        text: chunkText,
+        paragraphIndex,
+        chunkIndexInParagraph,
+        transitionAfter: isLastChunkInParagraph
+          ? (isLastParagraph ? 'end' : 'paragraph')
+          : 'sentence',
+      })
+    })
+  })
+
+  return out
 }
 
-async function fetchTtsAudio(text: string, voice?: string): Promise<{ b64: string; mime: string } | null> {
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException
+    ? err.name === 'AbortError'
+    : typeof err === 'object' && err !== null && 'name' in err && (err as { name?: unknown }).name === 'AbortError'
+}
+
+async function fetchTtsAudio(text: string, voice?: string, signal?: AbortSignal): Promise<{ b64: string; mime: string } | null> {
   const s = await getSettings()
   cachedPlaybackRate = clampPlaybackRate(s.rate, cachedPlaybackRate)
   if (!s.ttsUrl) return null
   try {
-    const resp = await fetch(s.ttsUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: voice ?? s.voice }) })
+    const resp = await fetch(s.ttsUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice: voice ?? s.voice }),
+      signal,
+    })
     if (!resp.ok) return null
     const mime = resp.headers.get('content-type') || 'audio/wav'
     const buf = await resp.arrayBuffer()
     if (DEBUG) console.debug('[readit][DBG] fetchTtsAudio response', { mime, prefixHex: prefixHexFromBuffer(buf) })
-    return { b64: arrayBufferToBase64(buf), mime }
-  } catch (err) { console.warn('[readit] fetchTtsAudio failed', err); return null }
+    return { b64: encodeArrayBufferToBase64(buf), mime }
+  } catch (err) {
+    if (isAbortError(err)) return null
+    console.warn('[readit] fetchTtsAudio failed', err)
+    return null
+  }
 }
 
 async function processChunksSequentially(session: PlaybackSession, voice?: string) {
@@ -292,6 +343,13 @@ async function processChunksSequentially(session: PlaybackSession, voice?: strin
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
   const sessionCanContinue = () => isSessionActive(sessionId) && isLatestPlaybackRequest(requestId) && !session.cancelRequested
+  const fetchChunkAudio = (text: string): Promise<{ b64: string; mime: string } | null> => {
+    const controller = new AbortController()
+    session.fetchControllers.add(controller)
+    return fetchTtsAudio(text, voice, controller.signal).finally(() => {
+      session.fetchControllers.delete(controller)
+    })
+  }
   const waitForChunkGap = async (gapMs: number): Promise<boolean> => {
     let remainingMs = gapMs
     while (remainingMs > 0) {
@@ -305,7 +363,7 @@ async function processChunksSequentially(session: PlaybackSession, voice?: strin
   }
 
   try {
-    let nextEntryPromise: Promise<{ b64: string; mime: string } | null> | null = fetchTtsAudio(chunks[0].text, voice)
+    let nextEntryPromise: Promise<{ b64: string; mime: string } | null> | null = fetchChunkAudio(chunks[0].text)
 
     for (let chunkIndex = 0; chunkIndex < chunks.length && sessionCanContinue(); chunkIndex += 1) {
       session.currentIndex = chunkIndex
@@ -315,6 +373,7 @@ async function processChunksSequentially(session: PlaybackSession, voice?: strin
 
       const entry = await nextEntryPromise
       if (!entry) {
+        if (!sessionCanContinue() || session.cancelRequested) break
         console.warn('[readit] failed to fetch chunk', chunkIndex)
         session.cancelRequested = true
         break
@@ -322,12 +381,27 @@ async function processChunksSequentially(session: PlaybackSession, voice?: strin
       if (!sessionCanContinue()) break
 
       nextEntryPromise = chunkIndex + 1 < chunks.length
-        ? fetchTtsAudio(chunks[chunkIndex + 1].text, voice)
+        ? fetchChunkAudio(chunks[chunkIndex + 1].text)
         : null
 
+      const chunk = chunks[chunkIndex]
       const playbackRate = getCurrentPlaybackRate()
       const playbackToken = createPlaybackToken(sessionId, chunkIndex)
       const ackPromise = waitForPlaybackAck(playbackToken)
+      const gapAfterMs = getGapAfterTransition(chunk.transitionAfter)
+
+      if (DEBUG) {
+        console.debug('[readit][DBG] queue start chunk', {
+          sessionId,
+          requestId,
+          chunkIndex,
+          paragraphIndex: chunk.paragraphIndex,
+          chunkIndexInParagraph: chunk.chunkIndexInParagraph,
+          playbackToken,
+          transitionAfter: chunk.transitionAfter,
+          gapAfterMs,
+        })
+      }
 
       try {
         const sendResult = await sendTabMessageWithBootstrap(tabId, {
@@ -339,18 +413,34 @@ async function processChunksSequentially(session: PlaybackSession, voice?: strin
         })
 
         if (sendResult && typeof sendResult === 'object' && sendResult !== null && 'ok' in (sendResult as Record<string, unknown>)) {
-          resolvePendingPlaybackAck(playbackToken, {
-            ok: Boolean((sendResult as Record<string, unknown>).ok),
-            error: typeof (sendResult as Record<string, unknown>).error === 'string'
-              ? String((sendResult as Record<string, unknown>).error)
-              : undefined,
-          })
+          const dispatchOk = Boolean((sendResult as Record<string, unknown>).ok)
+          if (!dispatchOk) {
+            resolvePendingPlaybackAck(playbackToken, {
+              ok: false,
+              error: typeof (sendResult as Record<string, unknown>).error === 'string'
+                ? String((sendResult as Record<string, unknown>).error)
+                : 'playback dispatch failed',
+            })
+          }
         }
       } catch (err) {
         resolvePendingPlaybackAck(playbackToken, { ok: false, error: String(err) })
       }
 
       const ack = await ackPromise
+      if (DEBUG) {
+        console.debug('[readit][DBG] queue finish chunk', {
+          sessionId,
+          requestId,
+          chunkIndex,
+          paragraphIndex: chunk.paragraphIndex,
+          playbackToken,
+          transitionAfter: chunk.transitionAfter,
+          gapAfterMs,
+          ok: ack.ok,
+          error: ack.error,
+        })
+      }
       if (!ack.ok) {
         if (!session.cancelRequested) {
           console.warn('[readit] playback acknowledgement failed', ack.error)
@@ -360,7 +450,7 @@ async function processChunksSequentially(session: PlaybackSession, voice?: strin
       }
 
       if (chunkIndex + 1 < chunks.length) {
-        const shouldContinue = await waitForChunkGap(chunks[chunkIndex].gapAfterMs)
+        const shouldContinue = await waitForChunkGap(gapAfterMs)
         if (!shouldContinue) break
       }
     }
@@ -375,7 +465,7 @@ async function processChunksSequentially(session: PlaybackSession, voice?: strin
   finishPlaybackSession(sessionId)
 }
 
-export async function sendToActiveTabOrInject(msg: Msg) {
+export async function sendToActiveTabOrInject(msg: Msg): Promise<ReadPipelineResult> {
   try {
     const playbackRequestId = ++latestPlaybackRequestId
     const s = await getSettings()
@@ -384,7 +474,13 @@ export async function sendToActiveTabOrInject(msg: Msg) {
     let playbackTab: chrome.tabs.Tab | null = null
     if (msg.kind === 'READ_TEXT') textArg = msg.text
     else {
-      playbackTab = await requireActivePlaybackTab()
+      try {
+        playbackTab = await requireActivePlaybackTab()
+      } catch (err) {
+        const error = String(err)
+        console.warn('[readit] read-selection failed', error)
+        return { ok: false, error }
+      }
       try {
         const r = await chrome.scripting.executeScript({ target: { tabId: playbackTab.id! }, world: 'MAIN', func: () => window.getSelection?.()?.toString().trim() ?? '' })
         if (Array.isArray(r) && r.length > 0) {
@@ -394,19 +490,35 @@ export async function sendToActiveTabOrInject(msg: Msg) {
           const obj = r as unknown as Record<string, unknown>
           textArg = String(obj.result ?? '')
         }
-      } catch (err) { console.warn('[readit] executeScript failed', err); return }
+      } catch (err) {
+        console.warn('[readit] executeScript failed', err)
+        return { ok: false, error: `Failed to capture selection: ${String(err)}` }
+      }
       if (DEBUG) console.debug('[readit][DBG] selection from tab', { tabId: playbackTab.id, tabUrl: playbackTab.url, textLength: textArg?.length ?? 0 })
     }
-    if (!textArg || !s.ttsUrl) return
+    const normalizedText = textArg?.trim() ?? ''
+    if (!normalizedText) {
+      return { ok: false, error: msg.kind === 'READ_SELECTION' ? 'No selected text on the active page.' : 'No text to read.' }
+    }
+    if (!s.ttsUrl) {
+      return { ok: false, error: 'No TTS service URL is configured.' }
+    }
 
     const tab = playbackTab ?? await requireActivePlaybackTab()
-    if (playbackRequestId !== latestPlaybackRequestId) return
+    if (playbackRequestId !== latestPlaybackRequestId) return { ok: false, error: 'Playback request was superseded.' }
     await cancelPlaybackSession(activeSession)
-    if (playbackRequestId !== latestPlaybackRequestId) return
-    const session = createPlaybackSession(playbackRequestId, tab.id, splitTextIntoChunks(textArg, MAX_CHUNK_CHARS))
+    if (playbackRequestId !== latestPlaybackRequestId) return { ok: false, error: 'Playback request was superseded.' }
+    const session = createPlaybackSession(playbackRequestId, tab.id, splitTextIntoChunks(normalizedText, MAX_CHUNK_CHARS))
     activeSession = session
     await processChunksSequentially(session, s.voice)
-  } catch (err) { console.warn('[readit] sendToActiveTabOrInject failed', err) }
+    if (session.cancelRequested) {
+      return { ok: false, error: 'Playback stopped before completion.' }
+    }
+    return { ok: true }
+  } catch (err) {
+    console.warn('[readit] sendToActiveTabOrInject failed', err)
+    return { ok: false, error: String(err) }
+  }
 }
 
 // Runtime message handlers: control the queue and expose status to the popup
@@ -476,6 +588,13 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
         return true
       }
       if (anyReq.kind === 'PLAYBACK_FINISHED' && typeof anyReq.playbackToken === 'string') {
+        if (DEBUG) {
+          console.debug('[readit][DBG] playback ack', {
+            playbackToken: anyReq.playbackToken,
+            ok: Boolean(anyReq.ok),
+            error: typeof anyReq.error === 'string' ? anyReq.error : undefined,
+          })
+        }
         resolvePendingPlaybackAck(anyReq.playbackToken, {
           ok: Boolean(anyReq.ok),
           error: typeof anyReq.error === 'string' ? anyReq.error : undefined,
@@ -564,14 +683,10 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
       // pipeline used by keyboard shortcuts / context menu.
       if (m.kind === 'READ_SELECTION' || m.kind === 'READ_TEXT') {
         try {
-          if (m.kind === 'READ_TEXT') {
-            // caller supplied explicit text
-            await sendToActiveTabOrInject({ kind: 'READ_TEXT', text: String(m.text ?? '') } as Msg)
-          } else {
-            // read selection from the active tab
-            await sendToActiveTabOrInject({ kind: 'READ_SELECTION' } as Msg)
-          }
-          sendResponse({ ok: true })
+          const result = m.kind === 'READ_TEXT'
+            ? await sendToActiveTabOrInject({ kind: 'READ_TEXT', text: String(m.text ?? '') } as Msg)
+            : await sendToActiveTabOrInject({ kind: 'READ_SELECTION' } as Msg)
+          sendResponse(result)
         } catch (err) {
           console.warn('[readit] read-selection handling failed', err)
           sendResponse({ ok: false, error: String(err) })
@@ -605,17 +720,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           const buf = await resp.arrayBuffer()
           if (DEBUG) console.debug('[readit][DBG] request-tts fetched', { contentType, prefixHex: prefixHexFromBuffer(buf) })
           
-          // Convert ArrayBuffer to base64 for message passing
-          const bytes = new Uint8Array(buf)
-          let binary = ''
-          const CHUNK_SIZE = 0x8000
-          for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-            const chunk = bytes.subarray(i, i + CHUNK_SIZE)
-            binary += String.fromCharCode.apply(null, Array.from(chunk))
-          }
-          const b64 = btoa(binary)
-          
-          sendResponse({ ok: true, audio: b64, mime: contentType })
+          sendResponse({ ok: true, audio: encodeArrayBufferToBase64(buf), mime: contentType })
           return
         } catch (err) {
           sendResponse({ ok: false, error: String(err) })

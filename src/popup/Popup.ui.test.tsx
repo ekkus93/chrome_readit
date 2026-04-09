@@ -67,9 +67,51 @@ describe('Popup playback control buttons', () => {
       const calls = (chromeObj.storage.sync.set.mock?.calls as unknown[][]) || []
       expect(calls.length).toBeGreaterThan(0)
       const payload = calls[calls.length - 1][0] as Record<string, unknown>
-      expect(JSON.stringify(payload)).toContain('1.7')
+      expect(payload).toMatchObject({ rate: 1.7 })
     })
 
     expect(await screen.findByText(/Rate:\s*1\.70/)).toBeTruthy()
+  })
+
+  it('shows a useful error when no selection is available', async () => {
+    const chromeObj = getGlobal(['chrome']) as unknown as { runtime: { sendMessage: ReturnType<typeof vi.fn> } }
+    chromeObj.runtime.sendMessage.mockImplementation((message: Record<string, unknown>, callback?: (value: unknown) => void) => {
+      if (message.kind === 'READ_SELECTION') callback?.({ ok: false, error: 'No selected text on the active page.' })
+    })
+
+    render(<Popup />)
+    const user = userEvent.setup()
+    const [readSelection] = await screen.findAllByRole('button', { name: /Read selected text/i })
+    await user.click(readSelection)
+
+    expect(await screen.findByText('No selected text on the active page.')).toBeTruthy()
+  })
+
+  it('shows a useful error when the tts url is missing', async () => {
+    const chromeObj = getGlobal(['chrome']) as unknown as { runtime: { sendMessage: ReturnType<typeof vi.fn> } }
+    chromeObj.runtime.sendMessage.mockImplementation((message: Record<string, unknown>, callback?: (value: unknown) => void) => {
+      if (message.kind === 'READ_SELECTION') callback?.({ ok: false, error: 'No TTS service URL is configured.' })
+    })
+
+    render(<Popup />)
+    const user = userEvent.setup()
+    const [readSelection] = await screen.findAllByRole('button', { name: /Read selected text/i })
+    await user.click(readSelection)
+
+    expect(await screen.findByText('No TTS service URL is configured.')).toBeTruthy()
+  })
+
+  it('shows a useful error on unsupported pages', async () => {
+    const chromeObj = getGlobal(['chrome']) as unknown as { runtime: { sendMessage: ReturnType<typeof vi.fn> } }
+    chromeObj.runtime.sendMessage.mockImplementation((message: Record<string, unknown>, callback?: (value: unknown) => void) => {
+      if (message.kind === 'READ_SELECTION') callback?.({ ok: false, error: 'Playback not supported on this page' })
+    })
+
+    render(<Popup />)
+    const user = userEvent.setup()
+    const [readSelection] = await screen.findAllByRole('button', { name: /Read selected text/i })
+    await user.click(readSelection)
+
+    expect(await screen.findByText('Playback not supported on this page')).toBeTruthy()
   })
 })

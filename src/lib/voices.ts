@@ -3,11 +3,25 @@ export type VoiceOption = {
   label: string
 }
 
-export async function fetchServerVoices(ttsUrl: string): Promise<VoiceOption[]> {
+export function deriveVoicesUrl(ttsUrl: string): string | null {
   try {
     const url = new URL(ttsUrl)
-    url.pathname = '/api/voices'
-    const res = await fetch(url.toString(), { method: 'GET' })
+    if (url.pathname.endsWith('/tts')) {
+      url.pathname = `${url.pathname.slice(0, -'/tts'.length)}/voices`
+      return url.toString()
+    }
+    url.pathname = new URL('voices', `${url.origin}${url.pathname.endsWith('/') ? url.pathname : `${url.pathname}/`}`).pathname
+    return url.toString()
+  } catch {
+    return null
+  }
+}
+
+export async function fetchServerVoices(ttsUrl: string): Promise<VoiceOption[]> {
+  try {
+    const voicesUrl = deriveVoicesUrl(ttsUrl)
+    if (!voicesUrl) return []
+    const res = await fetch(voicesUrl, { method: 'GET' })
     if (!res.ok) return []
     const js = await res.json().catch(() => null)
     if (!js || !Array.isArray(js.voices)) return []

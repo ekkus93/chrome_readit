@@ -2,6 +2,7 @@ import { decodeBase64ToUint8Array } from './player'
 
 const MIN_RATE = 0.5
 const MAX_RATE = 10.0
+const DEBUG = Boolean(import.meta.env.DEV) && import.meta.env.MODE !== 'test'
 
 function clampRate(rate: number): number {
   if (!Number.isFinite(rate)) return 1
@@ -13,9 +14,25 @@ function clampRate(rate: number): number {
 export class PlaybackController {
   private currentAudio: HTMLAudioElement | null = null
   private currentAudioContextSource: { ctx: AudioContext; src: AudioBufferSourceNode } | null = null
+  private currentObjectUrl: string | null = null
   private playbackRate = 1
   private activePlaybackToken = 0
   private activePlaybackResolver: ((result: { ok: boolean; error?: string }) => void) | null = null
+
+  private debug(event: string, details: Record<string, unknown> = {}): void {
+    if (!DEBUG) return
+    console.debug('[readit][DBG] playback', { event, ...details })
+  }
+
+  private revokeCurrentObjectUrl(): void {
+    if (!this.currentObjectUrl) return
+    try {
+      URL.revokeObjectURL(this.currentObjectUrl)
+    } catch (e) {
+      void e
+    }
+    this.currentObjectUrl = null
+  }
 
   private clearCurrentAudio(): void {
     if (!this.currentAudio) return
@@ -26,6 +43,7 @@ export class PlaybackController {
       void e
     }
     this.currentAudio = null
+    this.revokeCurrentObjectUrl()
   }
 
   private cleanupWebAudioSource(sourceRef: { ctx: AudioContext; src: AudioBufferSourceNode } | null, stopSource = false): void {
@@ -68,20 +86,24 @@ export class PlaybackController {
       src.connect(ctx.destination)
       sourceRef = { ctx, src }
       this.currentAudioContextSource = sourceRef
+      this.debug('webaudio-start', { playbackToken, rate: this.playbackRate })
 
       return await new Promise((resolve) => {
         src.onended = () => {
           if (this.activePlaybackToken !== playbackToken) {
+            this.debug('webaudio-stale-end', { playbackToken, activePlaybackToken: this.activePlaybackToken })
             this.cleanupWebAudioSource(sourceRef)
             resolve({ ok: false, error: 'stopped' })
             return
           }
+          this.debug('webaudio-end', { playbackToken })
           this.cleanupWebAudioSource(sourceRef)
           resolve({ ok: true })
         }
         src.start(0)
       })
     } catch (err) {
+      this.debug('webaudio-error', { playbackToken, error: String(err) })
       this.cleanupWebAudioSource(sourceRef ?? { ctx, src: { stop: () => {}, playbackRate: { value: this.playbackRate } } as AudioBufferSourceNode })
       return { ok: false, error: String(err) }
     }
@@ -125,8 +147,10 @@ export class PlaybackController {
     const url = URL.createObjectURL(blob)
     const a = new Audio()
     a.playbackRate = this.playbackRate
+    this.currentObjectUrl = url
     this.currentAudio = a
     const playbackToken = ++this.activePlaybackToken
+    this.debug('htmlaudio-start', { playbackToken, mime, rate: this.playbackRate })
 
     return new Promise((resolve) => {
       this.activePlaybackResolver = resolve
@@ -136,29 +160,35 @@ export class PlaybackController {
         if (responded || this.activePlaybackToken !== playbackToken) return
         responded = true
         if (this.activePlaybackResolver === resolve) this.activePlaybackResolver = null
+        this.debug('playback-finish', { playbackToken, ok, error: info?.error })
         this.clearCurrentAudio()
-        try {
-          URL.revokeObjectURL(url)
-        } catch (e) { void e }
         resolve({ ok, ...info })
       }
 
       const tryWebAudioFallback = async () => {
         if (fallbackStarted || this.activePlaybackToken !== playbackToken) return
         fallbackStarted = true
-        try {
-          URL.revokeObjectURL(url)
-        } catch (e) { void e }
-        this.currentAudio = null
+        const hadHtmlAudio = Boolean(this.currentAudio)
+        this.debug('fallback-start', {
+          playbackToken,
+          hadHtmlAudio,
+          objectUrlActive: Boolean(this.currentObjectUrl),
+        })
+        this.clearCurrentAudio()
         const result = await this.playViaWebAudio(u8, playbackToken)
+        this.debug('fallback-finish', { playbackToken, ok: result.ok, error: result.error })
         finish(result.ok, result.ok ? undefined : { error: result.error })
       }
 
-      const done = () => finish(true)
+      const done = () => {
+        this.debug('htmlaudio-end', { playbackToken })
+        finish(true)
+      }
       a.addEventListener('ended', done)
 
       a.addEventListener('error', async (err) => {
         void err
+        this.debug('htmlaudio-error', { playbackToken })
         await tryWebAudioFallback()
       })
 
@@ -167,6 +197,7 @@ export class PlaybackController {
       if (p && typeof (p as Promise<unknown>).catch === 'function') {
         ;(p as Promise<unknown>).catch(async (err) => {
           void err
+          this.debug('htmlaudio-play-rejected', { playbackToken })
           await tryWebAudioFallback()
         })
       }
@@ -201,6 +232,7 @@ export class PlaybackController {
     const resolver = this.activePlaybackResolver
     this.activePlaybackResolver = null
     this.activePlaybackToken += 1
+    this.debug('stop', { activePlaybackToken: this.activePlaybackToken })
     this.clearCurrentAudio()
     if (this.currentAudioContextSource) {
       this.cleanupWebAudioSource(this.currentAudioContextSource, true)

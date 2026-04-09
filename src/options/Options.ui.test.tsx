@@ -64,7 +64,7 @@ describe('Options playback control buttons', () => {
       const calls = (chromeObj.storage.sync.set.mock?.calls as unknown[][]) || []
       expect(calls.length).toBeGreaterThan(0)
       const last = calls[calls.length - 1] as Record<string, unknown>[]
-      expect(JSON.stringify(last[0])).toContain('1.35')
+      expect(last[0]).toMatchObject({ rate: 1.35 })
     })
 
     expect(await screen.findByText(/Speech rate:\s*1\.35/)).toBeTruthy()

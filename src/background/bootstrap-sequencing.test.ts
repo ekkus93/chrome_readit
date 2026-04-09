@@ -1,10 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { resetBackgroundPlaybackState, resetBackgroundTestGlobals } from './test-helpers'
 
 vi.mock('./../lib/storage', () => ({
   getSettings: vi.fn(async () => ({ rate: 1.25, ttsUrl: 'http://localhost:5002/api/tts', voice: 'v' })),
 }))
 
 describe('background bootstrap sequencing', () => {
+  let mod: typeof import('./service-worker') | undefined
   beforeEach(async () => {
     vi.resetModules()
     vi.resetAllMocks()
@@ -34,6 +36,12 @@ describe('background bootstrap sequencing', () => {
     } satisfies ChromeMock
   })
 
+  afterEach(() => {
+    resetBackgroundPlaybackState(mod)
+    resetBackgroundTestGlobals()
+    mod = undefined
+  })
+
   it('retries through the normal content-script path and does not advance the queue early', async () => {
     const long = `${'Sentence one. '.repeat(40)}${'Sentence two. '.repeat(40)}`
     vi.stubGlobal('fetch', vi.fn(async () => ({
@@ -45,19 +53,23 @@ describe('background bootstrap sequencing', () => {
     let resolveRetriedFirstChunk: (() => void) | null = null
     let playAttempt = 0
     const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { tabs: { sendMessage: ReturnType<typeof vi.fn> }; scripting: { executeScript: ReturnType<typeof vi.fn> } }
+    mod = await import('./service-worker')
     chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: { kind: string }) => {
       if (message.kind !== 'PLAY_AUDIO') return Promise.resolve(undefined)
       playAttempt += 1
       if (playAttempt === 1) return Promise.reject(new Error('no content script'))
       if (playAttempt === 2) {
         return new Promise((resolve) => {
-          resolveRetriedFirstChunk = () => resolve({ ok: true })
+          resolveRetriedFirstChunk = () => {
+            queueMicrotask(() => mod?.__testing.resolvePendingPlaybackAck(String((message as unknown as Record<string, unknown>).playbackToken ?? ''), { ok: true }))
+            resolve({ ok: true })
+          }
         })
       }
+      queueMicrotask(() => mod?.__testing.resolvePendingPlaybackAck(String((message as unknown as Record<string, unknown>).playbackToken ?? ''), { ok: true }))
       return Promise.resolve({ ok: true })
     })
 
-    const mod = await import('./service-worker')
     const promise = mod.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: long })
 
     for (let i = 0; i < 20; i += 1) {

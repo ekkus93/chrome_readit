@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react'
-import { DEFAULT_SETTINGS, DEFAULT_TTS_URL, getSettings, saveSettings } from '../lib/storage'
+import { DEBUG_PARAGRAPH_FIXTURE } from '../lib/debug-fixtures'
+import { DEFAULT_SETTINGS, DEFAULT_TTS_URL, getSettings, saveSettings, type Settings } from '../lib/storage'
 import { fetchServerVoices, type VoiceOption } from '../lib/voices'
 
 export default function Options() {
+  const showDebugFixture = import.meta.env.DEV
   const [voice, setVoice] = useState<string | ''>(DEFAULT_SETTINGS.voice)
   const [rate, setRate] = useState<number>(DEFAULT_SETTINGS.rate)
   const [loaded, setLoaded] = useState<boolean>(false)
@@ -12,6 +14,7 @@ export default function Options() {
   const [ttsUrl, setTtsUrl] = useState<string>(DEFAULT_SETTINGS.ttsUrl)
   const [voicesList, setVoicesList] = useState<VoiceOption[]>([])
   const testAudioRef = useRef<HTMLAudioElement | null>(null)
+  const persistedSettingsRef = useRef<Settings>(DEFAULT_SETTINGS)
   
 
   // NOTE: we no longer use the browser SpeechSynthesis fallback. Keep
@@ -19,6 +22,7 @@ export default function Options() {
 
   useEffect(() => {
     getSettings().then(s => {
+      persistedSettingsRef.current = s
       setRate(s.rate)
       setVoice(s.voice)
       setTtsUrl(s.ttsUrl)
@@ -26,9 +30,29 @@ export default function Options() {
     })
   }, [])
 
-  useEffect(() => { if (!loaded) return; saveSettings({ rate }) }, [rate, loaded])
-  useEffect(() => { if (!loaded) return; void saveSettings({ voice: voice || DEFAULT_SETTINGS.voice }) }, [voice, loaded])
-  useEffect(() => { if (!loaded) return; void saveSettings({ ttsUrl: ttsUrl || DEFAULT_TTS_URL }) }, [ttsUrl, loaded])
+  useEffect(() => {
+    if (!loaded || rate === persistedSettingsRef.current.rate) return
+    const timeoutId = window.setTimeout(() => {
+      if (rate === persistedSettingsRef.current.rate) return
+      persistedSettingsRef.current = { ...persistedSettingsRef.current, rate }
+      void saveSettings({ rate })
+    }, 200)
+    return () => window.clearTimeout(timeoutId)
+  }, [rate, loaded])
+
+  useEffect(() => {
+    const nextVoice = voice || DEFAULT_SETTINGS.voice
+    if (!loaded || nextVoice === persistedSettingsRef.current.voice) return
+    persistedSettingsRef.current = { ...persistedSettingsRef.current, voice: nextVoice }
+    void saveSettings({ voice: nextVoice })
+  }, [voice, loaded])
+
+  useEffect(() => {
+    const nextTtsUrl = ttsUrl || DEFAULT_TTS_URL
+    if (!loaded || nextTtsUrl === persistedSettingsRef.current.ttsUrl) return
+    persistedSettingsRef.current = { ...persistedSettingsRef.current, ttsUrl: nextTtsUrl }
+    void saveSettings({ ttsUrl: nextTtsUrl })
+  }, [ttsUrl, loaded])
 
   const voiceOptions = useMemo(() => {
     if (voicesList.some((option) => option.name === voice)) return voicesList
@@ -59,6 +83,14 @@ export default function Options() {
   }
   async function handleCancel() {
     try { chrome.runtime.sendMessage({ kind: 'CANCEL_SPEECH' }, () => {}) } catch (e) { console.warn('readit: cancel failed', e); void e }
+  }
+
+  async function handleDebugFixture() {
+    try {
+      await chrome.runtime.sendMessage({ kind: 'READ_TEXT', text: DEBUG_PARAGRAPH_FIXTURE })
+    } catch (err) {
+      console.warn('readit: debug fixture failed', err)
+    }
   }
 
   // Browser speechSynthesis fallback removed — extension now requires the
@@ -237,6 +269,7 @@ export default function Options() {
             <button onClick={handlePause} style={{ padding: '6px 10px' }}>Pause</button>
             <button onClick={handleResume} style={{ padding: '6px 10px' }}>Resume</button>
             <button onClick={handleCancel} style={{ padding: '6px 10px' }}>Stop</button>
+            {showDebugFixture && <button onClick={handleDebugFixture} style={{ padding: '6px 10px' }}>Debug paragraph transitions</button>}
           </div>
         </div>
         <div style={{ color: 'GrayText', marginTop: 6 }}>If set, Read It will POST text to this URL and play returned audio. The default points to a local Coqui helper ({DEFAULT_TTS_URL}).</div>

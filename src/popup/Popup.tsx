@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { DEFAULT_SETTINGS, getSettings, saveSettings } from '../lib/storage'
+import { DEBUG_PARAGRAPH_FIXTURE } from '../lib/debug-fixtures'
+import { DEFAULT_SETTINGS, getSettings, saveSettings, type Settings } from '../lib/storage'
 import { fetchServerVoices, type VoiceOption } from '../lib/voices'
 // Use real Chrome typings from @types/chrome when installed; avoid file-scoped
 // shims so TypeScript can check extension APIs correctly.
 
 export default function Popup() {
+  const showDebugFixture = import.meta.env.DEV
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const [rate, setRate] = useState(DEFAULT_SETTINGS.rate)
   const [voice, setVoice] = useState<string>(DEFAULT_SETTINGS.voice)
@@ -13,19 +15,40 @@ export default function Popup() {
   const [ttsServerUp, setTtsServerUp] = useState<boolean | null>(null)
   const [tryText, setTryText] = useState<string>('Hello from the popup')
   const [tryStatus, setTryStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
+  const [readError, setReadError] = useState<string | null>(null)
+  const [loaded, setLoaded] = useState(false)
+  const persistedSettingsRef = useRef<Settings>(DEFAULT_SETTINGS)
 
   useEffect(() => {
     let mounted = true
     void getSettings().then((s) => {
       if (!mounted) return
+      persistedSettingsRef.current = s
       setRate(s.rate)
       setVoice(s.voice)
       setTtsUrl(s.ttsUrl)
+      setLoaded(true)
     })
     return () => {
       mounted = false
     }
   }, [])
+
+  useEffect(() => {
+    if (!loaded || rate === persistedSettingsRef.current.rate) return
+    const timeoutId = window.setTimeout(() => {
+      if (rate === persistedSettingsRef.current.rate) return
+      persistedSettingsRef.current = { ...persistedSettingsRef.current, rate }
+      void saveSettings({ rate })
+    }, 200)
+    return () => window.clearTimeout(timeoutId)
+  }, [rate, loaded])
+
+  useEffect(() => {
+    if (!loaded || voice === persistedSettingsRef.current.voice) return
+    persistedSettingsRef.current = { ...persistedSettingsRef.current, voice }
+    void saveSettings({ voice })
+  }, [voice, loaded])
 
   useEffect(() => {
     if (!ttsUrl) return
@@ -63,14 +86,46 @@ export default function Popup() {
     return () => { mounted = false; window.removeEventListener('focus', onFocus) }
   }, [])
 
+  async function requestRead(message: { kind: 'READ_SELECTION' } | { kind: 'READ_TEXT'; text: string }) {
+    return await new Promise<Record<string, unknown> | undefined>((resolve, reject) => {
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message ?? 'unknown runtime error'))
+          return
+        }
+        resolve(response as Record<string, unknown> | undefined)
+      })
+    })
+  }
+
   async function handleReadSelection() {
     // Route read selection requests through the background so it can
     // use the same injection/fallback logic when a content script is
     // not present on the page.
     try {
-      await chrome.runtime.sendMessage({ kind: 'READ_SELECTION' })
+      const response = await requestRead({ kind: 'READ_SELECTION' })
+      if (response?.ok) {
+        setReadError(null)
+        return
+      }
+      setReadError(typeof response?.error === 'string' ? response.error : 'Unable to start playback.')
     } catch (err) {
       console.warn('readit: failed to request background read', err)
+      setReadError(String(err))
+    }
+  }
+
+  async function handleDebugFixture() {
+    try {
+      const response = await requestRead({ kind: 'READ_TEXT', text: DEBUG_PARAGRAPH_FIXTURE })
+      if (response?.ok) {
+        setReadError(null)
+        return
+      }
+      setReadError(typeof response?.error === 'string' ? response.error : 'Unable to start debug playback.')
+    } catch (err) {
+      console.warn('readit: failed to request debug fixture playback', err)
+      setReadError(String(err))
     }
   }
 
@@ -138,10 +193,6 @@ export default function Popup() {
     }
   }
 
-  async function persist(part: Partial<typeof DEFAULT_SETTINGS>) {
-    await saveSettings(part)
-  }
-
   const labelStyle = { display: 'block', fontWeight: 600 }
   const buttonStyle = { width: '100%', padding: '12px', fontSize: '1rem' } as const
   const selectStyle = { width: '100%', padding: 8 } as const
@@ -172,13 +223,22 @@ export default function Popup() {
       >
         Read selection (Alt+Shift+R)
       </button>
+      {showDebugFixture && (
+        <button
+          onClick={handleDebugFixture}
+          aria-label="Debug paragraph transitions"
+          style={{ ...buttonStyle, marginTop: 8 }}
+        >
+          Debug paragraph transitions
+        </button>
+      )}
 
       <div style={{ marginTop: 12 }}>
         <label htmlFor="voice" style={labelStyle}>Voice</label>
         <select
           id="voice"
           value={voice}
-          onChange={e => { const nextVoice = e.target.value || DEFAULT_SETTINGS.voice; setVoice(nextVoice); void persist({ voice: nextVoice }) }}
+          onChange={e => { const nextVoice = e.target.value || DEFAULT_SETTINGS.voice; setVoice(nextVoice) }}
           style={selectStyle}
         >
           {!voices.some((option) => option.name === voice) && <option value={voice}>{voice}</option>}
@@ -198,7 +258,7 @@ export default function Popup() {
           type="range"
           min={0.5} max={10} step={0.05}
           value={rate}
-          onChange={e => { const r = Number(e.target.value); setRate(r); persist({ rate: r }) }}
+          onChange={e => { const r = Number(e.target.value); setRate(r) }}
           style={sliderStyle}
         />
       </div>
@@ -235,6 +295,11 @@ export default function Popup() {
       {ttsServerUp === true && (
         <div style={{ marginTop: 12, padding: 8, background: '#f4fff7', color: '#006400', borderRadius: 4 }}>
           Configured TTS server available.
+        </div>
+      )}
+      {readError && (
+        <div style={{ marginTop: 12, padding: 8, background: '#fff4f4', color: '#8b0000', borderRadius: 4 }}>
+          {readError}
         </div>
       )}
     </div>

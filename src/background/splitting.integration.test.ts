@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { resetBackgroundPlaybackState, resetBackgroundTestGlobals } from './test-helpers'
 
 // Use the exported sendToActiveTabOrInject function from the service worker
 vi.mock('./../lib/storage', () => ({ getSettings: vi.fn(async () => ({ rate: 2.25, ttsUrl: 'http://localhost:5002/api/tts', voice: 'v' })) }))
@@ -13,10 +14,19 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
   type ViMock = ReturnType<typeof vi.fn>
   let sendMessageMock: ViMock
   let executeScriptMock: ViMock
+  let mod: typeof import('./service-worker') | undefined
+
+  function acknowledgePlayback(mod: typeof import('./service-worker'), token: unknown) {
+    queueMicrotask(() => {
+      if (typeof token === 'string') mod.__testing.resolvePendingPlaybackAck(token, { ok: true })
+    })
+  }
 
   beforeEach(() => {
     vi.resetModules()
     vi.resetAllMocks()
+    ;(globalThis as unknown as { __CHUNK_GAP_MS?: number }).__CHUNK_GAP_MS = 1
+    ;(globalThis as unknown as { __CHUNK_PARAGRAPH_GAP_MS?: number }).__CHUNK_PARAGRAPH_GAP_MS = 1
     // minimal chrome mock
     type ChromeMock = {
       tabs: { query: (...args: unknown[]) => Promise<unknown>, sendMessage: (...args: unknown[]) => unknown }
@@ -25,10 +35,7 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
       runtime: { onMessage: { addListener: (...args: unknown[]) => unknown }, onInstalled: { addListener: (...args: unknown[]) => unknown }, sendMessage: (...args: unknown[]) => unknown }
       contextMenus: { create: (...args: unknown[]) => unknown, onClicked: { addListener: (...args: unknown[]) => unknown } }
     }
-    sendMessageMock = vi.fn().mockImplementation((_: unknown, payload: Record<string, unknown>) => {
-      if (payload.kind === 'PLAY_AUDIO') return Promise.resolve({ ok: true })
-      return Promise.resolve(undefined)
-    })
+    sendMessageMock = vi.fn()
     executeScriptMock = vi.fn().mockResolvedValue([{ result: true }])
 
     const chromeObj = {
@@ -42,6 +49,12 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
       contextMenus: { create: vi.fn(), onClicked: { addListener: vi.fn() } },
     } as unknown as ChromeMock
     ;(globalThis as unknown as Record<string, unknown>).chrome = chromeObj
+  })
+
+  afterEach(() => {
+    resetBackgroundPlaybackState(mod)
+    resetBackgroundTestGlobals()
+    mod = undefined
   })
 
   it('splits large text, fetches audio per chunk and forwards in order', async () => {
@@ -66,7 +79,14 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
     // import module after mocks set up
     sendMessageMock.mockRejectedValueOnce(new Error('no content script'))
 
-    const mod = await import('./service-worker')
+    mod = await import('./service-worker')
+    sendMessageMock.mockImplementation((_: unknown, payload: Record<string, unknown>) => {
+      if (payload.kind === 'PLAY_AUDIO') {
+        acknowledgePlayback(mod!, payload.playbackToken)
+        return Promise.resolve({ ok: true })
+      }
+      return Promise.resolve(undefined)
+    })
 
     // call the exported helper to send the text
     await (mod.sendToActiveTabOrInject as unknown as (x: unknown) => Promise<unknown>)({ kind: 'READ_TEXT', text: long })

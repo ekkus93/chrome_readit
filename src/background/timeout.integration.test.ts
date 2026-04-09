@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { resetBackgroundPlaybackState, resetBackgroundTestGlobals } from './test-helpers'
 
 vi.mock('./../lib/storage', () => ({ getSettings: vi.fn(async () => ({ rate: 1.0, ttsUrl: 'http://localhost:5002/api/tts', voice: 'v' })) }))
 
 describe('chunk timeout behavior', () => {
+  let mod: typeof import('./service-worker') | undefined
   beforeEach(() => {
     vi.resetModules()
     vi.resetAllMocks()
@@ -36,6 +38,12 @@ describe('chunk timeout behavior', () => {
     ;(globalThis as unknown as Record<string, unknown>).chrome = chromeObj
   })
 
+  afterEach(() => {
+    resetBackgroundPlaybackState(mod)
+    resetBackgroundTestGlobals()
+    mod = undefined
+  })
+
   it('stops instead of advancing when playback completion is never acknowledged', async () => {
     // make a long text that will be split into multiple chunks
     const base = 'Sentence one. Sentence two. Sentence three. Sentence four. Sentence five.'
@@ -54,7 +62,7 @@ describe('chunk timeout behavior', () => {
       return Promise.resolve({ ok: true, status: 200, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new Uint8Array([1,2,3]).buffer })
     }))
 
-    const mod = await import('./service-worker')
+    mod = await import('./service-worker')
     // call the pipeline
     await (mod.sendToActiveTabOrInject as unknown as (x: unknown) => Promise<unknown>)({ kind: 'READ_TEXT', text: long })
 
