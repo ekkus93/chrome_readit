@@ -9,6 +9,8 @@ describe('background playback sessions', () => {
     vi.resetModules()
     vi.resetAllMocks()
     ;(globalThis as unknown as { __CHUNK_TIMEOUT_MS?: number }).__CHUNK_TIMEOUT_MS = 25
+    ;(globalThis as unknown as { __CHUNK_GAP_MS?: number }).__CHUNK_GAP_MS = 50
+    ;(globalThis as unknown as { __CHUNK_PARAGRAPH_GAP_MS?: number }).__CHUNK_PARAGRAPH_GAP_MS = 80
     const storage = await import('./../lib/storage')
     vi.mocked(storage.getSettings).mockResolvedValue({ rate: 1.0, ttsUrl: 'http://localhost:5002/api/tts', voice: 'v' })
 
@@ -104,6 +106,32 @@ describe('background playback sessions', () => {
     const playCalls = chromeObj.tabs.sendMessage.mock.calls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO')
     const playbackTokens = playCalls.map(([, payload]) => String((payload as Record<string, unknown>).playbackToken ?? ''))
     expect(playbackTokens).not.toContain('1:0')
+    expect(playbackTokens).toContain('2:0')
+  })
+
+  it('does not start the next chunk if the session is replaced during the handoff gap', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      headers: { get: () => 'audio/wav' },
+      arrayBuffer: async () => new Uint8Array([7, 7]).buffer,
+    })))
+
+    const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { tabs: { sendMessage: ReturnType<typeof vi.fn> } }
+    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: { kind: string }) => {
+      if (message.kind === 'PLAY_AUDIO') return Promise.resolve({ ok: true })
+      return Promise.resolve(undefined)
+    })
+
+    const mod = await import('./service-worker')
+    const first = mod.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: `${'First session sentence. '.repeat(25)}\n\n${'Next paragraph sentence. '.repeat(25)}` })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const second = mod.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: 'Second session text.' })
+
+    await Promise.all([first, second])
+
+    const playCalls = chromeObj.tabs.sendMessage.mock.calls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO')
+    const playbackTokens = playCalls.map(([, payload]) => String((payload as Record<string, unknown>).playbackToken ?? ''))
+    expect(playbackTokens).not.toContain('1:1')
     expect(playbackTokens).toContain('2:0')
   })
 

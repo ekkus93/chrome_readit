@@ -107,6 +107,13 @@ function prefixHexFromBuffer(buf: ArrayBuffer | null | undefined, len = 32) {
 const MAX_CHUNK_CHARS = 400
 // Allow tests to override the chunk timeout via globalThis.__CHUNK_TIMEOUT_MS
 const CHUNK_TIMEOUT_MS = ((globalThis as unknown as { __CHUNK_TIMEOUT_MS?: number }).__CHUNK_TIMEOUT_MS) ?? 60_000 // default 1 minute
+const DEFAULT_CHUNK_GAP_MS = ((globalThis as unknown as { __CHUNK_GAP_MS?: number }).__CHUNK_GAP_MS) ?? 150
+const PARAGRAPH_CHUNK_GAP_MS = ((globalThis as unknown as { __CHUNK_PARAGRAPH_GAP_MS?: number }).__CHUNK_PARAGRAPH_GAP_MS) ?? 400
+
+type PlaybackChunk = {
+  text: string
+  gapAfterMs: number
+}
 
 type PlaybackSession = {
   id: number
@@ -114,7 +121,7 @@ type PlaybackSession = {
   tabId: number
   cancelRequested: boolean
   paused: boolean
-  chunks: string[]
+  chunks: PlaybackChunk[]
   currentIndex: number
 }
 
@@ -135,7 +142,7 @@ function isLatestPlaybackRequest(requestId: number): boolean {
   return requestId === latestPlaybackRequestId
 }
 
-function createPlaybackSession(requestId: number, tabId: number, chunks: string[]): PlaybackSession {
+function createPlaybackSession(requestId: number, tabId: number, chunks: PlaybackChunk[]): PlaybackSession {
   return {
     id: nextSessionId++,
     requestId,
@@ -202,20 +209,27 @@ function waitForPlaybackAck(token: string): Promise<{ ok: boolean; error?: strin
   })
 }
 
-function splitTextIntoChunks(text: string, maxLen = MAX_CHUNK_CHARS): string[] {
-  const out: string[] = []
+function splitTextIntoChunks(text: string, maxLen = MAX_CHUNK_CHARS): PlaybackChunk[] {
+  const out: PlaybackChunk[] = []
   let remaining = text.trim()
   while (remaining.length > 0) {
-    if (remaining.length <= maxLen) { out.push(remaining); break }
+    if (remaining.length <= maxLen) {
+      out.push({ text: remaining, gapAfterMs: DEFAULT_CHUNK_GAP_MS })
+      break
+    }
     const slice = remaining.slice(0, maxLen)
     const boundary = Math.max(slice.lastIndexOf('.'), slice.lastIndexOf('!'), slice.lastIndexOf('?'), slice.lastIndexOf('\n'), slice.lastIndexOf(';'))
-    let cut = boundary
+    let cut = boundary >= 0 ? boundary + 1 : boundary
+    let gapAfterMs = DEFAULT_CHUNK_GAP_MS
+    if (boundary >= 0) {
+      gapAfterMs = slice[boundary] === '\n' ? PARAGRAPH_CHUNK_GAP_MS : DEFAULT_CHUNK_GAP_MS
+    }
     if (cut <= 0) {
       const ws = slice.lastIndexOf(' ')
       cut = ws > 0 ? ws : maxLen
     }
     const part = remaining.slice(0, cut).trim()
-    if (part) out.push(part)
+    if (part) out.push({ text: part, gapAfterMs })
     remaining = remaining.slice(cut).trim()
   }
   return out
@@ -252,15 +266,27 @@ async function processChunksSequentially(session: PlaybackSession, voice?: strin
   const { tabId, chunks } = session
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+  const sessionCanContinue = () => isSessionActive(sessionId) && isLatestPlaybackRequest(requestId) && !session.cancelRequested
+  const waitForChunkGap = async (gapMs: number): Promise<boolean> => {
+    let remainingMs = gapMs
+    while (remainingMs > 0) {
+      if (!sessionCanContinue()) return false
+      if (session.paused) return true
+      const step = Math.min(25, remainingMs)
+      await sleep(step)
+      remainingMs -= step
+    }
+    return sessionCanContinue() || session.paused
+  }
 
   try {
-    let nextEntryPromise: Promise<{ b64: string; mime: string } | null> | null = fetchTtsAudio(chunks[0], voice)
+    let nextEntryPromise: Promise<{ b64: string; mime: string } | null> | null = fetchTtsAudio(chunks[0].text, voice)
 
-    for (let chunkIndex = 0; chunkIndex < chunks.length && isSessionActive(sessionId) && isLatestPlaybackRequest(requestId) && !session.cancelRequested; chunkIndex += 1) {
+    for (let chunkIndex = 0; chunkIndex < chunks.length && sessionCanContinue(); chunkIndex += 1) {
       session.currentIndex = chunkIndex
 
-      while (session.paused && isSessionActive(sessionId) && isLatestPlaybackRequest(requestId) && !session.cancelRequested) await sleep(200)
-      if (!isSessionActive(sessionId) || !isLatestPlaybackRequest(requestId) || session.cancelRequested) break
+      while (session.paused && sessionCanContinue()) await sleep(200)
+      if (!sessionCanContinue()) break
 
       const entry = await nextEntryPromise
       if (!entry) {
@@ -268,10 +294,10 @@ async function processChunksSequentially(session: PlaybackSession, voice?: strin
         session.cancelRequested = true
         break
       }
-      if (!isSessionActive(sessionId) || !isLatestPlaybackRequest(requestId) || session.cancelRequested) break
+      if (!sessionCanContinue()) break
 
       nextEntryPromise = chunkIndex + 1 < chunks.length
-        ? fetchTtsAudio(chunks[chunkIndex + 1], voice)
+        ? fetchTtsAudio(chunks[chunkIndex + 1].text, voice)
         : null
 
       const playbackRate = getCurrentPlaybackRate()
@@ -306,6 +332,11 @@ async function processChunksSequentially(session: PlaybackSession, voice?: strin
           session.cancelRequested = true
         }
         break
+      }
+
+      if (chunkIndex + 1 < chunks.length) {
+        const shouldContinue = await waitForChunkGap(chunks[chunkIndex].gapAfterMs)
+        if (!shouldContinue) break
       }
     }
   } catch (err) {

@@ -9,6 +9,8 @@ describe('background bootstrap sequencing', () => {
     vi.resetModules()
     vi.resetAllMocks()
     ;(globalThis as unknown as { __CHUNK_TIMEOUT_MS?: number }).__CHUNK_TIMEOUT_MS = 1000
+    ;(globalThis as unknown as { __CHUNK_GAP_MS?: number }).__CHUNK_GAP_MS = 40
+    ;(globalThis as unknown as { __CHUNK_PARAGRAPH_GAP_MS?: number }).__CHUNK_PARAGRAPH_GAP_MS = 80
     const storage = await import('./../lib/storage')
     vi.mocked(storage.getSettings).mockResolvedValue({ rate: 1.25, ttsUrl: 'http://localhost:5002/api/tts', voice: 'v' })
 
@@ -71,6 +73,12 @@ describe('background bootstrap sequencing', () => {
     })
 
     resolveRetriedFirstChunk?.()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(
+      chromeObj.tabs.sendMessage.mock.calls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO'),
+    ).toHaveLength(2)
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
     await promise
 
     const playCalls = chromeObj.tabs.sendMessage.mock.calls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO')
