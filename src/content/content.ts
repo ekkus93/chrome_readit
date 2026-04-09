@@ -95,7 +95,6 @@ if (bridgeState.initialized) {
             ? String((msg as Record<string, unknown>).playbackToken)
             : null
           if (typeof (msg as Record<string, unknown>).rate === 'number') applyPlaybackRate((msg as Record<string, unknown>).rate)
-          try { playback.stop() } catch (e) { void e }
 
           const notifyPlaybackFinished = (result: { ok: boolean; error?: string }) => {
             if (!playbackToken) return

@@ -62,17 +62,17 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 # Phase 2 — Remove duplicate and conflicting playback paths
 
-**Status:** Pending
+**Status:** Done
 
 ## Task 2.1 — Remove content-script playback forwarding from `test-tts`
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Update the `test-tts` handler in `src/background/service-worker.ts` so it no longer forwards `PLAY_AUDIO` to the active tab.
-- [ ] Keep the handler focused on fetching audio bytes and returning them to the caller.
-- [ ] Verify popup/options test playback still work through the returned audio payload only.
-- [ ] Ensure this path does not interfere with an active reading session beyond whatever the popup itself intentionally does locally.
+- [x] Update the `test-tts` handler in `src/background/service-worker.ts` so it no longer forwards `PLAY_AUDIO` to the active tab.
+- [x] Keep the handler focused on fetching audio bytes and returning them to the caller.
+- [x] Verify popup/options test playback still work through the returned audio payload only.
+- [x] Ensure this path does not interfere with an active reading session beyond whatever the popup itself intentionally does locally.
 
 ### Acceptance criteria
 - Pressing the test-speech control results in exactly one audible playback path.
@@ -82,12 +82,12 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 ## Task 2.2 — Remove redundant content-side `playback.stop()` before new chunk playback
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Remove the explicit `playback.stop()` call from the `PLAY_AUDIO` handler in `src/content/content.ts`.
-- [ ] Rely on `PlaybackController.playBase64()` / `playArrayBuffer()` calling `playUint8Array()`, which already calls `this.stop()`.
-- [ ] Verify the removal does not break session invalidation or stale-completion protection.
+- [x] Remove the explicit `playback.stop()` call from the `PLAY_AUDIO` handler in `src/content/content.ts`.
+- [x] Rely on `PlaybackController.playBase64()` / `playArrayBuffer()` calling `playUint8Array()`, which already calls `this.stop()`.
+- [x] Verify the removal does not break session invalidation or stale-completion protection.
 
 ### Acceptance criteria
 - Starting a new chunk still stops the previous playback cleanly.
@@ -97,12 +97,12 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 ## Task 2.3 — Re-check popup and options playback expectations
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Inspect popup/options code paths that invoke `request-tts` or `test-tts`.
-- [ ] Confirm they expect returned audio bytes and do not depend on background-driven tab playback.
-- [ ] Update any affected tests so the contract is explicit: test playback is local to the extension UI, not the content script.
+- [x] Inspect popup/options code paths that invoke `request-tts` or `test-tts`.
+- [x] Confirm they expect returned audio bytes and do not depend on background-driven tab playback.
+- [x] Update any affected tests so the contract is explicit: test playback is local to the extension UI, not the content script.
 
 ### Acceptance criteria
 - UI test-play behavior matches the intended contract.

@@ -33,7 +33,7 @@ describe('background TTS service (test-tts)', () => {
     }
   })
 
-  it('responds ok and forwards audio when ttsUrl returns audio', async () => {
+  it('responds ok with audio bytes and does not forward playback to the active tab', async () => {
     const fakeBuf = new Uint8Array([1, 2, 3]).buffer
 
   // configure mocked getSettings
@@ -48,11 +48,10 @@ describe('background TTS service (test-tts)', () => {
     } as unknown)
 
     // prepare chrome tab
-  // Ensure chrome.tabs.query/sendMessage will behave like a real tab for this test
-  const chromeObj = getGlobal(['chrome']) as unknown as Record<string, unknown>
-  chromeObj.tabs = {
-    query: vi.fn(() => Promise.resolve([{ id: 101, url: 'https://example.com' }])),
-    sendMessage: vi.fn(() => Promise.resolve(undefined)),
+    const chromeObj = getGlobal(['chrome']) as unknown as Record<string, unknown>
+    chromeObj.tabs = {
+      query: vi.fn(() => Promise.resolve([{ id: 101, url: 'https://example.com' }])),
+      sendMessage: vi.fn(() => Promise.resolve(undefined)),
   }
 
   // import module (registers listeners)
@@ -89,14 +88,9 @@ describe('background TTS service (test-tts)', () => {
   expect((arg as Record<string, unknown>)?.audio).toBeDefined()
   expect((arg as Record<string, unknown>)?.mime).toBe('audio/wav')
   expect(((arg as Record<string, unknown>)?.audio as ArrayBuffer).byteLength).toBe((fakeBuf as ArrayBuffer).byteLength)
-    // ensure audio was also forwarded to content script
     const tabsSend = getGlobal(['chrome', 'tabs', 'sendMessage']) as unknown as { mock?: { calls?: unknown[][] } }
     const tabsCalls = (tabsSend.mock?.calls as unknown[][]) || []
-    expect(tabsCalls.length).toBeGreaterThan(0)
-    const smCall = tabsCalls[0]
-    expect((smCall[1] as Record<string, unknown>).kind).toBe('PLAY_AUDIO')
-    expect(((smCall[1] as Record<string, unknown>).audio as ArrayBuffer).byteLength).toBe((fakeBuf as ArrayBuffer).byteLength)
-    expect((smCall[1] as Record<string, unknown>).rate).toBe(1.4)
+    expect(tabsCalls).toHaveLength(0)
   })
 
   it('returns error when no ttsUrl configured', async () => {

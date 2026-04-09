@@ -621,19 +621,7 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
           }
           const contentType = resp.headers.get('content-type') || 'audio/wav'
           const buf = await resp.arrayBuffer()
-          const tab = await getActiveHttpTab()
           if (DEBUG) console.debug('[readit][DBG] test-tts fetched', { contentType, prefixHex: prefixHexFromBuffer(buf) })
-          if (tab && tab.id) {
-            try {
-              // Forward the raw ArrayBuffer to the content script so it can
-              // perform structured-clone playback. Tests expect the forwarded
-              // audio to be an ArrayBuffer with the same byteLength.
-              await chrome.tabs.sendMessage(tab.id, { kind: 'PLAY_AUDIO', audio: buf, mime: contentType, rate: getCurrentPlaybackRate() })
-              console.debug('[readit] test-tts: forwarded ArrayBuffer audio to content script')
-            } catch (err) {
-              console.warn('[readit] test-tts: failed to send audio to content script', err)
-            }
-          }
           sendResponse({ ok: true, audio: buf, mime: contentType })
           return
         } catch (err) {
