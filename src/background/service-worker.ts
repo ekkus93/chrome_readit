@@ -110,7 +110,7 @@ const MAX_CHUNK_CHARS = 400
 // Allow tests to override the chunk timeout via globalThis.__CHUNK_TIMEOUT_MS
 const CHUNK_TIMEOUT_MS = ((globalThis as unknown as { __CHUNK_TIMEOUT_MS?: number }).__CHUNK_TIMEOUT_MS) ?? 60_000 // default 1 minute
 const DEFAULT_CHUNK_GAP_MS = ((globalThis as unknown as { __CHUNK_GAP_MS?: number }).__CHUNK_GAP_MS) ?? 150
-const PARAGRAPH_CHUNK_GAP_MS = ((globalThis as unknown as { __CHUNK_PARAGRAPH_GAP_MS?: number }).__CHUNK_PARAGRAPH_GAP_MS) ?? 400
+const PARAGRAPH_CHUNK_GAP_MS = ((globalThis as unknown as { __CHUNK_PARAGRAPH_GAP_MS?: number }).__CHUNK_PARAGRAPH_GAP_MS) ?? 700
 
 type PlaybackChunk = {
   text: string
@@ -221,6 +221,7 @@ function waitForPlaybackAck(token: string): Promise<{ ok: boolean; error?: strin
 export const __testing = {
   waitForPlaybackAck,
   resolvePendingPlaybackAck,
+  splitTextIntoChunks,
   resetPlaybackAckState() {
     if (pendingPlaybackAck) {
       clearTimeout(pendingPlaybackAck.timeoutId)
@@ -240,17 +241,21 @@ function splitTextIntoChunks(text: string, maxLen = MAX_CHUNK_CHARS): PlaybackCh
     const slice = remaining.slice(0, maxLen)
     const boundary = Math.max(slice.lastIndexOf('.'), slice.lastIndexOf('!'), slice.lastIndexOf('?'), slice.lastIndexOf('\n'), slice.lastIndexOf(';'))
     let cut = boundary >= 0 ? boundary + 1 : boundary
-    let gapAfterMs = DEFAULT_CHUNK_GAP_MS
-    if (boundary >= 0) {
-      gapAfterMs = slice[boundary] === '\n' ? PARAGRAPH_CHUNK_GAP_MS : DEFAULT_CHUNK_GAP_MS
-    }
     if (cut <= 0) {
       const ws = slice.lastIndexOf(' ')
       cut = ws > 0 ? ws : maxLen
     }
+    let separatorEnd = cut
+    while (separatorEnd < remaining.length && /\s/.test(remaining[separatorEnd])) {
+      separatorEnd += 1
+    }
+    const separatorContext = remaining.slice(Math.max(0, cut - 2), separatorEnd)
+    const gapAfterMs = /\n\s*\n/.test(separatorContext)
+      ? PARAGRAPH_CHUNK_GAP_MS
+      : DEFAULT_CHUNK_GAP_MS
     const part = remaining.slice(0, cut).trim()
     if (part) out.push({ text: part, gapAfterMs })
-    remaining = remaining.slice(cut).trim()
+    remaining = remaining.slice(separatorEnd).trim()
   }
   return out
 }

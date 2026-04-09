@@ -198,4 +198,20 @@ describe('background.sendToActiveTabOrInject', () => {
     await expect(secondAck).resolves.toMatchObject({ ok: true })
     mod.__testing.resetPlaybackAckState()
   })
+
+  it('marks paragraph-separated chunks with the paragraph gap', async () => {
+    const mod = await import('./service-worker')
+
+    const chunks = mod.__testing.splitTextIntoChunks('First paragraph ends here.\n\nNext starts here.', 40)
+
+    expect(chunks).toHaveLength(2)
+    expect(chunks[0]).toMatchObject({
+      text: 'First paragraph ends here.',
+      gapAfterMs: 700,
+    })
+    expect(chunks[1]).toMatchObject({
+      text: 'Next starts here.',
+      gapAfterMs: 150,
+    })
+  })
 })
