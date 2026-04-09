@@ -107,10 +107,10 @@ function prefixHexFromBuffer(buf: ArrayBuffer | null | undefined, len = 32) {
 const MAX_CHUNK_CHARS = 400
 // Allow tests to override the chunk timeout via globalThis.__CHUNK_TIMEOUT_MS
 const CHUNK_TIMEOUT_MS = ((globalThis as unknown as { __CHUNK_TIMEOUT_MS?: number }).__CHUNK_TIMEOUT_MS) ?? 60_000 // default 1 minute
-const PREFETCH_COUNT = 2 // how many chunks to fetch ahead of playback
 
 type PlaybackSession = {
   id: number
+  requestId: number
   tabId: number
   cancelRequested: boolean
   paused: boolean
@@ -120,14 +120,25 @@ type PlaybackSession = {
 
 let nextSessionId = 1
 let activeSession: PlaybackSession | null = null
+let latestPlaybackRequestId = 0
+let pendingPlaybackAck: {
+  token: string
+  resolve: (result: { ok: boolean; error?: string }) => void
+  timeoutId: ReturnType<typeof setTimeout>
+} | null = null
 
 function isSessionActive(sessionId: number): boolean {
   return activeSession?.id === sessionId
 }
 
-function createPlaybackSession(tabId: number, chunks: string[]): PlaybackSession {
+function isLatestPlaybackRequest(requestId: number): boolean {
+  return requestId === latestPlaybackRequestId
+}
+
+function createPlaybackSession(requestId: number, tabId: number, chunks: string[]): PlaybackSession {
   return {
     id: nextSessionId++,
+    requestId,
     tabId,
     cancelRequested: false,
     paused: false,
@@ -153,7 +164,42 @@ async function cancelPlaybackSession(session: PlaybackSession | null): Promise<v
   session.cancelRequested = true
   session.paused = false
   if (isSessionActive(session.id)) activeSession = null
+  if (pendingPlaybackAck?.token.startsWith(`${session.id}:`)) {
+    clearTimeout(pendingPlaybackAck.timeoutId)
+    const { resolve } = pendingPlaybackAck
+    pendingPlaybackAck = null
+    resolve({ ok: false, error: 'cancelled' })
+  }
   await stopSessionPlayback(session.tabId)
+}
+
+function createPlaybackToken(sessionId: number, chunkIndex: number): string {
+  return `${sessionId}:${chunkIndex}`
+}
+
+function resolvePendingPlaybackAck(token: string, result: { ok: boolean; error?: string }): boolean {
+  if (!pendingPlaybackAck || pendingPlaybackAck.token !== token) return false
+  clearTimeout(pendingPlaybackAck.timeoutId)
+  const { resolve } = pendingPlaybackAck
+  pendingPlaybackAck = null
+  resolve(result)
+  return true
+}
+
+function waitForPlaybackAck(token: string): Promise<{ ok: boolean; error?: string }> {
+  if (pendingPlaybackAck) {
+    throw new Error(`playback ack already pending for ${pendingPlaybackAck.token}`)
+  }
+
+  return new Promise((resolve) => {
+    const timeoutId = setTimeout(() => {
+      if (!pendingPlaybackAck || pendingPlaybackAck.token !== token) return
+      pendingPlaybackAck = null
+      resolve({ ok: false, error: 'playback acknowledgement timeout' })
+    }, CHUNK_TIMEOUT_MS)
+
+    pendingPlaybackAck = { token, resolve, timeoutId }
+  })
 }
 
 function splitTextIntoChunks(text: string, maxLen = MAX_CHUNK_CHARS): string[] {
@@ -201,102 +247,71 @@ async function fetchTtsAudio(text: string, voice?: string): Promise<{ b64: strin
 }
 
 async function processChunksSequentially(session: PlaybackSession, voice?: string) {
-  // Producer-consumer: fetch audio for chunks ahead of playback
   const sessionId = session.id
+  const requestId = session.requestId
   const { tabId, chunks } = session
-
-  const audioMap = new Map<number, { b64: string; mime: string }>()
-  let nextFetchIndex = 0
-  let nextSendIndex = 0
-  let producerDone = false
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-  const producer = async () => {
-    try {
-      while (nextFetchIndex < chunks.length && isSessionActive(sessionId) && !session.cancelRequested) {
-        // Pause fetching while paused to respect user intent
-        while (session.paused && isSessionActive(sessionId) && !session.cancelRequested) await sleep(200)
-        if (!isSessionActive(sessionId) || session.cancelRequested) break
+  try {
+    let nextEntryPromise: Promise<{ b64: string; mime: string } | null> | null = fetchTtsAudio(chunks[0], voice)
 
-        // Don't prefetch beyond the configured window
-        if (audioMap.size >= PREFETCH_COUNT) {
-          await sleep(100)
-          continue
-        }
+    for (let chunkIndex = 0; chunkIndex < chunks.length && isSessionActive(sessionId) && isLatestPlaybackRequest(requestId) && !session.cancelRequested; chunkIndex += 1) {
+      session.currentIndex = chunkIndex
 
-        const i = nextFetchIndex
-        nextFetchIndex++
-        const fetched = await fetchTtsAudio(chunks[i], voice)
-        if (!fetched) {
-          console.warn('[readit] failed to fetch chunk', i)
-          // Abort the whole pipeline on fetch failure
-          session.cancelRequested = true
-          break
-        }
-        if (!isSessionActive(sessionId) || session.cancelRequested) break
-        audioMap.set(i, fetched)
+      while (session.paused && isSessionActive(sessionId) && isLatestPlaybackRequest(requestId) && !session.cancelRequested) await sleep(200)
+      if (!isSessionActive(sessionId) || !isLatestPlaybackRequest(requestId) || session.cancelRequested) break
+
+      const entry = await nextEntryPromise
+      if (!entry) {
+        console.warn('[readit] failed to fetch chunk', chunkIndex)
+        session.cancelRequested = true
+        break
       }
-    } catch (err) {
-      console.warn('[readit] producer failed', err)
-      session.cancelRequested = true
-    } finally {
-      producerDone = true
-    }
-  }
+      if (!isSessionActive(sessionId) || !isLatestPlaybackRequest(requestId) || session.cancelRequested) break
 
-  const consumer = async () => {
-    try {
-      while (nextSendIndex < chunks.length && isSessionActive(sessionId) && !session.cancelRequested) {
-        session.currentIndex = nextSendIndex
+      nextEntryPromise = chunkIndex + 1 < chunks.length
+        ? fetchTtsAudio(chunks[chunkIndex + 1], voice)
+        : null
 
-        // Wait for the audio to be available (or for producer to finish)
-        while (!audioMap.has(nextSendIndex) && !producerDone && isSessionActive(sessionId) && !session.cancelRequested) {
-          await sleep(100)
-          // If paused, wait until resumed
-          while (session.paused && isSessionActive(sessionId) && !session.cancelRequested) await sleep(200)
+      const playbackRate = getCurrentPlaybackRate()
+      const playbackToken = createPlaybackToken(sessionId, chunkIndex)
+      const ackPromise = waitForPlaybackAck(playbackToken)
+
+      try {
+        const sendResult = await sendTabMessageWithBootstrap(tabId, {
+          kind: 'PLAY_AUDIO',
+          audio: entry.b64,
+          mime: entry.mime,
+          rate: playbackRate,
+          playbackToken,
+        })
+
+        if (sendResult && typeof sendResult === 'object' && sendResult !== null && 'ok' in (sendResult as Record<string, unknown>)) {
+          resolvePendingPlaybackAck(playbackToken, {
+            ok: Boolean((sendResult as Record<string, unknown>).ok),
+            error: typeof (sendResult as Record<string, unknown>).error === 'string'
+              ? String((sendResult as Record<string, unknown>).error)
+              : undefined,
+          })
         }
-        if (!isSessionActive(sessionId) || session.cancelRequested) break
-
-        const entry = audioMap.get(nextSendIndex)
-        if (!entry) {
-          // No audio available (producer finished or failed). Abort.
-          console.warn('[readit] no audio available for chunk', nextSendIndex)
-          session.cancelRequested = true
-          break
-        }
-
-        // Send to content script and wait for ack or timeout
-        const playbackRate = getCurrentPlaybackRate()
-          try {
-                  // Try the normal content-script path first. If the tab has a
-                  // content script registered and listening this will resolve.
-                  const sendPromise = (async () => {
-                    return await sendTabMessageWithBootstrap(tabId, { kind: 'PLAY_AUDIO', audio: entry.b64, mime: entry.mime, rate: playbackRate })
-                  })()
-                  const timeout = new Promise((res) => setTimeout(() => res({ timeout: true }), CHUNK_TIMEOUT_MS))
-                  const res = await Promise.race([sendPromise, timeout])
-                  if (res && typeof res === 'object' && res !== null && 'timeout' in (res as Record<string, unknown>) && (res as Record<string, unknown>).timeout) console.warn('[readit] chunk ack timeout; proceeding')
-                } catch (err) {
-                  console.warn('[readit] send chunk failed after playback bridge bootstrap', err)
-                  session.cancelRequested = true
-                  break
-                }
-
-        // Free memory for this chunk and move to next
-        audioMap.delete(nextSendIndex)
-        nextSendIndex++
+      } catch (err) {
+        resolvePendingPlaybackAck(playbackToken, { ok: false, error: String(err) })
       }
-    } catch (err) {
-      console.warn('[readit] consumer failed', err)
-      session.cancelRequested = true
-    }
-  }
 
-  // Start both concurrently and wait for completion
-  const prod = producer()
-  const cons = consumer()
-  await Promise.all([prod, cons])
+      const ack = await ackPromise
+      if (!ack.ok) {
+        if (!session.cancelRequested) {
+          console.warn('[readit] playback acknowledgement failed', ack.error)
+          session.cancelRequested = true
+        }
+        break
+      }
+    }
+  } catch (err) {
+    console.warn('[readit] processChunksSequentially failed', err)
+    session.cancelRequested = true
+  }
 
   if (session.cancelRequested && isSessionActive(sessionId)) {
     await stopSessionPlayback(tabId)
@@ -306,6 +321,7 @@ async function processChunksSequentially(session: PlaybackSession, voice?: strin
 
 export async function sendToActiveTabOrInject(msg: Msg) {
   try {
+    const playbackRequestId = ++latestPlaybackRequestId
     const s = await getSettings()
     cachedPlaybackRate = clampPlaybackRate(s.rate, cachedPlaybackRate)
     let textArg: string | null = null
@@ -327,8 +343,10 @@ export async function sendToActiveTabOrInject(msg: Msg) {
     if (!textArg || !s.ttsUrl) return
 
     const tab = await requireActivePlaybackTab()
+    if (playbackRequestId !== latestPlaybackRequestId) return
     await cancelPlaybackSession(activeSession)
-    const session = createPlaybackSession(tab.id, splitTextIntoChunks(textArg, MAX_CHUNK_CHARS))
+    if (playbackRequestId !== latestPlaybackRequestId) return
+    const session = createPlaybackSession(playbackRequestId, tab.id, splitTextIntoChunks(textArg, MAX_CHUNK_CHARS))
     activeSession = session
     await processChunksSequentially(session, s.voice)
   } catch (err) { console.warn('[readit] sendToActiveTabOrInject failed', err) }
@@ -398,6 +416,14 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
             sendResponse({ ok: resp.ok, status: resp.status })
           } catch (err) { sendResponse({ ok: false, error: String(err) }) }
         })()
+        return true
+      }
+      if (anyReq.kind === 'PLAYBACK_FINISHED' && typeof anyReq.playbackToken === 'string') {
+        resolvePendingPlaybackAck(anyReq.playbackToken, {
+          ok: Boolean(anyReq.ok),
+          error: typeof anyReq.error === 'string' ? anyReq.error : undefined,
+        })
+        sendResponse({ ok: true })
         return true
       }
     }

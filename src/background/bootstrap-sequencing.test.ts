@@ -49,10 +49,10 @@ describe('background bootstrap sequencing', () => {
       if (playAttempt === 1) return Promise.reject(new Error('no content script'))
       if (playAttempt === 2) {
         return new Promise((resolve) => {
-          resolveRetriedFirstChunk = () => resolve(undefined)
+          resolveRetriedFirstChunk = () => resolve({ ok: true })
         })
       }
-      return Promise.resolve(undefined)
+      return Promise.resolve({ ok: true })
     })
 
     const mod = await import('./service-worker')

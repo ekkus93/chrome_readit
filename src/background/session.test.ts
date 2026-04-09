@@ -44,8 +44,9 @@ describe('background playback sessions', () => {
     chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: { kind: string }) => {
       if (message.kind === 'PLAY_AUDIO' && !firstPlaybackResolved) {
         firstPlaybackResolved = true
-        return new Promise((resolve) => setTimeout(() => resolve(undefined), 40))
+        return new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 40))
       }
+      if (message.kind === 'PLAY_AUDIO') return Promise.resolve({ ok: true })
       return Promise.resolve(undefined)
     })
 
@@ -82,7 +83,10 @@ describe('background playback sessions', () => {
     }))
 
     const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { tabs: { sendMessage: ReturnType<typeof vi.fn> } }
-    chromeObj.tabs.sendMessage.mockResolvedValue(undefined)
+    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: { kind: string }) => {
+      if (message.kind === 'PLAY_AUDIO') return Promise.resolve({ ok: true })
+      return Promise.resolve(undefined)
+    })
 
     const mod = await import('./service-worker')
 
@@ -98,7 +102,9 @@ describe('background playback sessions', () => {
     await Promise.all([first, second])
 
     const playCalls = chromeObj.tabs.sendMessage.mock.calls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO')
-    expect(playCalls).toHaveLength(1)
+    const playbackTokens = playCalls.map(([, payload]) => String((payload as Record<string, unknown>).playbackToken ?? ''))
+    expect(playbackTokens).not.toContain('1:0')
+    expect(playbackTokens).toContain('2:0')
   })
 
   it('reports only the current active session through speech-status', async () => {
@@ -113,7 +119,7 @@ describe('background playback sessions', () => {
     chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: { kind: string }) => {
       if (message.kind === 'PLAY_AUDIO') {
         return new Promise((resolve) => {
-          releasePlayback = () => resolve(undefined)
+          releasePlayback = () => resolve({ ok: true })
         })
       }
       return Promise.resolve(undefined)

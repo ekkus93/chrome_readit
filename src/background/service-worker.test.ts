@@ -24,6 +24,7 @@ describe('background.sendToActiveTabOrInject', () => {
   }
 
   beforeEach(() => {
+    vi.resetModules()
     vi.resetAllMocks()
     vi.mocked(getSettings).mockResolvedValue({ voice: 'V', rate: 1.0, ttsUrl: 'http://localhost/tts' })
 
@@ -57,7 +58,10 @@ describe('background.sendToActiveTabOrInject', () => {
     // Arrange
     const g = globalThis as unknown as { chrome: ChromeMock }
     ;(g.chrome.tabs.query as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.([{ id: 123, url: 'https://example.com' }])
-    ;(g.chrome.tabs.sendMessage as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.(undefined)
+    ;(g.chrome.tabs.sendMessage as unknown as { mockImplementation?: (fn: (...args: unknown[]) => unknown) => void }).mockImplementation?.((_: unknown, payload: Record<string, unknown>) => {
+      if (payload.kind === 'PLAY_AUDIO') return Promise.resolve({ ok: true })
+      return Promise.resolve(undefined)
+    })
     ;(g.chrome.scripting.executeScript as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.([{ result: 'selected text' }])
     const mockedGetSettings = vi.mocked(getSettings)
     mockedGetSettings.mockResolvedValue({ voice: 'V', rate: 1.0, ttsUrl: 'http://localhost/tts' })
@@ -87,7 +91,10 @@ describe('background.sendToActiveTabOrInject', () => {
     const g = globalThis as unknown as { chrome: ChromeMock }
     ;(g.chrome.tabs.query as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.([{ id: 55, url: 'https://example.com' }])
     ;(g.chrome.tabs.sendMessage as unknown as { mockRejectedValueOnce?: (e: unknown) => void; mockResolvedValue?: (v: unknown) => void }).mockRejectedValueOnce?.(new Error('no content script'))
-    ;(g.chrome.tabs.sendMessage as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.(undefined)
+    ;(g.chrome.tabs.sendMessage as unknown as { mockImplementation?: (fn: (...args: unknown[]) => unknown) => void }).mockImplementation?.((_: unknown, payload: Record<string, unknown>) => {
+      if (payload.kind === 'PLAY_AUDIO') return Promise.resolve({ ok: true })
+      return Promise.resolve(undefined)
+    })
     ;(g.chrome.scripting.executeScript as unknown as { mockResolvedValue?: (v: unknown) => void }).mockResolvedValue?.(undefined)
     const mockedGetSettings2 = vi.mocked(getSettings)
     mockedGetSettings2.mockResolvedValue({ voice: 'V', rate: 1.5, ttsUrl: 'http://localhost/tts' })

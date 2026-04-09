@@ -322,7 +322,7 @@ describe('PlaybackController', () => {
     playback.stop()
     const r1 = await p1
     expect(r1.ok).toBe(false)
-    expect(r1.error).toBe('webaudio-unavailable')
+    expect(r1.error).toBe('stopped')
 
     // Now install a fresh Audio mock for the next play that will succeed
     let secondListeners: Record<string, Array<(...args: unknown[]) => void>> = {}
@@ -348,6 +348,38 @@ describe('PlaybackController', () => {
     if (secondListeners['ended'] && secondListeners['ended'][0]) secondListeners['ended'][0]()
     const r2 = await p2
     expect(r2.ok).toBe(true)
+  })
+
+  it('ignores stale ended events from a stopped audio instance', async () => {
+    const audioListeners: Array<Record<string, Array<(...args: unknown[]) => void>>> = []
+    vi.stubGlobal('Audio', function () {
+      const evs: Record<string, Array<(...args: unknown[]) => void>> = {}
+      audioListeners.push(evs)
+      return {
+        addEventListener: (ev: string, cb: (...args: unknown[]) => void) => {
+          evs[ev] = evs[ev] || []
+          evs[ev].push(cb)
+        },
+        play: () => Promise.resolve(),
+        pause: () => {},
+        src: '',
+        autoplay: false,
+        playbackRate: 1,
+      } as unknown
+    } as unknown)
+
+    const playback = new PlaybackController()
+    const buf = new Uint8Array([1, 2, 3]).buffer
+
+    const firstPromise = playback.playArrayBuffer(buf, 'audio/wav')
+    playback.stop()
+    const secondPromise = playback.playArrayBuffer(buf, 'audio/wav')
+
+    audioListeners[0]?.ended?.[0]?.()
+    audioListeners[1]?.ended?.[0]?.()
+
+    await expect(firstPromise).resolves.toMatchObject({ ok: false, error: 'stopped' })
+    await expect(secondPromise).resolves.toMatchObject({ ok: true })
   })
 
   it('setPlaybackRate updates current HTMLAudio playback speed', async () => {

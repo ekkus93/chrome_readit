@@ -20,8 +20,13 @@ describe('chunk timeout behavior', () => {
     const chromeObj = {
       tabs: {
         query: vi.fn(() => Promise.resolve([{ id: 301, url: 'https://example.com' }])),
-        // make sendMessage slow: resolves after 200ms (longer than our 50ms timeout)
-        sendMessage: vi.fn((...args: unknown[]) => { void args; return new Promise((res) => setTimeout(() => res(undefined), 200)) })
+        // make PLAY_AUDIO never resolve with a completion ack
+        sendMessage: vi.fn((_: unknown, payload: Record<string, unknown>) => {
+          if (payload.kind === 'PLAY_AUDIO') {
+            return new Promise((res) => setTimeout(() => res(undefined), 200))
+          }
+          return Promise.resolve(undefined)
+        })
       },
       scripting: { executeScript: vi.fn() },
       commands: { onCommand: { addListener: vi.fn() } },
@@ -31,7 +36,7 @@ describe('chunk timeout behavior', () => {
     ;(globalThis as unknown as Record<string, unknown>).chrome = chromeObj
   })
 
-  it('proceeds after chunk ack timeout and sends subsequent chunks', async () => {
+  it('stops instead of advancing when playback completion is never acknowledged', async () => {
     // make a long text that will be split into multiple chunks
     const base = 'Sentence one. Sentence two. Sentence three. Sentence four. Sentence five.'
     const long = Array(50).fill(base).join(' ')
@@ -56,8 +61,8 @@ describe('chunk timeout behavior', () => {
     // we should have fetched multiple chunks
     expect(fetched.length).toBeGreaterThanOrEqual(2)
 
-    // chrome.tabs.sendMessage should have been called at least once per fetched chunk
-    const calls = (((globalThis as unknown as Record<string, unknown>).chrome as unknown as { tabs: { sendMessage?: { mock?: { calls?: unknown[][] } } } }).tabs.sendMessage?.mock?.calls?.length) ?? 0
-    expect(calls).toBeGreaterThanOrEqual(fetched.length)
+    const sendCalls = ((((globalThis as unknown as Record<string, unknown>).chrome as unknown as { tabs: { sendMessage?: { mock?: { calls?: unknown[][] } } } }).tabs.sendMessage?.mock?.calls) ?? [])
+    const playCalls = sendCalls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO')
+    expect(playCalls).toHaveLength(1)
   })
 })

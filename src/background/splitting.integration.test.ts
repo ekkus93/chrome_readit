@@ -25,7 +25,10 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
       runtime: { onMessage: { addListener: (...args: unknown[]) => unknown }, onInstalled: { addListener: (...args: unknown[]) => unknown }, sendMessage: (...args: unknown[]) => unknown }
       contextMenus: { create: (...args: unknown[]) => unknown, onClicked: { addListener: (...args: unknown[]) => unknown } }
     }
-    sendMessageMock = vi.fn().mockResolvedValue(undefined)
+    sendMessageMock = vi.fn().mockImplementation((_: unknown, payload: Record<string, unknown>) => {
+      if (payload.kind === 'PLAY_AUDIO') return Promise.resolve({ ok: true })
+      return Promise.resolve(undefined)
+    })
     executeScriptMock = vi.fn().mockResolvedValue([{ result: true }])
 
     const chromeObj = {
