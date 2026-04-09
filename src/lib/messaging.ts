@@ -1,7 +1,21 @@
+export type PlayAudioMsg = {
+  kind: 'PLAY_AUDIO'
+  audio: ArrayBuffer | string
+  mime?: string
+  rate?: number
+  playbackToken?: string
+}
+
+export type PlaybackControlRequest =
+  | { kind: 'SPEECH_STATUS' }
+  | { kind: 'PAUSE_SPEECH' }
+  | { kind: 'RESUME_SPEECH' }
+  | { kind: 'CANCEL_SPEECH' }
+
 export type Msg =
   | { kind: 'READ_SELECTION' }
   | { kind: 'READ_TEXT'; text: string }
-  | { kind: 'PLAY_AUDIO'; audio: ArrayBuffer | string; mime?: string }
+  | PlayAudioMsg
 
 export function sendToContent(tabId: number, msg: Msg) {
   return chrome.tabs.sendMessage(tabId, msg)
@@ -27,7 +41,7 @@ export function isMsg(m: unknown): m is Msg {
   return isReadSelection(m) || isReadText(m) || isPlayAudio(m)
 }
 
-export function isPlayAudio(m: unknown): m is { kind: 'PLAY_AUDIO'; audio: ArrayBuffer | string; mime?: string } {
+export function isPlayAudio(m: unknown): m is PlayAudioMsg {
   return (
     typeof m === 'object' &&
     m !== null &&

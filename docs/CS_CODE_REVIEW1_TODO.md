@@ -194,16 +194,16 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 # Phase 5 — Normalize message contracts and types
 
-**Status:** Pending
+**Status:** Done
 
 ## Task 5.1 — Extend the `PLAY_AUDIO` message type
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Update `src/lib/messaging.ts` so the `PLAY_AUDIO` variant includes the fields actually sent at runtime, including `rate` and `playbackToken`.
-- [ ] Update `isPlayAudio()` and related type guards if needed so the runtime checks still reflect the contract correctly.
-- [ ] Remove unnecessary `Record<string, unknown>` casts at call sites that only exist because the type is incomplete.
+- [x] Update `src/lib/messaging.ts` so the `PLAY_AUDIO` variant includes the fields actually sent at runtime, including `rate` and `playbackToken`.
+- [x] Update `isPlayAudio()` and related type guards if needed so the runtime checks still reflect the contract correctly.
+- [x] Remove unnecessary `Record<string, unknown>` casts at call sites that only exist because the type is incomplete.
 
 ### Acceptance criteria
 - Message producers and consumers share one accurate `PLAY_AUDIO` contract.
@@ -213,13 +213,13 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 ## Task 5.2 — Standardize control-message naming
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Choose the canonical control message shape for pause, resume, cancel, and status requests.
-- [ ] Update runtime handlers, popup callers, options callers, and any tests to use the canonical form consistently.
-- [ ] Remove legacy alias branches once all callers are migrated.
-- [ ] Keep any externally visible message names consistent with existing MV3 extension architecture.
+- [x] Choose the canonical control message shape for pause, resume, cancel, and status requests.
+- [x] Update runtime handlers, popup callers, options callers, and any tests to use the canonical form consistently.
+- [x] Remove legacy alias branches once all callers are migrated.
+- [x] Keep any externally visible message names consistent with existing MV3 extension architecture.
 
 ### Acceptance criteria
 - The codebase no longer mixes `action: 'pause-speech'` and `kind: 'PAUSE_SPEECH'` style conventions for the same control surface.
@@ -229,12 +229,12 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 ## Task 5.3 — Verify cross-context message compatibility after normalization
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Audit popup, options, background, and content modules for message construction and handling.
-- [ ] Update tests that assert message shapes.
-- [ ] Confirm no manifest or MV3 context requires a compatibility shim for old internal message names.
+- [x] Audit popup, options, background, and content modules for message construction and handling.
+- [x] Update tests that assert message shapes.
+- [x] Confirm no manifest or MV3 context requires a compatibility shim for old internal message names.
 
 ### Acceptance criteria
 - All extension contexts agree on the same message schema.

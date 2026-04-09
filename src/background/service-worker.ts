@@ -66,6 +66,10 @@ function getCurrentPlaybackRate(): number {
   return cachedPlaybackRate
 }
 
+function isControlRequest(anyReq: Record<string, unknown>, kind: 'SPEECH_STATUS' | 'CANCEL_SPEECH' | 'PAUSE_SPEECH' | 'RESUME_SPEECH'): boolean {
+  return anyReq.kind === kind
+}
+
 async function primePlaybackRateCache() {
   try {
     const initial = await getSettings()
@@ -405,16 +409,16 @@ export async function sendToActiveTabOrInject(msg: Msg) {
 // Runtime message handlers: control the queue and expose status to the popup
 chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
   try {
-    // control messages are simple objects like { action: 'pause' } or
-    // typed Msg objects coming from the popup.
-    if (req && typeof req === 'object') {
-      const anyReq = req as unknown as Record<string, unknown>
-      if (anyReq.action === 'speech-status' || anyReq.kind === 'speech-status') {
+      // control messages are simple objects like { action: 'pause' } or
+      // typed Msg objects coming from the popup.
+      if (req && typeof req === 'object') {
+        const anyReq = req as unknown as Record<string, unknown>
+      if (isControlRequest(anyReq, 'SPEECH_STATUS')) {
         const state = activeSession ? (activeSession.cancelRequested ? 'cancelled' : activeSession.paused ? 'paused' : 'playing') : 'idle'
         sendResponse({ ok: true, state, current: activeSession ? activeSession.currentIndex + 1 : 0, total: activeSession ? activeSession.chunks.length : 0 })
         return true
       }
-      if (anyReq.action === 'cancel-speech' || anyReq.kind === 'cancel-speech') {
+      if (isControlRequest(anyReq, 'CANCEL_SPEECH')) {
         ;(async () => {
           if (activeSession) {
             await cancelPlaybackSession(activeSession)
@@ -430,7 +434,7 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
         sendResponse({ ok: true })
         return true
       }
-      if (anyReq.action === 'pause-speech' || anyReq.kind === 'pause-speech') {
+      if (isControlRequest(anyReq, 'PAUSE_SPEECH')) {
         ;(async () => {
           try {
             if (activeSession) activeSession.paused = true
@@ -441,7 +445,7 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
         sendResponse({ ok: true })
         return true
       }
-      if (anyReq.action === 'resume-speech' || anyReq.kind === 'resume-speech') {
+      if (isControlRequest(anyReq, 'RESUME_SPEECH')) {
         ;(async () => {
           try {
             if (activeSession) activeSession.paused = false

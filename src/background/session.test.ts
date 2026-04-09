@@ -162,7 +162,7 @@ describe('background playback sessions', () => {
     const runtimeHandlers = chromeObj.runtime.onMessage.addListener.mock.calls
     const statusHandler = runtimeHandlers[0]?.[0] as (msg: unknown, sender: unknown, sendResponse: (value: unknown) => void) => void
     const sendResponse = vi.fn()
-    statusHandler({ action: 'speech-status' }, null, sendResponse)
+    statusHandler({ kind: 'SPEECH_STATUS' }, null, sendResponse)
 
     expect(sendResponse).toHaveBeenCalledWith({ ok: true, state: 'playing', current: 1, total: 1 })
     releasePlayback?.()

@@ -51,9 +51,9 @@ describe('Popup playback control buttons', () => {
     const runtimeSend = getGlobal(['chrome', 'runtime', 'sendMessage']) as unknown as { mock?: { calls?: unknown[][] } }
     const calls = (runtimeSend.mock?.calls as unknown[][]) || []
     expect(calls.length).toBeGreaterThan(0)
-    expect(calls.some((c) => (c[0] as Record<string, unknown>)?.action === 'pause-speech')).toBeTruthy()
-    expect(calls.some((c) => (c[0] as Record<string, unknown>)?.action === 'resume-speech')).toBeTruthy()
-    expect(calls.some((c) => (c[0] as Record<string, unknown>)?.action === 'cancel-speech')).toBeTruthy()
+    expect(calls.some((c) => (c[0] as Record<string, unknown>)?.kind === 'PAUSE_SPEECH')).toBeTruthy()
+    expect(calls.some((c) => (c[0] as Record<string, unknown>)?.kind === 'RESUME_SPEECH')).toBeTruthy()
+    expect(calls.some((c) => (c[0] as Record<string, unknown>)?.kind === 'CANCEL_SPEECH')).toBeTruthy()
   })
 
   it('updates and persists speech rate changes', async () => {

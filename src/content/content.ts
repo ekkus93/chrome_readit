@@ -91,10 +91,8 @@ if (bridgeState.initialized) {
         console.debug('[readit] content PLAY_AUDIO: received audio message', { mime: msg.mime, audioType: typeof msg.audio, audioLength: typeof msg.audio === 'string' ? msg.audio.length : (msg.audio as ArrayBuffer)?.byteLength })
         try {
           const mime = msg.mime ?? 'audio/wav'
-          const playbackToken = typeof (msg as Record<string, unknown>).playbackToken === 'string'
-            ? String((msg as Record<string, unknown>).playbackToken)
-            : null
-          if (typeof (msg as Record<string, unknown>).rate === 'number') applyPlaybackRate((msg as Record<string, unknown>).rate)
+          const playbackToken = typeof msg.playbackToken === 'string' ? msg.playbackToken : null
+          if (typeof msg.rate === 'number') applyPlaybackRate(msg.rate)
 
           const notifyPlaybackFinished = (result: { ok: boolean; error?: string }) => {
             if (!playbackToken) return

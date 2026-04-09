@@ -52,13 +52,13 @@ export default function Options() {
   // UI controls to pause/resume/cancel in-page playback (sends messages
   // to the background which will notify the active tab/content script).
   async function handlePause() {
-    try { chrome.runtime.sendMessage({ action: 'pause-speech' }, () => {}) } catch (e) { console.warn('readit: pause failed', e); void e }
+    try { chrome.runtime.sendMessage({ kind: 'PAUSE_SPEECH' }, () => {}) } catch (e) { console.warn('readit: pause failed', e); void e }
   }
   async function handleResume() {
-    try { chrome.runtime.sendMessage({ action: 'resume-speech' }, () => {}) } catch (e) { console.warn('readit: resume failed', e); void e }
+    try { chrome.runtime.sendMessage({ kind: 'RESUME_SPEECH' }, () => {}) } catch (e) { console.warn('readit: resume failed', e); void e }
   }
   async function handleCancel() {
-    try { chrome.runtime.sendMessage({ action: 'cancel-speech' }, () => {}) } catch (e) { console.warn('readit: cancel failed', e); void e }
+    try { chrome.runtime.sendMessage({ kind: 'CANCEL_SPEECH' }, () => {}) } catch (e) { console.warn('readit: cancel failed', e); void e }
   }
 
   // Browser speechSynthesis fallback removed — extension now requires the

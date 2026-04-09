@@ -40,7 +40,7 @@ describe('background control forwarding', () => {
     const sendResp = vi.fn()
 
     // Pause
-    registered({ action: 'pause-speech' }, null, sendResp)
+    registered({ kind: 'PAUSE_SPEECH' }, null, sendResp)
     // allow the async forwarder to run
     await new Promise((r) => setTimeout(r, 0))
     expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(500, { kind: 'PAUSE_SPEECH' })
@@ -49,7 +49,7 @@ describe('background control forwarding', () => {
     // Resume
     ;(chrome.tabs.sendMessage as unknown as { mockClear?: () => void }).mockClear?.()
     sendResp.mockClear()
-    registered({ action: 'resume-speech' }, null, sendResp)
+    registered({ kind: 'RESUME_SPEECH' }, null, sendResp)
     await new Promise((r) => setTimeout(r, 0))
     expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(500, { kind: 'RESUME_SPEECH' })
     expect(sendResp).toHaveBeenCalledWith({ ok: true })
@@ -57,7 +57,7 @@ describe('background control forwarding', () => {
     // Cancel
     ;(chrome.tabs.sendMessage as unknown as { mockClear?: () => void }).mockClear?.()
     sendResp.mockClear()
-    registered({ action: 'cancel-speech' }, null, sendResp)
+    registered({ kind: 'CANCEL_SPEECH' }, null, sendResp)
     await new Promise((r) => setTimeout(r, 0))
     expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(500, { kind: 'STOP_SPEECH' })
     expect(sendResp).toHaveBeenCalledWith({ ok: true })

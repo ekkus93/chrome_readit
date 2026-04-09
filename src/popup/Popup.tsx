@@ -149,13 +149,13 @@ export default function Popup() {
 
   // Control handlers for pause/resume/cancel reading
   async function handlePause() {
-    try { chrome.runtime.sendMessage({ action: 'pause-speech' }, () => {}) } catch (e) { console.warn('readit: pause failed', e) }
+    try { chrome.runtime.sendMessage({ kind: 'PAUSE_SPEECH' }, () => {}) } catch (e) { console.warn('readit: pause failed', e) }
   }
   async function handleResume() {
-    try { chrome.runtime.sendMessage({ action: 'resume-speech' }, () => {}) } catch (e) { console.warn('readit: resume failed', e) }
+    try { chrome.runtime.sendMessage({ kind: 'RESUME_SPEECH' }, () => {}) } catch (e) { console.warn('readit: resume failed', e) }
   }
   async function handleCancel() {
-    try { chrome.runtime.sendMessage({ action: 'cancel-speech' }, () => {}) } catch (e) { console.warn('readit: cancel failed', e) }
+    try { chrome.runtime.sendMessage({ kind: 'CANCEL_SPEECH' }, () => {}) } catch (e) { console.warn('readit: cancel failed', e) }
   }
 
   return (
