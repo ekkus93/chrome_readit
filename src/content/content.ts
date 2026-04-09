@@ -2,9 +2,7 @@ import { isPlayAudio } from '../lib/messaging'
 import { decodeBase64ToUint8Array, prefixHexFromU8 } from './player'
 import { PlaybackController } from './playback'
 
-// Temporary diagnostics flag - enable while debugging playback/selection issues.
-// Set to false when not needed to avoid noisy logs.
-const DEBUG = true
+const DEBUG = Boolean(import.meta.env.DEV)
 
 type ContentBridgeState = {
   initialized: boolean
@@ -45,10 +43,10 @@ async function hydratePlaybackRateFromStorage() {
 }
 
 if (bridgeState.initialized) {
-  console.debug('[readit] content script already initialized')
+  if (DEBUG) console.debug('[readit] content script already initialized')
 } else {
   bridgeState.initialized = true
-  console.debug('[readit] content script loaded')
+  if (DEBUG) console.debug('[readit] content script loaded')
 
   void hydratePlaybackRateFromStorage()
 
@@ -65,7 +63,7 @@ if (bridgeState.initialized) {
 
   chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
     try {
-      console.debug('[readit] content script received message', msg, 'from', sender)
+      if (DEBUG) console.debug('[readit] content script received message', msg, 'from', sender)
 
       if (isPlayAudio(msg)) {
         // Extra diagnostics when enabled
@@ -88,7 +86,13 @@ if (bridgeState.initialized) {
           console.debug('[readit][DBG] PLAY_AUDIO diagnostics failed', dbgErr)
         }
 
-        console.debug('[readit] content PLAY_AUDIO: received audio message', { mime: msg.mime, audioType: typeof msg.audio, audioLength: typeof msg.audio === 'string' ? msg.audio.length : (msg.audio as ArrayBuffer)?.byteLength })
+        if (DEBUG) {
+          console.debug('[readit] content PLAY_AUDIO: received audio message', {
+            mime: msg.mime,
+            audioType: typeof msg.audio,
+            audioLength: typeof msg.audio === 'string' ? msg.audio.length : (msg.audio as ArrayBuffer)?.byteLength,
+          })
+        }
         try {
           const mime = msg.mime ?? 'audio/wav'
           const playbackToken = typeof msg.playbackToken === 'string' ? msg.playbackToken : null

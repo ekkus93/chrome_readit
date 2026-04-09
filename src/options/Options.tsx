@@ -124,13 +124,8 @@ export default function Options() {
             buf = resp.audio as ArrayBuffer
           }
 
-          // Check that the returned buffer actually looks like audio. Some
-          // endpoints (e.g. the server-side play-only path) may return JSON
-          // or other non-audio payloads; attempting to play those causes
-          // NotSupportedError. Use a lightweight signature check before
-          // creating the Blob.
-          // Peek a small prefix for debugging (hex) so we can see what the
-          // server actually returned when diagnosing NotSupportedError.
+          // Check that the returned buffer actually looks like audio before
+          // creating the Blob so non-audio payloads fail clearly.
           let prefixHex = ''
           try {
             const v = new Uint8Array(buf)
@@ -163,11 +158,10 @@ export default function Options() {
           const url = URL.createObjectURL(blob)
           const a = new Audio(url)
           a.playbackRate = rate
-          // keep a reference so the element isn't GC'd while playback runs
+          // Keep a reference so the element is retained until playback finishes.
           testAudioRef.current = a
           a.autoplay = true
           a.play().catch((e) => {
-            // Log the full DOMException/object for debugging (not just String)
             console.warn('[readit] options player failed to play', { mime, prefixHex, error: e })
             setTestStatus('error')
             setTestError(String(e))

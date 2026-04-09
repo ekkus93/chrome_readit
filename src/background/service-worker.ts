@@ -48,9 +48,7 @@ async function sendTabMessageWithBootstrap(tabId: number, message: Record<string
   }
 }
 
-// Temporary diagnostics flag - enable when debugging TTS/selection issues.
-// Set to false when not actively debugging to avoid noisy logs.
-const DEBUG = true
+const DEBUG = Boolean(import.meta.env.DEV)
 
 const MIN_RATE = 0.5
 const MAX_RATE = 10
@@ -409,9 +407,9 @@ export async function sendToActiveTabOrInject(msg: Msg) {
 // Runtime message handlers: control the queue and expose status to the popup
 chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
   try {
-      // control messages are simple objects like { action: 'pause' } or
-      // typed Msg objects coming from the popup.
-      if (req && typeof req === 'object') {
+    // Control messages come from extension UI contexts; playback messages
+    // also arrive back from the content script with completion state.
+    if (req && typeof req === 'object') {
         const anyReq = req as unknown as Record<string, unknown>
       if (isControlRequest(anyReq, 'SPEECH_STATUS')) {
         const state = activeSession ? (activeSession.cancelRequested ? 'cancelled' : activeSession.paused ? 'paused' : 'playing') : 'idle'

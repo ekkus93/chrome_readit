@@ -1,7 +1,9 @@
 // Minimal player page script. It announces readiness to the background
 // and listens for a 'play-audio' message containing { audio, mime }.
 
-console.debug('[readit] player loaded')
+if (import.meta.env.DEV) {
+  console.debug('[readit] player loaded')
+}
 
 chrome.runtime.sendMessage({ action: 'player_ready' })
 

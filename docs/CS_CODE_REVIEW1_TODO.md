@@ -244,16 +244,16 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 # Phase 6 — Reduce production noise and keep diagnostics intentional
 
-**Status:** Pending
+**Status:** Done
 
 ## Task 6.1 — Disable hardcoded debug logging in production paths
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Change the hardcoded `DEBUG = true` flags in `src/content/content.ts` and `src/background/service-worker.ts`.
-- [ ] Decide whether to use `false` or an environment-aware flag already compatible with the build.
-- [ ] Keep operational warnings intact; only reduce noisy debug diagnostics.
+- [x] Change the hardcoded `DEBUG = true` flags in `src/content/content.ts` and `src/background/service-worker.ts`.
+- [x] Decide whether to use `false` or an environment-aware flag already compatible with the build.
+- [x] Keep operational warnings intact; only reduce noisy debug diagnostics.
 
 ### Acceptance criteria
 - Normal users do not get verbose playback diagnostics by default.
@@ -263,12 +263,12 @@ This TODO is intended to guide implementation work in small, testable phases.
 
 ## Task 6.2 — Re-evaluate diagnostic comments and temporary logging
 
-**Status:** Pending
+**Status:** Done
 
 ### Subtasks
-- [ ] Review nearby playback-debug comments added during overlap investigation.
-- [ ] Remove or tighten comments that are only useful for short-term debugging.
-- [ ] Preserve comments that explain non-obvious architecture or lifecycle behavior.
+- [x] Review nearby playback-debug comments added during overlap investigation.
+- [x] Remove or tighten comments that are only useful for short-term debugging.
+- [x] Preserve comments that explain non-obvious architecture or lifecycle behavior.
 
 ### Acceptance criteria
 - The code remains understandable without carrying stale “temporary diagnostics” intent indefinitely.
