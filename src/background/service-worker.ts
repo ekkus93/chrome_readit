@@ -144,8 +144,8 @@ function prefixHexFromBuffer(buf: ArrayBuffer | null | undefined, len = 32) {
 const MAX_CHUNK_CHARS = 400
 // Allow tests to override the chunk timeout via globalThis.__CHUNK_TIMEOUT_MS
 const CHUNK_TIMEOUT_MS = ((globalThis as unknown as { __CHUNK_TIMEOUT_MS?: number }).__CHUNK_TIMEOUT_MS) ?? 60_000 // default 1 minute
-const DEFAULT_CHUNK_GAP_MS = ((globalThis as unknown as { __CHUNK_GAP_MS?: number }).__CHUNK_GAP_MS) ?? 150
-const PARAGRAPH_CHUNK_GAP_MS = ((globalThis as unknown as { __CHUNK_PARAGRAPH_GAP_MS?: number }).__CHUNK_PARAGRAPH_GAP_MS) ?? 700
+const DEFAULT_CHUNK_GAP_MS = ((globalThis as unknown as { __CHUNK_GAP_MS?: number }).__CHUNK_GAP_MS) ?? 75
+const PARAGRAPH_CHUNK_GAP_MS = ((globalThis as unknown as { __CHUNK_PARAGRAPH_GAP_MS?: number }).__CHUNK_PARAGRAPH_GAP_MS) ?? 350
 
 type PlaybackTransition = 'sentence' | 'paragraph' | 'end'
 
@@ -273,9 +273,10 @@ export const __testing = {
   },
 }
 
-function getGapAfterTransition(transitionAfter: PlaybackTransition): number {
-  if (transitionAfter === 'paragraph') return PARAGRAPH_CHUNK_GAP_MS
-  if (transitionAfter === 'sentence') return DEFAULT_CHUNK_GAP_MS
+function getGapAfterTransition(transitionAfter: PlaybackTransition, playbackRate = 1): number {
+  const rate = clampPlaybackRate(playbackRate)
+  if (transitionAfter === 'paragraph') return Math.round(PARAGRAPH_CHUNK_GAP_MS / rate)
+  if (transitionAfter === 'sentence') return Math.round(DEFAULT_CHUNK_GAP_MS / rate)
   return 0
 }
 
@@ -465,7 +466,7 @@ async function processChunksSequentially(session: PlaybackSession, voice?: strin
       const playbackRate = getCurrentPlaybackRate()
       const playbackToken = createPlaybackToken(sessionId, chunkIndex)
       const ackPromise = waitForPlaybackAck(playbackToken)
-      const gapAfterMs = getGapAfterTransition(chunk.transitionAfter)
+      const gapAfterMs = getGapAfterTransition(chunk.transitionAfter, playbackRate)
 
       if (DEBUG) {
         console.debug('[readit][DBG] queue start chunk', {

@@ -213,8 +213,18 @@ describe('background.sendToActiveTabOrInject', () => {
       chunkIndexInParagraph: 0,
       transitionAfter: 'end',
     })
-    expect(mod.__testing.getGapAfterTransition(chunks[0].transitionAfter)).toBe(700)
+    expect(mod.__testing.getGapAfterTransition(chunks[0].transitionAfter)).toBe(350)
     expect(mod.__testing.getGapAfterTransition(chunks[1].transitionAfter)).toBe(0)
+  })
+
+  it('scales sentence and paragraph gaps with playback rate', async () => {
+    mod = await import('./service-worker')
+
+    expect(mod.__testing.getGapAfterTransition('sentence', 1)).toBe(75)
+    expect(mod.__testing.getGapAfterTransition('sentence', 2)).toBe(38)
+    expect(mod.__testing.getGapAfterTransition('paragraph', 1)).toBe(350)
+    expect(mod.__testing.getGapAfterTransition('paragraph', 2)).toBe(175)
+    expect(mod.__testing.getGapAfterTransition('paragraph', 0.5)).toBe(700)
   })
 
   it('keeps sentence-sized chunks within a paragraph while preserving paragraph transitions', async () => {

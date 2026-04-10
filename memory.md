@@ -76,3 +76,11 @@
 ## 2026-04-10T04:09:15Z - GPT-5.4 - Simplified offscreen player remains green
 - Replaced the offscreen document's production playback path with a single plain `Audio` player: one active audio instance, stop-before-next-start semantics, and duplicate playback-token suppression. This removes the reused `PlaybackController`/WebAudio fallback complexity from the live selection-read path.
 - Automated validation passed after the simplification with `npm run lint` and `npm run test`. Manual Chrome retest is still required to confirm whether the audible duplicate/"little girl" overlay is fully gone at runtime.
+
+## 2026-04-10T04:13:44Z - GPT-5.4 - Reduced playback pacing defaults by half
+- Cut the background inter-chunk pacing defaults in `src/background/service-worker.ts` from 150ms to 75ms for sentence transitions and from 700ms to 350ms for paragraph transitions.
+- Updated the pacing assertion in `src/background/service-worker.test.ts` and re-ran `npm run lint`, `npm run test`, and `npm run build` successfully.
+
+## 2026-04-10T04:18:14Z - GPT-5.4 - Made playback pacing relative to speech rate
+- `src/background/service-worker.ts` now scales inter-chunk pauses by the active playback rate instead of using fixed delays, so faster playback shortens the sentence/paragraph gaps and slower playback lengthens them.
+- Added regression coverage in `src/background/service-worker.test.ts` for sentence and paragraph transitions at multiple rates, then re-ran `npm run lint`, `npm run test`, and `npm run build` successfully.
