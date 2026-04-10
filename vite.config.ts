@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import type { PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
 import manifest from './src/manifest'
+import { resolve } from 'node:path'
 
 // Avoid importing '@crxjs/vite-plugin' at module-evaluation time because
 // some environments (CI runners) load transitive deps (undici) that expect
@@ -44,5 +45,12 @@ if (crxPlugin) {
 
 export default defineConfig({
   plugins,
-  build: { target: 'es2022' },
+  build: {
+    target: 'es2022',
+    rollupOptions: {
+      input: {
+        offscreen: resolve(__dirname, 'src/offscreen.html'),
+      },
+    },
+  },
 })

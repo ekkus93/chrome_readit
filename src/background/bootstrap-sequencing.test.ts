@@ -42,7 +42,7 @@ describe('background bootstrap sequencing', () => {
     mod = undefined
   })
 
-  it('retries through the normal content-script path and does not advance the queue early', async () => {
+  it('does not advance the queue early while the first offscreen playback ack is pending', async () => {
     const long = `${'Sentence one. '.repeat(40)}${'Sentence two. '.repeat(40)}`
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
@@ -50,17 +50,14 @@ describe('background bootstrap sequencing', () => {
       arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
     })))
 
-    let resolveRetriedFirstChunk: (() => void) | null = null
-    let playAttempt = 0
-    const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { tabs: { sendMessage: ReturnType<typeof vi.fn> }; scripting: { executeScript: ReturnType<typeof vi.fn> } }
+    let resolveFirstChunk: (() => void) | null = null
+    const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { runtime: { sendMessage: ReturnType<typeof vi.fn> } }
     mod = await import('./service-worker')
-    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: { kind: string }) => {
-      if (message.kind !== 'PLAY_AUDIO') return Promise.resolve(undefined)
-      playAttempt += 1
-      if (playAttempt === 1) return Promise.reject(new Error('no content script'))
-      if (playAttempt === 2) {
+    chromeObj.runtime.sendMessage.mockImplementation((message: Record<string, unknown>) => {
+      if (message.action !== 'OFFSCREEN_PLAY_AUDIO') return Promise.resolve(undefined)
+      if (!resolveFirstChunk) {
         return new Promise((resolve) => {
-          resolveRetriedFirstChunk = () => {
+          resolveFirstChunk = () => {
             queueMicrotask(() => mod?.__testing.resolvePendingPlaybackAck(String((message as unknown as Record<string, unknown>).playbackToken ?? ''), { ok: true }))
             resolve({ ok: true })
           }
@@ -73,27 +70,23 @@ describe('background bootstrap sequencing', () => {
     const promise = mod.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: long })
 
     for (let i = 0; i < 20; i += 1) {
-      const playCalls = chromeObj.tabs.sendMessage.mock.calls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO')
+      const playCalls = chromeObj.runtime.sendMessage.mock.calls.filter(([payload]) => (payload as Record<string, unknown>).action === 'OFFSCREEN_PLAY_AUDIO')
       if (playCalls.length >= 2) break
       await new Promise((resolve) => setTimeout(resolve, 5))
     }
-    const playCallsBeforeAck = chromeObj.tabs.sendMessage.mock.calls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO')
-    expect(playCallsBeforeAck).toHaveLength(2)
-    expect(chromeObj.scripting.executeScript).toHaveBeenCalledWith({
-      target: { tabId: 77 },
-      files: ['src/content/content.ts'],
-    })
+    const playCallsBeforeAck = chromeObj.runtime.sendMessage.mock.calls.filter(([payload]) => (payload as Record<string, unknown>).action === 'OFFSCREEN_PLAY_AUDIO')
+    expect(playCallsBeforeAck).toHaveLength(1)
 
-    resolveRetriedFirstChunk?.()
+    resolveFirstChunk?.()
     await new Promise((resolve) => setTimeout(resolve, 10))
     expect(
-      chromeObj.tabs.sendMessage.mock.calls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO'),
-    ).toHaveLength(2)
+      chromeObj.runtime.sendMessage.mock.calls.filter(([payload]) => (payload as Record<string, unknown>).action === 'OFFSCREEN_PLAY_AUDIO'),
+    ).toHaveLength(1)
 
     await new Promise((resolve) => setTimeout(resolve, 50))
     await promise
 
-    const playCalls = chromeObj.tabs.sendMessage.mock.calls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO')
-    expect(playCalls.length).toBeGreaterThan(2)
+    const playCalls = chromeObj.runtime.sendMessage.mock.calls.filter(([payload]) => (payload as Record<string, unknown>).action === 'OFFSCREEN_PLAY_AUDIO')
+    expect(playCalls.length).toBeGreaterThan(1)
   })
 })

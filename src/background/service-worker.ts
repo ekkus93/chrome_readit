@@ -1,5 +1,11 @@
 import type { Msg } from '../lib/messaging'
 import { encodeArrayBufferToBase64 } from '../lib/base64'
+import {
+  OFFSCREEN_PAUSE_AUDIO,
+  OFFSCREEN_PLAY_AUDIO,
+  OFFSCREEN_RESUME_AUDIO,
+  OFFSCREEN_STOP_AUDIO,
+} from '../lib/offscreen-messaging'
 import { getSettings } from '../lib/storage'
 // lib/messaging guards are available for other modules; this background
 // worker does not directly reference them here to keep runtime size small.
@@ -20,7 +26,9 @@ async function getActiveHttpTab() {
 }
 
 const UNSUPPORTED_PLAYBACK_ERROR = 'Playback not supported on this page'
-const CONTENT_SCRIPT_FILE = 'src/content/content.ts'
+const OFFSCREEN_DOCUMENT_PATH = 'src/offscreen.html'
+const OFFSCREEN_JUSTIFICATION = 'Play selected text audio in an extension-owned document.'
+let offscreenDocumentPromise: Promise<void> | null = null
 
 async function requireActivePlaybackTab(): Promise<chrome.tabs.Tab> {
   const tab = await getActiveHttpTab()
@@ -28,24 +36,46 @@ async function requireActivePlaybackTab(): Promise<chrome.tabs.Tab> {
   return tab
 }
 
-async function ensurePlaybackBridge(tabId: number): Promise<void> {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: [CONTENT_SCRIPT_FILE],
-    })
-  } catch (err) {
-    throw new Error(`${UNSUPPORTED_PLAYBACK_ERROR}: ${String(err)}`)
-  }
+async function hasOffscreenPlaybackDocument(): Promise<boolean> {
+  if (typeof chrome.runtime.getContexts !== 'function') return false
+  const documentUrl = chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH)
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT'],
+    documentUrls: [documentUrl],
+  })
+  return contexts.length > 0
 }
 
-async function sendTabMessageWithBootstrap(tabId: number, message: Record<string, unknown>): Promise<unknown> {
+async function ensureOffscreenPlaybackDocument(): Promise<void> {
+  if (!chrome.offscreen?.createDocument) return
+  if (await hasOffscreenPlaybackDocument()) return
+  if (offscreenDocumentPromise) {
+    await offscreenDocumentPromise
+    return
+  }
+
+  offscreenDocumentPromise = chrome.offscreen.createDocument({
+    url: OFFSCREEN_DOCUMENT_PATH,
+    reasons: ['AUDIO_PLAYBACK'],
+    justification: OFFSCREEN_JUSTIFICATION,
+  }).finally(() => {
+    offscreenDocumentPromise = null
+  })
+
+  await offscreenDocumentPromise
+}
+
+async function sendPlaybackMessage(message: Record<string, unknown>): Promise<unknown> {
+  await ensureOffscreenPlaybackDocument()
+  return await chrome.runtime.sendMessage(message)
+}
+
+async function sendOffscreenControl(action: typeof OFFSCREEN_PAUSE_AUDIO | typeof OFFSCREEN_RESUME_AUDIO | typeof OFFSCREEN_STOP_AUDIO): Promise<void> {
   try {
-    return await chrome.tabs.sendMessage(tabId, message)
+    await ensureOffscreenPlaybackDocument()
+    await chrome.runtime.sendMessage({ action })
   } catch (err) {
-    console.warn('[readit] tab sendMessage failed; attempting playback bridge bootstrap', err)
-    await ensurePlaybackBridge(tabId)
-    return await chrome.tabs.sendMessage(tabId, message)
+    void err
   }
 }
 
@@ -129,7 +159,6 @@ type PlaybackChunk = {
 type PlaybackSession = {
   id: number
   requestId: number
-  tabId: number
   cancelRequested: boolean
   paused: boolean
   chunks: PlaybackChunk[]
@@ -168,11 +197,10 @@ function isLatestPlaybackRequest(requestId: number): boolean {
   return requestId === latestPlaybackRequestId
 }
 
-function createPlaybackSession(requestId: number, tabId: number, chunks: PlaybackChunk[]): PlaybackSession {
+function createPlaybackSession(requestId: number, chunks: PlaybackChunk[]): PlaybackSession {
   return {
     id: nextSessionId++,
     requestId,
-    tabId,
     cancelRequested: false,
     paused: false,
     chunks,
@@ -185,12 +213,8 @@ function finishPlaybackSession(sessionId: number): void {
   if (isSessionActive(sessionId)) activeSession = null
 }
 
-async function stopSessionPlayback(tabId: number): Promise<void> {
-  try {
-    await chrome.tabs.sendMessage(tabId, { kind: 'STOP_SPEECH' })
-  } catch (err) {
-    void err
-  }
+async function stopSessionPlayback(): Promise<void> {
+  await sendOffscreenControl(OFFSCREEN_STOP_AUDIO)
 }
 
 async function cancelPlaybackSession(session: PlaybackSession | null): Promise<void> {
@@ -206,7 +230,7 @@ async function cancelPlaybackSession(session: PlaybackSession | null): Promise<v
     pendingPlaybackAck = null
     resolve({ ok: false, error: 'cancelled' })
   }
-  await stopSessionPlayback(session.tabId)
+  await stopSessionPlayback()
 }
 
 function createPlaybackToken(sessionId: number, chunkIndex: number): string {
@@ -262,9 +286,10 @@ function splitTextIntoParagraphs(text: string): string[] {
     .filter((part) => part.length > 0)
 }
 
-function splitParagraphIntoChunkTexts(paragraph: string, maxLen = MAX_CHUNK_CHARS): string[] {
+function splitLongTextIntoChunks(text: string, maxLen = MAX_CHUNK_CHARS): string[] {
   const out: string[] = []
-  let remaining = paragraph.trim()
+  let remaining = text.trim()
+  const trailingSentenceClosers = ['"', '\'', ')', ']', '”', '’']
   while (remaining.length > 0) {
     if (remaining.length <= maxLen) {
       out.push(remaining)
@@ -276,11 +301,63 @@ function splitParagraphIntoChunkTexts(paragraph: string, maxLen = MAX_CHUNK_CHAR
     if (cut <= 0) {
       const ws = slice.lastIndexOf(' ')
       cut = ws > 0 ? ws : maxLen
+    } else {
+      while (cut < remaining.length && trailingSentenceClosers.includes(remaining[cut])) {
+        cut += 1
+      }
     }
     const part = remaining.slice(0, cut).trim()
     if (part) out.push(part)
     remaining = remaining.slice(cut).trim()
   }
+  return out
+}
+
+function splitParagraphIntoSentenceTexts(paragraph: string): string[] {
+  const trimmed = paragraph.trim()
+  if (!trimmed) return []
+
+  const sentences: string[] = []
+  let start = 0
+  const trailingSentenceClosers = ['"', '\'', ')', ']', '”', '’']
+
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const char = trimmed[index]
+    if (!['.', '!', '?', ';'].includes(char)) continue
+
+    let end = index + 1
+    while (end < trimmed.length && trailingSentenceClosers.includes(trimmed[end])) {
+      end += 1
+    }
+
+    const sentence = trimmed.slice(start, end).trim()
+    if (sentence) sentences.push(sentence)
+
+    start = end
+    while (start < trimmed.length && /\s/.test(trimmed[start])) {
+      start += 1
+    }
+    index = end - 1
+  }
+
+  const tail = trimmed.slice(start).trim()
+  if (tail) sentences.push(tail)
+
+  return sentences
+}
+
+function splitParagraphIntoChunkTexts(paragraph: string, maxLen = MAX_CHUNK_CHARS): string[] {
+  const sentences = splitParagraphIntoSentenceTexts(paragraph)
+  const out: string[] = []
+
+  sentences.forEach((sentence) => {
+    if (sentence.length <= maxLen) {
+      out.push(sentence)
+      return
+    }
+    out.push(...splitLongTextIntoChunks(sentence, maxLen))
+  })
+
   return out
 }
 
@@ -339,7 +416,7 @@ async function fetchTtsAudio(text: string, voice?: string, signal?: AbortSignal)
 async function processChunksSequentially(session: PlaybackSession, voice?: string) {
   const sessionId = session.id
   const requestId = session.requestId
-  const { tabId, chunks } = session
+  const { chunks } = session
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
   const sessionCanContinue = () => isSessionActive(sessionId) && isLatestPlaybackRequest(requestId) && !session.cancelRequested
@@ -404,13 +481,13 @@ async function processChunksSequentially(session: PlaybackSession, voice?: strin
       }
 
       try {
-        const sendResult = await sendTabMessageWithBootstrap(tabId, {
-          kind: 'PLAY_AUDIO',
-          audio: entry.b64,
-          mime: entry.mime,
-          rate: playbackRate,
-          playbackToken,
-        })
+         const sendResult = await sendPlaybackMessage({
+           action: OFFSCREEN_PLAY_AUDIO,
+           audio: entry.b64,
+           mime: entry.mime,
+           rate: playbackRate,
+           playbackToken,
+         })
 
         if (sendResult && typeof sendResult === 'object' && sendResult !== null && 'ok' in (sendResult as Record<string, unknown>)) {
           const dispatchOk = Boolean((sendResult as Record<string, unknown>).ok)
@@ -460,7 +537,7 @@ async function processChunksSequentially(session: PlaybackSession, voice?: strin
   }
 
   if (session.cancelRequested && isSessionActive(sessionId)) {
-    await stopSessionPlayback(tabId)
+    await stopSessionPlayback()
   }
   finishPlaybackSession(sessionId)
 }
@@ -504,11 +581,10 @@ export async function sendToActiveTabOrInject(msg: Msg): Promise<ReadPipelineRes
       return { ok: false, error: 'No TTS service URL is configured.' }
     }
 
-    const tab = playbackTab ?? await requireActivePlaybackTab()
     if (playbackRequestId !== latestPlaybackRequestId) return { ok: false, error: 'Playback request was superseded.' }
     await cancelPlaybackSession(activeSession)
     if (playbackRequestId !== latestPlaybackRequestId) return { ok: false, error: 'Playback request was superseded.' }
-    const session = createPlaybackSession(playbackRequestId, tab.id, splitTextIntoChunks(normalizedText, MAX_CHUNK_CHARS))
+    const session = createPlaybackSession(playbackRequestId, splitTextIntoChunks(normalizedText, MAX_CHUNK_CHARS))
     activeSession = session
     await processChunksSequentially(session, s.voice)
     if (session.cancelRequested) {
@@ -525,7 +601,7 @@ export async function sendToActiveTabOrInject(msg: Msg): Promise<ReadPipelineRes
 chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
   try {
     // Control messages come from extension UI contexts; playback messages
-    // also arrive back from the content script with completion state.
+    // arrive back from the offscreen playback document with completion state.
     if (req && typeof req === 'object') {
         const anyReq = req as unknown as Record<string, unknown>
       if (isControlRequest(anyReq, 'SPEECH_STATUS')) {
@@ -539,12 +615,7 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
             await cancelPlaybackSession(activeSession)
             return
           }
-          try {
-            const tabId = (await getActiveHttpTab())?.id
-            if (tabId) await chrome.tabs.sendMessage(tabId, { kind: 'STOP_SPEECH' })
-          } catch (err) {
-            void err
-          }
+          await sendOffscreenControl(OFFSCREEN_STOP_AUDIO)
         })()
         sendResponse({ ok: true })
         return true
@@ -553,8 +624,7 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
         ;(async () => {
           try {
             if (activeSession) activeSession.paused = true
-            const tabId = activeSession?.tabId ?? (await getActiveHttpTab())?.id
-            if (tabId) await chrome.tabs.sendMessage(tabId, { kind: 'PAUSE_SPEECH' })
+            await sendOffscreenControl(OFFSCREEN_PAUSE_AUDIO)
           } catch (e) { void e }
         })()
         sendResponse({ ok: true })
@@ -564,8 +634,7 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
         ;(async () => {
           try {
             if (activeSession) activeSession.paused = false
-            const tabId = activeSession?.tabId ?? (await getActiveHttpTab())?.id
-            if (tabId) await chrome.tabs.sendMessage(tabId, { kind: 'RESUME_SPEECH' })
+            await sendOffscreenControl(OFFSCREEN_RESUME_AUDIO)
           } catch (e) { void e }
         })()
         sendResponse({ ok: true })
@@ -625,14 +694,12 @@ chrome.commands.onCommand.addListener(async (command: string) => {
     // controlled immediately.
     if (command === 'pause-speech') {
       if (activeSession) activeSession.paused = true
-      const tabId = activeSession?.tabId ?? (await getActiveHttpTab())?.id
-      try { if (tabId) await chrome.tabs.sendMessage(tabId, { kind: 'PAUSE_SPEECH' }) } catch (e) { void e }
+      await sendOffscreenControl(OFFSCREEN_PAUSE_AUDIO)
       return
     }
     if (command === 'resume-speech') {
       if (activeSession) activeSession.paused = false
-      const tabId = activeSession?.tabId ?? (await getActiveHttpTab())?.id
-      try { if (tabId) await chrome.tabs.sendMessage(tabId, { kind: 'RESUME_SPEECH' }) } catch (e) { void e }
+      await sendOffscreenControl(OFFSCREEN_RESUME_AUDIO)
       return
     }
     if (command === 'cancel-speech') {
@@ -641,8 +708,7 @@ chrome.commands.onCommand.addListener(async (command: string) => {
         await cancelPlaybackSession(activeSession)
         return
       }
-      const tabId = (await getActiveHttpTab())?.id
-      try { if (tabId) await chrome.tabs.sendMessage(tabId, { kind: 'STOP_SPEECH' }) } catch (e) { void e }
+      await sendOffscreenControl(OFFSCREEN_STOP_AUDIO)
       return
     }
   } catch (err) {
@@ -651,7 +717,7 @@ chrome.commands.onCommand.addListener(async (command: string) => {
 })
 
 // New message handler that supports async sendResponse for test-tts and
-// request-tts actions coming from extension pages / content scripts.
+// request-tts actions coming from extension pages.
 chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
   // Only claim the async response channel (return true) for messages
   // we actually handle asynchronously. If we return true but never call

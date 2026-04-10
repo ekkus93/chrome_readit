@@ -22,17 +22,20 @@ describe('chunk timeout behavior', () => {
     const chromeObj = {
       tabs: {
         query: vi.fn(() => Promise.resolve([{ id: 301, url: 'https://example.com' }])),
-        // make PLAY_AUDIO never resolve with a completion ack
-        sendMessage: vi.fn((_: unknown, payload: Record<string, unknown>) => {
-          if (payload.kind === 'PLAY_AUDIO') {
-            return new Promise((res) => setTimeout(() => res(undefined), 200))
-          }
-          return Promise.resolve(undefined)
-        })
+        sendMessage: vi.fn(() => Promise.resolve(undefined)),
       },
       scripting: { executeScript: vi.fn() },
       commands: { onCommand: { addListener: vi.fn() } },
-      runtime: { onMessage: { addListener: vi.fn() }, onInstalled: { addListener: vi.fn() }, sendMessage: vi.fn() },
+      runtime: {
+        onMessage: { addListener: vi.fn() },
+        onInstalled: { addListener: vi.fn() },
+        sendMessage: vi.fn((payload: Record<string, unknown>) => {
+          if (payload.action === 'OFFSCREEN_PLAY_AUDIO') {
+            return new Promise((res) => setTimeout(() => res(undefined), 200))
+          }
+          return Promise.resolve(undefined)
+        }),
+      },
       contextMenus: { create: vi.fn(), onClicked: { addListener: vi.fn() } },
     } as unknown as ChromeMock
     ;(globalThis as unknown as Record<string, unknown>).chrome = chromeObj
@@ -69,8 +72,8 @@ describe('chunk timeout behavior', () => {
     // we should have fetched multiple chunks
     expect(fetched.length).toBeGreaterThanOrEqual(2)
 
-    const sendCalls = ((((globalThis as unknown as Record<string, unknown>).chrome as unknown as { tabs: { sendMessage?: { mock?: { calls?: unknown[][] } } } }).tabs.sendMessage?.mock?.calls) ?? [])
-    const playCalls = sendCalls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO')
+    const sendCalls = ((((globalThis as unknown as Record<string, unknown>).chrome as unknown as { runtime: { sendMessage?: { mock?: { calls?: unknown[][] } } } }).runtime.sendMessage?.mock?.calls) ?? [])
+    const playCalls = sendCalls.filter(([payload]) => (payload as Record<string, unknown>).action === 'OFFSCREEN_PLAY_AUDIO')
     expect(playCalls).toHaveLength(1)
   })
 })

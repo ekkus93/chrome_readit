@@ -32,7 +32,7 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
       tabs: { query: (...args: unknown[]) => Promise<unknown>, sendMessage: (...args: unknown[]) => unknown }
       scripting: { executeScript: (...args: unknown[]) => unknown }
       commands: { onCommand: { addListener: (...args: unknown[]) => unknown } }
-      runtime: { onMessage: { addListener: (...args: unknown[]) => unknown }, onInstalled: { addListener: (...args: unknown[]) => unknown }, sendMessage: (...args: unknown[]) => unknown }
+      runtime: { onMessage: { addListener: (...args: unknown[]) => unknown }, onInstalled: { addListener: (...args: unknown[]) => unknown }, sendMessage: ReturnType<typeof vi.fn> }
       contextMenus: { create: (...args: unknown[]) => unknown, onClicked: { addListener: (...args: unknown[]) => unknown } }
     }
     sendMessageMock = vi.fn()
@@ -77,11 +77,10 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
     }))
 
     // import module after mocks set up
-    sendMessageMock.mockRejectedValueOnce(new Error('no content script'))
-
     mod = await import('./service-worker')
-    sendMessageMock.mockImplementation((_: unknown, payload: Record<string, unknown>) => {
-      if (payload.kind === 'PLAY_AUDIO') {
+    const runtimeSendMessageMock = (((globalThis as unknown as Record<string, unknown>).chrome as unknown as { runtime: { sendMessage: ReturnType<typeof vi.fn> } }).runtime.sendMessage)
+    runtimeSendMessageMock.mockImplementation((payload: Record<string, unknown>) => {
+      if (payload.action === 'OFFSCREEN_PLAY_AUDIO') {
         acknowledgePlayback(mod!, payload.playbackToken)
         return Promise.resolve({ ok: true })
       }
@@ -114,16 +113,11 @@ That’s followed by a caption reading “Obama hosts members of the Muslim Brot
     }
 
     // Ensure we forwarded audio to the content script once per fetched chunk
-    const sendCalls = sendMessageMock.mock.calls
-    const playCalls = sendCalls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO')
+    const sendCalls = runtimeSendMessageMock.mock.calls
+    const playCalls = sendCalls.filter(([payload]) => (payload as Record<string, unknown>).action === 'OFFSCREEN_PLAY_AUDIO')
     expect(playCalls.length).toBeGreaterThanOrEqual(fetchedTexts.length)
-    for (const [, payload] of playCalls) {
-      expect((payload as Record<string, unknown>)).toMatchObject({ kind: 'PLAY_AUDIO', rate: 2.25 })
+    for (const [payload] of playCalls) {
+      expect((payload as Record<string, unknown>)).toMatchObject({ action: 'OFFSCREEN_PLAY_AUDIO', rate: 2.25 })
     }
-
-    expect(executeScriptMock).toHaveBeenCalledWith({
-      target: { tabId: 201 },
-      files: ['src/content/content.ts'],
-    })
   })
 })

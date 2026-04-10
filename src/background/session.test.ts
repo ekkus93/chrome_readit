@@ -18,7 +18,7 @@ describe('background playback sessions', () => {
       tabs: { query: (...args: unknown[]) => Promise<unknown>; sendMessage: ReturnType<typeof vi.fn> }
       scripting: { executeScript: (...args: unknown[]) => unknown }
       commands: { onCommand: { addListener: (...args: unknown[]) => unknown } }
-      runtime: { onMessage: { addListener: ReturnType<typeof vi.fn> }; onInstalled: { addListener: (...args: unknown[]) => unknown }; sendMessage: (...args: unknown[]) => unknown }
+      runtime: { onMessage: { addListener: ReturnType<typeof vi.fn> }; onInstalled: { addListener: (...args: unknown[]) => unknown }; sendMessage: ReturnType<typeof vi.fn> }
       contextMenus: { create: (...args: unknown[]) => unknown; onClicked: { addListener: (...args: unknown[]) => unknown } }
     }
 
@@ -54,10 +54,10 @@ describe('background playback sessions', () => {
       arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
     })))
 
-    const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { tabs: { sendMessage: ReturnType<typeof vi.fn> } }
+    const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { runtime: { sendMessage: ReturnType<typeof vi.fn> } }
     mod = await import('./service-worker')
-    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: Record<string, unknown>) => {
-      if (message.kind === 'PLAY_AUDIO' && !firstPlaybackResolved) {
+    chromeObj.runtime.sendMessage.mockImplementation((message: Record<string, unknown>) => {
+      if (message.action === 'OFFSCREEN_PLAY_AUDIO' && !firstPlaybackResolved) {
         firstPlaybackResolved = true
         return new Promise((resolve) => {
           setTimeout(() => {
@@ -66,10 +66,11 @@ describe('background playback sessions', () => {
           }, 40)
         })
       }
-      if (message.kind === 'PLAY_AUDIO') {
+      if (message.action === 'OFFSCREEN_PLAY_AUDIO') {
         acknowledgePlayback(mod!, message.playbackToken)
         return Promise.resolve({ ok: true })
       }
+      if (message.action === 'OFFSCREEN_STOP_AUDIO') return Promise.resolve({ ok: true })
       return Promise.resolve(undefined)
     })
 
@@ -79,9 +80,9 @@ describe('background playback sessions', () => {
 
     await Promise.all([first, second])
 
-    const sendCalls = chromeObj.tabs.sendMessage.mock.calls
-    const firstStopIndex = sendCalls.findIndex(([, payload]) => (payload as Record<string, unknown>).kind === 'STOP_SPEECH')
-    const secondPlayIndex = sendCalls.findIndex(([, payload], index) => index > firstStopIndex && (payload as Record<string, unknown>).kind === 'PLAY_AUDIO')
+    const sendCalls = chromeObj.runtime.sendMessage.mock.calls
+    const firstStopIndex = sendCalls.findIndex(([payload]) => (payload as Record<string, unknown>).action === 'OFFSCREEN_STOP_AUDIO')
+    const secondPlayIndex = sendCalls.findIndex(([payload], index) => index > firstStopIndex && (payload as Record<string, unknown>).action === 'OFFSCREEN_PLAY_AUDIO')
 
     expect(firstStopIndex).toBeGreaterThanOrEqual(0)
     expect(secondPlayIndex).toBeGreaterThan(firstStopIndex)
@@ -103,10 +104,10 @@ describe('background playback sessions', () => {
       })
     }))
 
-    const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { tabs: { sendMessage: ReturnType<typeof vi.fn> } }
+    const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { runtime: { sendMessage: ReturnType<typeof vi.fn> } }
     mod = await import('./service-worker')
-    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: Record<string, unknown>) => {
-      if (message.kind === 'PLAY_AUDIO') {
+    chromeObj.runtime.sendMessage.mockImplementation((message: Record<string, unknown>) => {
+      if (message.action === 'OFFSCREEN_PLAY_AUDIO') {
         acknowledgePlayback(mod!, message.playbackToken)
         return Promise.resolve({ ok: true })
       }
@@ -124,8 +125,8 @@ describe('background playback sessions', () => {
 
     await Promise.all([first, second])
 
-    const playCalls = chromeObj.tabs.sendMessage.mock.calls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO')
-    const playbackTokens = playCalls.map(([, payload]) => String((payload as Record<string, unknown>).playbackToken ?? ''))
+    const playCalls = chromeObj.runtime.sendMessage.mock.calls.filter(([payload]) => (payload as Record<string, unknown>).action === 'OFFSCREEN_PLAY_AUDIO')
+    const playbackTokens = playCalls.map(([payload]) => String((payload as Record<string, unknown>).playbackToken ?? ''))
     expect(playbackTokens).not.toContain('1:0')
     expect(playbackTokens).toContain('2:0')
   })
@@ -137,13 +138,14 @@ describe('background playback sessions', () => {
       arrayBuffer: async () => new Uint8Array([7, 7]).buffer,
     })))
 
-    const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { tabs: { sendMessage: ReturnType<typeof vi.fn> } }
+    const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { runtime: { sendMessage: ReturnType<typeof vi.fn> } }
     mod = await import('./service-worker')
-    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: Record<string, unknown>) => {
-      if (message.kind === 'PLAY_AUDIO') {
+    chromeObj.runtime.sendMessage.mockImplementation((message: Record<string, unknown>) => {
+      if (message.action === 'OFFSCREEN_PLAY_AUDIO') {
         acknowledgePlayback(mod!, message.playbackToken)
         return Promise.resolve({ ok: true })
       }
+      if (message.action === 'OFFSCREEN_STOP_AUDIO') return Promise.resolve({ ok: true })
       return Promise.resolve(undefined)
     })
 
@@ -153,8 +155,8 @@ describe('background playback sessions', () => {
 
     await Promise.all([first, second])
 
-    const playCalls = chromeObj.tabs.sendMessage.mock.calls.filter(([, payload]) => (payload as Record<string, unknown>).kind === 'PLAY_AUDIO')
-    const playbackTokens = playCalls.map(([, payload]) => String((payload as Record<string, unknown>).playbackToken ?? ''))
+    const playCalls = chromeObj.runtime.sendMessage.mock.calls.filter(([payload]) => (payload as Record<string, unknown>).action === 'OFFSCREEN_PLAY_AUDIO')
+    const playbackTokens = playCalls.map(([payload]) => String((payload as Record<string, unknown>).playbackToken ?? ''))
     expect(playbackTokens).not.toContain('1:1')
     expect(playbackTokens).toContain('2:0')
   })
@@ -167,10 +169,10 @@ describe('background playback sessions', () => {
       arrayBuffer: async () => new Uint8Array([4, 5, 6]).buffer,
     })))
 
-    const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { tabs: { sendMessage: ReturnType<typeof vi.fn> }; runtime: { onMessage: { addListener: ReturnType<typeof vi.fn> } } }
+    const chromeObj = (globalThis as unknown as Record<string, unknown>).chrome as { runtime: { sendMessage: ReturnType<typeof vi.fn>; onMessage: { addListener: ReturnType<typeof vi.fn> } } }
     mod = await import('./service-worker')
-    chromeObj.tabs.sendMessage.mockImplementation((_: unknown, message: Record<string, unknown>) => {
-      if (message.kind === 'PLAY_AUDIO') {
+    chromeObj.runtime.sendMessage.mockImplementation((message: Record<string, unknown>) => {
+      if (message.action === 'OFFSCREEN_PLAY_AUDIO') {
         return new Promise((resolve) => {
           releasePlayback = () => {
             acknowledgePlayback(mod!, message.playbackToken)

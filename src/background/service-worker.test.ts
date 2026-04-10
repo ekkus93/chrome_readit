@@ -65,25 +65,24 @@ describe('background.sendToActiveTabOrInject', () => {
     g.chrome.tabs.query.mockResolvedValue([{ id: 123, url: 'https://example.com' }])
     g.chrome.scripting.executeScript.mockResolvedValue([{ result: 'selected text' }])
     vi.mocked(getSettings).mockResolvedValue({ voice: 'V', rate: 1.0, ttsUrl: 'http://localhost/tts' })
-    g.chrome.runtime.sendMessage.mockResolvedValue(undefined)
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new ArrayBuffer(8) }))
-
-    mod = await import('./service-worker')
-    g.chrome.tabs.sendMessage.mockImplementation((_: unknown, payload: Record<string, unknown>) => {
-      if (payload.kind === 'PLAY_AUDIO') {
+    g.chrome.runtime.sendMessage.mockImplementation((payload: Record<string, unknown>) => {
+      if (payload.action === 'OFFSCREEN_PLAY_AUDIO') {
         acknowledgePlayback(mod!, payload.playbackToken)
         return Promise.resolve({ ok: true })
       }
       return Promise.resolve(undefined)
     })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new ArrayBuffer(8) }))
+
+    mod = await import('./service-worker')
 
     await mod.sendToActiveTabOrInject({ kind: 'READ_SELECTION' })
 
-    expect(g.chrome.tabs.sendMessage).toHaveBeenCalled()
+    expect(g.chrome.runtime.sendMessage).toHaveBeenCalled()
     expect(g.chrome.scripting.executeScript).toHaveBeenCalled()
     expect(vi.mocked(getSettings)).toHaveBeenCalled()
-    const sendCalls = g.chrome.tabs.sendMessage.mock.calls
-    expect(sendCalls[0]?.[1]).toMatchObject({ rate: 1 })
+    const sendCalls = g.chrome.runtime.sendMessage.mock.calls
+    expect(sendCalls[0]?.[0]).toMatchObject({ action: 'OFFSCREEN_PLAY_AUDIO', rate: 1 })
   })
 
   it('reuses the same active tab for selection capture and playback', async () => {
@@ -94,8 +93,8 @@ describe('background.sendToActiveTabOrInject', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new ArrayBuffer(8) }))
 
     mod = await import('./service-worker')
-    g.chrome.tabs.sendMessage.mockImplementation((_: unknown, payload: Record<string, unknown>) => {
-      if (payload.kind === 'PLAY_AUDIO') {
+    g.chrome.runtime.sendMessage.mockImplementation((payload: Record<string, unknown>) => {
+      if (payload.action === 'OFFSCREEN_PLAY_AUDIO') {
         acknowledgePlayback(mod!, payload.playbackToken)
         return Promise.resolve({ ok: true })
       }
@@ -110,22 +109,19 @@ describe('background.sendToActiveTabOrInject', () => {
       world: 'MAIN',
       func: expect.any(Function),
     })
-    const sendCalls = g.chrome.tabs.sendMessage.mock.calls
-    expect(sendCalls.every(([tabId]) => tabId === 123)).toBe(true)
+    const sendCalls = g.chrome.runtime.sendMessage.mock.calls
+    expect(sendCalls.every(([payload]) => (payload as Record<string, unknown>).action === 'OFFSCREEN_PLAY_AUDIO')).toBe(true)
   })
 
-  it('bootstraps the content script and retries when sendMessage throws for READ_TEXT', async () => {
+  it('dispatches READ_TEXT playback through the offscreen document', async () => {
     const g = globalThis as unknown as { chrome: ChromeMock }
     g.chrome.tabs.query.mockResolvedValue([{ id: 55, url: 'https://example.com' }])
-    g.chrome.tabs.sendMessage.mockRejectedValueOnce(new Error('no content script'))
-    g.chrome.scripting.executeScript.mockResolvedValue(undefined)
     vi.mocked(getSettings).mockResolvedValue({ voice: 'V', rate: 1.5, ttsUrl: 'http://localhost/tts' })
-    g.chrome.runtime.sendMessage.mockResolvedValue(undefined)
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new ArrayBuffer(8) }))
 
     mod = await import('./service-worker')
-    g.chrome.tabs.sendMessage.mockImplementation((_: unknown, payload: Record<string, unknown>) => {
-      if (payload.kind === 'PLAY_AUDIO') {
+    g.chrome.runtime.sendMessage.mockImplementation((payload: Record<string, unknown>) => {
+      if (payload.action === 'OFFSCREEN_PLAY_AUDIO') {
         acknowledgePlayback(mod!, payload.playbackToken)
         return Promise.resolve({ ok: true })
       }
@@ -135,13 +131,10 @@ describe('background.sendToActiveTabOrInject', () => {
     await mod.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: 'hello world' })
 
     expect(vi.mocked(getSettings)).toHaveBeenCalled()
-    expect(g.chrome.scripting.executeScript).toHaveBeenCalledWith({
-      target: { tabId: 55 },
-      files: ['src/content/content.ts'],
-    })
-    const sendCalls = g.chrome.tabs.sendMessage.mock.calls
-    expect(sendCalls.length).toBe(2)
-    expect(sendCalls[1]?.[1]).toMatchObject({ kind: 'PLAY_AUDIO', rate: 1.5 })
+    expect(g.chrome.scripting.executeScript).not.toHaveBeenCalled()
+    const sendCalls = g.chrome.runtime.sendMessage.mock.calls
+    expect(sendCalls).toHaveLength(1)
+    expect(sendCalls[0]?.[0]).toMatchObject({ action: 'OFFSCREEN_PLAY_AUDIO', rate: 1.5 })
   })
 
   it('returns a structured error when there is no eligible tab', async () => {
@@ -158,13 +151,12 @@ describe('background.sendToActiveTabOrInject', () => {
     expect(g.chrome.scripting.executeScript).not.toHaveBeenCalled()
   })
 
-  it('logs when playback bridge bootstrap fails after sendMessage rejection', async () => {
+  it('logs when offscreen playback dispatch fails', async () => {
     const g = globalThis as unknown as { chrome: ChromeMock }
     g.chrome.tabs.query.mockResolvedValue([{ id: 99, url: 'https://example.com' }])
-    g.chrome.tabs.sendMessage.mockRejectedValue(new Error('no content script'))
     vi.mocked(getSettings).mockResolvedValue({ voice: 'V', rate: 1.0, ttsUrl: 'http://localhost/tts' })
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new ArrayBuffer(8) }))
-    g.chrome.scripting.executeScript.mockRejectedValue(new Error('cannot inject'))
+    g.chrome.runtime.sendMessage.mockRejectedValue(new Error('offscreen unavailable'))
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
@@ -179,7 +171,6 @@ describe('background.sendToActiveTabOrInject', () => {
   it('logs when getSettings rejects and does not throw', async () => {
     const g = globalThis as unknown as { chrome: ChromeMock }
     g.chrome.tabs.query.mockResolvedValue([{ id: 77, url: 'https://example.com' }])
-    g.chrome.tabs.sendMessage.mockRejectedValue(new Error('no content script'))
     vi.mocked(getSettings).mockRejectedValue(new Error('storage error'))
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -224,5 +215,31 @@ describe('background.sendToActiveTabOrInject', () => {
     })
     expect(mod.__testing.getGapAfterTransition(chunks[0].transitionAfter)).toBe(700)
     expect(mod.__testing.getGapAfterTransition(chunks[1].transitionAfter)).toBe(0)
+  })
+
+  it('keeps sentence-sized chunks within a paragraph while preserving paragraph transitions', async () => {
+    mod = await import('./service-worker')
+
+    const chunks = mod.__testing.splitTextIntoChunks('First sentence. Second sentence.\n\nThird sentence.', 400)
+
+    expect(chunks).toHaveLength(3)
+    expect(chunks[0]).toMatchObject({
+      text: 'First sentence.',
+      paragraphIndex: 0,
+      chunkIndexInParagraph: 0,
+      transitionAfter: 'sentence',
+    })
+    expect(chunks[1]).toMatchObject({
+      text: 'Second sentence.',
+      paragraphIndex: 0,
+      chunkIndexInParagraph: 1,
+      transitionAfter: 'paragraph',
+    })
+    expect(chunks[2]).toMatchObject({
+      text: 'Third sentence.',
+      paragraphIndex: 1,
+      chunkIndexInParagraph: 0,
+      transitionAfter: 'end',
+    })
   })
 })

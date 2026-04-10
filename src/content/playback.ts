@@ -4,6 +4,10 @@ const MIN_RATE = 0.5
 const MAX_RATE = 10.0
 const DEBUG = Boolean(import.meta.env.DEV) && import.meta.env.MODE !== 'test'
 
+function getHtmlAudioStartTimeoutMs(): number {
+  return ((globalThis as unknown as { __HTML_AUDIO_START_TIMEOUT_MS?: number }).__HTML_AUDIO_START_TIMEOUT_MS) ?? 2000
+}
+
 function clampRate(rate: number): number {
   if (!Number.isFinite(rate)) return 1
   return Math.min(MAX_RATE, Math.max(MIN_RATE, rate))
@@ -24,6 +28,37 @@ export class PlaybackController {
     console.debug('[readit][DBG] playback', { event, ...details })
   }
 
+  private attachCurrentAudio(audio: HTMLAudioElement, playbackToken: number): void {
+    try {
+      audio.autoplay = true
+      audio.preload = 'auto'
+      audio.muted = false
+      audio.volume = 1
+      if (DEBUG) {
+        const readinessEvents = ['loadedmetadata', 'loadeddata', 'canplay', 'canplaythrough']
+        readinessEvents.forEach((eventName) => {
+          audio.addEventListener(eventName, () => {
+            this.debug(`htmlaudio-${eventName}`, { playbackToken, readyState: audio.readyState })
+          }, { once: true })
+        })
+      }
+      const parent = typeof document !== 'undefined' ? (document.body ?? document.documentElement) : null
+      if (parent && typeof parent.appendChild === 'function' && typeof (audio as { remove?: () => void }).remove === 'function') {
+        if (typeof (audio as { setAttribute?: (name: string, value: string) => void }).setAttribute === 'function') {
+          audio.setAttribute('data-readit-playback', 'true')
+        }
+        if ('style' in audio && typeof audio.style === 'object' && audio.style) {
+          ;(audio.style as CSSStyleDeclaration).display = 'none'
+        }
+        parent.appendChild(audio)
+        this.debug('htmlaudio-attached', { playbackToken })
+      }
+      audio.load?.()
+    } catch (err) {
+      this.debug('htmlaudio-attach-failed', { playbackToken, error: String(err) })
+    }
+  }
+
   private revokeCurrentObjectUrl(): void {
     if (!this.currentObjectUrl) return
     try {
@@ -39,6 +74,9 @@ export class PlaybackController {
     try {
       this.currentAudio.pause()
       this.currentAudio.src = ''
+      if (typeof (this.currentAudio as { remove?: () => void }).remove === 'function') {
+        this.currentAudio.remove()
+      }
     } catch (e) {
       void e
     }
@@ -86,6 +124,10 @@ export class PlaybackController {
       src.connect(ctx.destination)
       sourceRef = { ctx, src }
       this.currentAudioContextSource = sourceRef
+      if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
+        this.debug('webaudio-resume-attempt', { playbackToken })
+        await ctx.resume()
+      }
       this.debug('webaudio-start', { playbackToken, rate: this.playbackRate })
 
       return await new Promise((resolve) => {
@@ -143,22 +185,32 @@ export class PlaybackController {
   private async playUint8Array(u8: Uint8Array, mime: string): Promise<{ ok: boolean; error?: string }> {
     this.stop()
 
-    const blob = new Blob([u8.buffer as ArrayBuffer], { type: mime })
+    const blob = new Blob([u8], { type: mime })
     const url = URL.createObjectURL(blob)
-    const a = new Audio()
+    const a = new Audio(url)
     a.playbackRate = this.playbackRate
     this.currentObjectUrl = url
     this.currentAudio = a
     const playbackToken = ++this.activePlaybackToken
+    this.attachCurrentAudio(a, playbackToken)
     this.debug('htmlaudio-start', { playbackToken, mime, rate: this.playbackRate })
 
     return new Promise((resolve) => {
       this.activePlaybackResolver = resolve
       let responded = false
       let fallbackStarted = false
+      let htmlAudioStarted = false
+      const htmlAudioStartTimeoutMs = getHtmlAudioStartTimeoutMs()
+      let htmlAudioStartTimeoutId: ReturnType<typeof setTimeout> | null = null
+      const clearHtmlAudioStartTimeout = () => {
+        if (!htmlAudioStartTimeoutId) return
+        clearTimeout(htmlAudioStartTimeoutId)
+        htmlAudioStartTimeoutId = null
+      }
       const finish = (ok: boolean, info?: Record<string, unknown>) => {
         if (responded || this.activePlaybackToken !== playbackToken) return
         responded = true
+        clearHtmlAudioStartTimeout()
         if (this.activePlaybackResolver === resolve) this.activePlaybackResolver = null
         this.debug('playback-finish', { playbackToken, ok, error: info?.error })
         this.clearCurrentAudio()
@@ -174,10 +226,18 @@ export class PlaybackController {
           hadHtmlAudio,
           objectUrlActive: Boolean(this.currentObjectUrl),
         })
+        clearHtmlAudioStartTimeout()
         this.clearCurrentAudio()
         const result = await this.playViaWebAudio(u8, playbackToken)
         this.debug('fallback-finish', { playbackToken, ok: result.ok, error: result.error })
         finish(result.ok, result.ok ? undefined : { error: result.error })
+      }
+
+      const markHtmlAudioStarted = () => {
+        if (htmlAudioStarted) return
+        htmlAudioStarted = true
+        clearHtmlAudioStartTimeout()
+        this.debug('htmlaudio-playing', { playbackToken })
       }
 
       const done = () => {
@@ -185,6 +245,7 @@ export class PlaybackController {
         finish(true)
       }
       a.addEventListener('ended', done)
+      a.addEventListener('playing', markHtmlAudioStarted)
 
       a.addEventListener('error', async (err) => {
         void err
@@ -192,7 +253,11 @@ export class PlaybackController {
         await tryWebAudioFallback()
       })
 
-      a.src = url
+      htmlAudioStartTimeoutId = setTimeout(() => {
+        if (htmlAudioStarted || responded || fallbackStarted || this.activePlaybackToken !== playbackToken) return
+        this.debug('htmlaudio-start-timeout', { playbackToken, timeoutMs: htmlAudioStartTimeoutMs })
+        void tryWebAudioFallback()
+      }, htmlAudioStartTimeoutMs)
       const p = a.play()
       if (p && typeof (p as Promise<unknown>).catch === 'function') {
         ;(p as Promise<unknown>).catch(async (err) => {

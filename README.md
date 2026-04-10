@@ -14,7 +14,7 @@ This README documents what the extension does, how it's implemented, current pro
 
 ## High-level architecture
 
-  - Background worker: producer/consumer pipeline that prefetches TTS audio chunks and forwards them to the content script for ordered playback.
+  - Background worker: sentence-chunk pipeline that captures selected text, fetches TTS audio, and sequences playback through an offscreen document.
   - Chunking: sentence-aware chunking (character-based) with a current max chunk size of 400 characters and a per-chunk ack-or-timeout behavior to avoid stalls.
 - `src/lib/messaging.ts` — Shared message types and helpers for extension communication.
 - `src/lib/storage.ts` — Small storage wrapper for getting/saving voice and rate settings via `chrome.storage.sync`.
@@ -24,15 +24,15 @@ This README documents what the extension does, how it's implemented, current pro
 - `docker/coqui-local/Dockerfile` & `docker/coqui-local/app.py` — FastAPI server providing TTS endpoints with 109 voices.
 
 Key implementation notes:
-- Audio playback happens in the page context using HTML5 Audio API for reliable cross-origin audio
+- Selection playback happens in an extension-owned offscreen document; popup/options test playback stays local to those extension pages
 - Settings are stored under `settings` in `chrome.storage.sync` with default voice 'p225' and rate `1.0`
 
 ## Files of interest
 
-- `src/manifest.ts` — manifest settings (permissions include `storage`, `activeTab`, `scripting`, `contextMenus`; `host_permissions` currently set to `<all_urls>`).
+- `src/manifest.ts` — manifest settings (permissions include `storage`, `activeTab`, `scripting`, `contextMenus`, `offscreen`; `host_permissions` currently set to `<all_urls>`).
   - ✅ Added Pause/Resume/Cancel playback controls (UI + keyboard commands) and tests; improved background pipeline to prefetch audio and handle per-chunk timeouts.
-- `src/background/service-worker.ts` — command and context menu logic plus injection fallback.
-- `src/content/content.ts` — message listener and `speak()` implementation.
+- `src/background/service-worker.ts` — command/context-menu logic, sentence chunking, and playback session orchestration.
+- `src/offscreen.ts` — the production playback engine for selection reads.
 - `src/popup/Popup.tsx` and `src/options/Options.tsx` — React UIs for quick controls and persistent options.
 
 ## How to build and load locally
@@ -155,5 +155,4 @@ The extension defaults to voice 'p225' but you can change this in the extension 
 - The VITS model provides high-quality speech
 - Voice 'p225' is a good default for clear, natural speech
 - Some voices may work better for different types of text
-
 

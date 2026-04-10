@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isPlayAudio, isReadSelection, isReadText, isMsg } from './messaging'
+import { isReadSelection, isReadText, isMsg } from './messaging'
 
 describe('messaging type guards', () => {
   it('identifies READ_SELECTION messages', () => {
@@ -23,12 +23,6 @@ describe('messaging type guards', () => {
   it('rejects unrelated objects', () => {
     const m = { foo: 'bar' }
     expect(isMsg(m)).toBe(false)
-  })
-
-  it('identifies PLAY_AUDIO messages including playback metadata', () => {
-    const m = { kind: 'PLAY_AUDIO', audio: 'abc', mime: 'audio/wav', rate: 1.2, playbackToken: '1:0' }
-    expect(isPlayAudio(m)).toBe(true)
-    expect(isMsg(m)).toBe(true)
   })
 
   it('rejects null/primitive values', () => {

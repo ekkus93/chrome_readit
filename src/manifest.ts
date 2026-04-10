@@ -21,7 +21,7 @@ const manifest: ManifestV3 = {
     '128': 'icon128.png',
   },
 
-  permissions: ['storage', 'activeTab', 'scripting', 'contextMenus'],
+  permissions: ['storage', 'activeTab', 'scripting', 'contextMenus', 'offscreen'],
   host_permissions: ['<all_urls>'],
 
   commands: {
@@ -43,15 +43,6 @@ const manifest: ManifestV3 = {
       description: 'Cancel/stop reading',
     },
   },
-
-  // Use SOURCE file here as well; CRXJS will hash it in dist
-  content_scripts: [
-    {
-      matches: ['<all_urls>'],
-      js: ['src/content/content.ts'],
-      run_at: 'document_idle',
-    },
-  ],
 
   // Remove web_accessible_resources unless you specifically need it
 }
