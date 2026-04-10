@@ -227,6 +227,32 @@ describe('background.sendToActiveTabOrInject', () => {
     expect(mod.__testing.getGapAfterTransition('paragraph', 0.5)).toBe(700)
   })
 
+  it('keeps dotted initialisms inside the same sentence when the sentence continues', async () => {
+    mod = await import('./service-worker')
+
+    expect(mod.__testing.splitParagraphIntoSentenceTexts('The U.S. policy changed. A.I. systems improved.')).toEqual([
+      'The U.S. policy changed.',
+      'A.I. systems improved.',
+    ])
+  })
+
+  it('still allows a sentence break after a dotted initialism', async () => {
+    mod = await import('./service-worker')
+
+    expect(mod.__testing.splitParagraphIntoSentenceTexts('We visited the U.S. It was memorable.')).toEqual([
+      'We visited the U.S.',
+      'It was memorable.',
+    ])
+  })
+
+  it('keeps common dotted abbreviations from splitting a sentence', async () => {
+    mod = await import('./service-worker')
+
+    expect(mod.__testing.splitParagraphIntoSentenceTexts('Dr. Smith spoke to Mr. Jones at 5 p.m. today.')).toEqual([
+      'Dr. Smith spoke to Mr. Jones at 5 p.m. today.',
+    ])
+  })
+
   it('keeps sentence-sized chunks within a paragraph while preserving paragraph transitions', async () => {
     mod = await import('./service-worker')
 

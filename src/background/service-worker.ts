@@ -263,6 +263,7 @@ function waitForPlaybackAck(token: string): Promise<{ ok: boolean; error?: strin
 export const __testing = {
   waitForPlaybackAck,
   resolvePendingPlaybackAck,
+  splitParagraphIntoSentenceTexts,
   splitTextIntoChunks,
   getGapAfterTransition,
   resetPlaybackAckState() {
@@ -314,6 +315,62 @@ function splitLongTextIntoChunks(text: string, maxLen = MAX_CHUNK_CHARS): string
   return out
 }
 
+function isAsciiLetter(char: string | undefined): boolean {
+  return typeof char === 'string' && /^[A-Za-z]$/.test(char)
+}
+
+const ALWAYS_CONTINUE_DOTTED_ABBREVIATIONS = new Set([
+  'mr.',
+  'mrs.',
+  'ms.',
+  'dr.',
+  'prof.',
+  'jr.',
+  'sr.',
+  'st.',
+])
+
+const LOWERCASE_CONTINUE_DOTTED_ABBREVIATIONS = new Set([
+  'u.s.',
+  'u.k.',
+  'u.n.',
+  'e.u.',
+  'a.i.',
+  'u.s.a.',
+  'd.c.',
+  'p.m.',
+  'a.m.',
+  'e.g.',
+  'i.e.',
+  'etc.',
+  'ph.d.',
+  'm.d.',
+  'b.a.',
+  'm.a.',
+])
+
+function endsWithDottedInitialism(text: string): boolean {
+  return /(?:^|[\s(["'“‘])(?:[A-Za-z]\.){2,}$/.test(text)
+}
+
+function getTrailingDottedToken(text: string): string | null {
+  const match = text.trim().match(/([A-Za-z](?:[A-Za-z.]*[A-Za-z])?\.)[)"'\]”’]*$/)
+  return match?.[1]?.toLowerCase() ?? null
+}
+
+function nextMeaningfulChar(text: string, startIndex: number, trailingSentenceClosers: string[]): string | undefined {
+  let index = startIndex
+  while (index < text.length) {
+    const char = text[index]
+    if (/\s/.test(char) || trailingSentenceClosers.includes(char)) {
+      index += 1
+      continue
+    }
+    return char
+  }
+  return undefined
+}
+
 function splitParagraphIntoSentenceTexts(paragraph: string): string[] {
   const trimmed = paragraph.trim()
   if (!trimmed) return []
@@ -325,6 +382,33 @@ function splitParagraphIntoSentenceTexts(paragraph: string): string[] {
   for (let index = 0; index < trimmed.length; index += 1) {
     const char = trimmed[index]
     if (!['.', '!', '?', ';'].includes(char)) continue
+
+    if (char === '.') {
+      const prevChar = trimmed[index - 1]
+      const nextChar = trimmed[index + 1]
+      const nextNextChar = trimmed[index + 2]
+
+      if (isAsciiLetter(prevChar) && isAsciiLetter(nextChar) && nextNextChar === '.') {
+        continue
+      }
+
+      const candidate = trimmed.slice(start, index + 1).trim()
+      const nextCharAfterPeriod = nextMeaningfulChar(trimmed, index + 1, trailingSentenceClosers)
+      const trailingToken = getTrailingDottedToken(candidate)
+
+      if (typeof nextCharAfterPeriod === 'string') {
+        if (trailingToken && ALWAYS_CONTINUE_DOTTED_ABBREVIATIONS.has(trailingToken) && isAsciiLetter(nextCharAfterPeriod)) {
+          continue
+        }
+
+        if (
+          (endsWithDottedInitialism(candidate) || (trailingToken !== null && LOWERCASE_CONTINUE_DOTTED_ABBREVIATIONS.has(trailingToken)))
+          && /^[a-z]$/.test(nextCharAfterPeriod)
+        ) {
+          continue
+        }
+      }
+    }
 
     let end = index + 1
     while (end < trimmed.length && trailingSentenceClosers.includes(trimmed[end])) {

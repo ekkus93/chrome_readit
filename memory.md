@@ -84,3 +84,11 @@
 ## 2026-04-10T04:18:14Z - GPT-5.4 - Made playback pacing relative to speech rate
 - `src/background/service-worker.ts` now scales inter-chunk pauses by the active playback rate instead of using fixed delays, so faster playback shortens the sentence/paragraph gaps and slower playback lengthens them.
 - Added regression coverage in `src/background/service-worker.test.ts` for sentence and paragraph transitions at multiple rates, then re-ran `npm run lint`, `npm run test`, and `npm run build` successfully.
+
+## 2026-04-10T04:34:07Z - GPT-5.4 - Improved dotted-acronym sentence splitting
+- The background sentence splitter now keeps dotted initialisms like `U.S.` and `A.I.` together instead of treating each period as its own sentence break, and it also avoids splitting after the final acronym period when the sentence clearly continues with lowercase text.
+- Added targeted regression coverage in `src/background/service-worker.test.ts` for both continued-sentence cases (`U.S. policy`, `A.I. systems`) and a real sentence break after `U.S.`, then re-ran `npm run lint`, `npm run test`, and `npm run build` successfully.
+
+## 2026-04-10T04:37:55Z - GPT-5.4 - Added explicit common dotted abbreviation handling
+- The sentence splitter now carries an explicit protected list of common dotted abbreviations and initialisms on top of the generic acronym heuristic. The current list includes: `Mr.`, `Mrs.`, `Ms.`, `Dr.`, `Prof.`, `Jr.`, `Sr.`, `St.`, `U.S.`, `U.K.`, `U.N.`, `E.U.`, `A.I.`, `U.S.A.`, `D.C.`, `p.m.`, `a.m.`, `e.g.`, `i.e.`, `etc.`, `Ph.D.`, `M.D.`, `B.A.`, and `M.A.`.
+- Added regression coverage in `src/background/service-worker.test.ts` showing a single sentence is preserved for `Dr. Smith spoke to Mr. Jones at 5 p.m. today.`, then re-ran `npm run lint`, `npm run test`, and `npm run build` successfully.
