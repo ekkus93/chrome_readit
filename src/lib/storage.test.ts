@@ -87,7 +87,11 @@ describe('storage.getSettings / saveSettings', () => {
 
   it('concurrent partial saves do not overwrite one another', async () => {
     const persisted: Record<string, unknown> = {}
-    const setMock = vi.fn(async (update: Record<string, unknown>) => {
+    const setMock = vi.fn(async (...args: unknown[]) => {
+      const [update] = args
+      if (!update || typeof update !== 'object' || Array.isArray(update)) {
+        throw new TypeError('storage update must be an object')
+      }
       Object.assign(persisted, update)
     })
     const getMock = vi.fn(async () => persisted)
