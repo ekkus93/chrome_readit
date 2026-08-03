@@ -107,7 +107,8 @@ if (!runtimeState.initialized) {
       return true
     }
 
-    if (DIAGNOSTICS_ENABLED && isRecord(message) && message.kind === 'PLAYBACK_DIAGNOSTICS') {
+    if (DIAGNOSTICS_ENABLED && isRecord(message)
+      && (message.kind === 'PLAYBACK_DIAGNOSTICS' || message.kind === 'PLAYBACK_DIAGNOSTICS_OFFSCREEN')) {
       sendResponse({
         ok: true,
         status: runtimeState.coordinator.getStatus(),
