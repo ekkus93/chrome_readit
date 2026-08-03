@@ -26,6 +26,7 @@ const OFFSCREEN_DOCUMENT_PATH = 'src/offscreen.html'
 const OFFSCREEN_JUSTIFICATION = 'Play selected text audio in an extension-owned document.'
 const LAST_PLAYBACK_STATUS_KEY = 'readitLastPlaybackStatus'
 const PROBE_TIMEOUT_MS = 5_000
+const DIAGNOSTICS_ENABLED = typeof __READIT_E2E__ !== 'undefined' && __READIT_E2E__
 
 type ActivePlaybackStatus = PlaybackStatus & {
   sessionId: string
@@ -360,6 +361,12 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   }
   if (isPlaybackStatusRequest(message)) {
     void queryPlaybackStatus().then(sendResponse)
+    return true
+  }
+  if (DIAGNOSTICS_ENABLED && isRecord(message) && message.kind === 'PLAYBACK_DIAGNOSTICS') {
+    void sendToOffscreen({ kind: 'PLAYBACK_DIAGNOSTICS_OFFSCREEN' })
+      .then(sendResponse)
+      .catch(() => sendResponse({ ok: false, error: 'Playback diagnostics transport failed.' }))
     return true
   }
   if (isMsg(message)) {
