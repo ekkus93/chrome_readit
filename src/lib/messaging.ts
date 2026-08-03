@@ -8,7 +8,7 @@ export type LegacyPlaybackControlRequest =
 
 export type Msg =
   | { kind: 'READ_SELECTION' }
-  | { kind: 'READ_TEXT'; text: string; source?: PlaybackSource }
+  | { kind: 'READ_TEXT'; text: string; source: PlaybackSource }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -18,9 +18,11 @@ export function isReadSelection(value: unknown): value is { kind: 'READ_SELECTIO
   return isRecord(value) && value.kind === 'READ_SELECTION'
 }
 
-export function isReadText(value: unknown): value is { kind: 'READ_TEXT'; text: string; source?: PlaybackSource } {
-  if (!isRecord(value) || value.kind !== 'READ_TEXT' || typeof value.text !== 'string') return false
-  return value.source === undefined || isPlaybackSource(value.source)
+export function isReadText(value: unknown): value is { kind: 'READ_TEXT'; text: string; source: PlaybackSource } {
+  return isRecord(value)
+    && value.kind === 'READ_TEXT'
+    && typeof value.text === 'string'
+    && isPlaybackSource(value.source)
 }
 
 export function isMsg(value: unknown): value is Msg {
