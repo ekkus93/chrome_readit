@@ -29,7 +29,22 @@ jobs:
         run: npm run typecheck
 
       - name: Run extension tests with coverage
-        run: npx vitest --run --coverage
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          npx vitest --run --coverage \
+            --reporter=default \
+            --reporter=junit \
+            --outputFile.junit=reports/vitest-junit.xml
+
+      - name: Upload Vitest JUnit report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-junit-${{ github.run_id }}
+          path: reports/vitest-junit.xml
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Build extension
         run: npm run build
