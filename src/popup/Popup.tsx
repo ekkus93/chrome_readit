@@ -3,20 +3,26 @@ import { createRoot } from 'react-dom/client'
 import { DEBUG_PARAGRAPH_FIXTURE } from '../lib/debug-fixtures'
 import {
   isPlaybackEvent,
-  isPlaybackStatus,
-  type PlaybackSource,
+  type PlaybackControlAction,
   type PlaybackStatus,
 } from '../lib/playback-protocol'
-import { DEFAULT_SETTINGS, getSettings, saveSettings, type Settings } from '../lib/storage'
+import {
+  queryPlaybackStatus,
+  requestReadSelection,
+  requestReadText,
+  sendPlaybackControl,
+} from '../lib/playback-runtime-client'
+import { DEFAULT_SETTINGS, getSettingsResult, saveSettings, type Settings } from '../lib/storage'
 import { fetchServerVoices, type VoiceOption } from '../lib/voices'
 
-function responseError(response: Record<string, unknown> | undefined, fallback: string): string {
-  if (typeof response?.error === 'string') return response.error
-  if (response?.error && typeof response.error === 'object' && 'message' in response.error) {
-    const message = (response.error as { message?: unknown }).message
-    if (typeof message === 'string') return message
-  }
-  return fallback
+function isCancellable(status: PlaybackStatus | null): boolean {
+  return status !== null
+    && status.sessionId !== null
+    && !['idle', 'completed', 'cancelled', 'failed'].includes(status.state)
+}
+
+function isPausable(status: PlaybackStatus | null): boolean {
+  return isCancellable(status) && status.state !== 'paused'
 }
 
 export default function Popup() {
@@ -26,22 +32,34 @@ export default function Popup() {
   const [voice, setVoice] = useState<string>(DEFAULT_SETTINGS.voice)
   const [ttsUrl, setTtsUrl] = useState(DEFAULT_SETTINGS.ttsUrl)
   const [ttsServerUp, setTtsServerUp] = useState<boolean | null>(null)
+  const [voiceError, setVoiceError] = useState<string | null>(null)
+  const [settingsError, setSettingsError] = useState<string | null>(null)
+  const [settingsWarning, setSettingsWarning] = useState<string | null>(null)
+  const [statusError, setStatusError] = useState<string | null>(null)
+  const [controlError, setControlError] = useState<string | null>(null)
   const [tryText, setTryText] = useState<string>('Hello from the popup')
   const [tryStatus, setTryStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
+  const [tryError, setTryError] = useState<string | null>(null)
   const [playbackStatus, setPlaybackStatus] = useState<PlaybackStatus | null>(null)
   const [readError, setReadError] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
   const persistedSettingsRef = useRef<Settings>(DEFAULT_SETTINGS)
+  const testSessionIdRef = useRef<string | null>(null)
   const completionTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     let mounted = true
-    void getSettings().then((settings) => {
+    void getSettingsResult().then(({ settings, warnings }) => {
       if (!mounted) return
       persistedSettingsRef.current = settings
       setRate(settings.rate)
       setVoice(settings.voice)
       setTtsUrl(settings.ttsUrl)
+      setSettingsWarning(warnings.map((warning) => warning.message).join(' ') || null)
+      setLoaded(true)
+    }).catch(() => {
+      if (!mounted) return
+      setSettingsError('Settings could not be loaded. Reload the extension and try again.')
       setLoaded(true)
     })
     return () => { mounted = false }
@@ -49,25 +67,47 @@ export default function Popup() {
 
   useEffect(() => {
     if (!loaded || rate === persistedSettingsRef.current.rate) return
+    let mounted = true
     const timeoutId = window.setTimeout(() => {
-      if (rate === persistedSettingsRef.current.rate) return
-      persistedSettingsRef.current = { ...persistedSettingsRef.current, rate }
-      void saveSettings({ rate })
+      void saveSettings({ rate }).then(() => {
+        if (!mounted) return
+        persistedSettingsRef.current = { ...persistedSettingsRef.current, rate }
+        setSettingsError(null)
+      }).catch(() => {
+        if (mounted) setSettingsError('The playback rate could not be saved. Change it again to retry.')
+      })
     }, 200)
-    return () => window.clearTimeout(timeoutId)
+    return () => {
+      mounted = false
+      window.clearTimeout(timeoutId)
+    }
   }, [rate, loaded])
 
   useEffect(() => {
     if (!loaded || voice === persistedSettingsRef.current.voice) return
-    persistedSettingsRef.current = { ...persistedSettingsRef.current, voice }
-    void saveSettings({ voice })
+    let mounted = true
+    void saveSettings({ voice }).then(() => {
+      if (!mounted) return
+      persistedSettingsRef.current = { ...persistedSettingsRef.current, voice }
+      setSettingsError(null)
+    }).catch(() => {
+      if (mounted) setSettingsError('The selected voice could not be saved. Select it again to retry.')
+    })
+    return () => { mounted = false }
   }, [voice, loaded])
 
   useEffect(() => {
     if (!ttsUrl) return
     let mounted = true
-    void fetchServerVoices(ttsUrl).then((serverVoices) => {
-      if (mounted) setVoices(serverVoices)
+    void fetchServerVoices(ttsUrl).then((result) => {
+      if (!mounted) return
+      if (result.ok) {
+        setVoices(result.voices)
+        setVoiceError(null)
+      } else {
+        setVoices([])
+        setVoiceError(result.error.message)
+      }
     })
     return () => { mounted = false }
   }, [ttsUrl])
@@ -77,21 +117,40 @@ export default function Popup() {
     const applyStatus = (status: PlaybackStatus) => {
       if (!mounted) return
       setPlaybackStatus(status)
-      if (status.source !== 'popup-test') return
+      setStatusError(status.persistenceDegraded
+        ? 'Playback is working, but restart-safe status persistence is unavailable.'
+        : null)
+
+      const trackedSessionId = testSessionIdRef.current
+      if (!trackedSessionId) return
+      if (status.sessionId !== trackedSessionId) {
+        if (!['idle', 'completed', 'cancelled', 'failed'].includes(status.state)) {
+          testSessionIdRef.current = null
+          setTryStatus('error')
+          setTryError('Test speech was superseded by another playback request.')
+        }
+        return
+      }
+
       if (completionTimerRef.current !== null) {
         window.clearTimeout(completionTimerRef.current)
         completionTimerRef.current = null
       }
       if (status.state === 'completed') {
+        testSessionIdRef.current = null
         setTryStatus('ok')
+        setTryError(null)
         completionTimerRef.current = window.setTimeout(() => {
           if (mounted) setTryStatus('idle')
           completionTimerRef.current = null
         }, 1200)
       } else if (status.state === 'failed' || status.state === 'cancelled') {
+        testSessionIdRef.current = null
         setTryStatus('error')
-      } else if (status.state !== 'idle') {
+        setTryError(status.error?.message ?? 'Test speech failed or was cancelled.')
+      } else {
         setTryStatus('sending')
+        setTryError(null)
       }
     }
 
@@ -101,8 +160,10 @@ export default function Popup() {
       return false
     }
     chrome.runtime.onMessage.addListener(listener)
-    chrome.runtime.sendMessage({ kind: 'SPEECH_STATUS' }, (response) => {
-      if (!chrome.runtime.lastError && isPlaybackStatus(response)) applyStatus(response)
+    void queryPlaybackStatus().then((result) => {
+      if (!mounted) return
+      if (result.ok) applyStatus(result.status)
+      else setStatusError(result.error.message)
     })
 
     return () => {
@@ -120,10 +181,14 @@ export default function Popup() {
     const probe = () => {
       try {
         chrome.runtime.sendMessage({ action: 'probe-tts' }, (response) => {
-          if (mounted) setTtsServerUp(Boolean(response?.ok))
+          if (!mounted) return
+          if (chrome.runtime.lastError) {
+            setTtsServerUp(false)
+            return
+          }
+          setTtsServerUp(Boolean(response?.ok))
         })
-      } catch (error) {
-        console.warn('readit: probe-tts failed', error)
+      } catch {
         if (mounted) setTtsServerUp(false)
       }
     }
@@ -135,78 +200,43 @@ export default function Popup() {
     }
   }, [])
 
-  async function requestRead(message: {
-    kind: 'READ_SELECTION'
-  } | {
-    kind: 'READ_TEXT'
-    text: string
-    source?: PlaybackSource
-  }) {
-    return await new Promise<Record<string, unknown> | undefined>((resolve, reject) => {
-      chrome.runtime.sendMessage(message, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message ?? 'unknown runtime error'))
-          return
-        }
-        resolve(response as Record<string, unknown> | undefined)
-      })
-    })
-  }
-
   async function handleReadSelection() {
-    try {
-      const response = await requestRead({ kind: 'READ_SELECTION' })
-      if (response?.ok) {
-        setReadError(null)
-        return
-      }
-      setReadError(responseError(response, 'Unable to start playback.'))
-    } catch (error) {
-      console.warn('readit: failed to request background read', error)
-      setReadError(String(error))
+    const response = await requestReadSelection()
+    if (response.ok) {
+      setReadError(null)
+      return
     }
+    setReadError(response.error.message)
   }
 
   async function handleDebugFixture() {
-    try {
-      const response = await requestRead({ kind: 'READ_TEXT', text: DEBUG_PARAGRAPH_FIXTURE, source: 'debug-fixture' })
-      if (response?.ok) {
-        setReadError(null)
-        return
-      }
-      setReadError(responseError(response, 'Unable to start debug playback.'))
-    } catch (error) {
-      console.warn('readit: failed to request debug fixture playback', error)
-      setReadError(String(error))
-    }
+    const response = await requestReadText(DEBUG_PARAGRAPH_FIXTURE, 'debug-fixture')
+    setReadError(response.ok ? null : response.error.message)
   }
 
   async function handleTrySpeech() {
     const text = tryText.trim()
     if (!text || tryStatus === 'sending') return
     setTryStatus('sending')
-    try {
-      const response = await requestRead({ kind: 'READ_TEXT', text, source: 'popup-test' })
-      if (!response?.ok) {
-        console.warn('[readit] popup test speech failed', responseError(response, 'Unable to start test speech.'))
-        setTryStatus('error')
-      }
-    } catch (error) {
-      console.warn('readit: try speech failed', error)
+    setTryError(null)
+    const response = await requestReadText(text, 'popup-test')
+    if (!response.ok) {
+      testSessionIdRef.current = null
       setTryStatus('error')
+      setTryError(response.error.message)
+      return
     }
+    testSessionIdRef.current = response.sessionId
   }
 
-  async function handlePause() {
-    try { chrome.runtime.sendMessage({ kind: 'PAUSE_SPEECH' }, () => {}) } catch (error) { console.warn('readit: pause failed', error) }
-  }
-
-  async function handleResume() {
-    try { chrome.runtime.sendMessage({ kind: 'RESUME_SPEECH' }, () => {}) } catch (error) { console.warn('readit: resume failed', error) }
-  }
-
-  async function handleCancel() {
-    try { chrome.runtime.sendMessage({ kind: 'CANCEL_SPEECH' }, () => {}) } catch (error) { console.warn('readit: cancel failed', error) }
+  async function handleControl(action: PlaybackControlAction) {
+    setControlError(null)
+    const response = await sendPlaybackControl(action, playbackStatus?.sessionId ?? undefined)
+    if (!response.ok) {
+      setControlError(response.error.message)
+      return
+    }
+    setPlaybackStatus((current) => current ? { ...current, state: response.state } : current)
   }
 
   const labelStyle = { display: 'block', fontWeight: 600 }
@@ -240,6 +270,7 @@ export default function Popup() {
         <p style={{ fontSize: '.8rem', color: 'GrayText', marginTop: 6 }}>
           Voices come from the configured TTS server/model.
         </p>
+        {voiceError && <div role="alert" style={{ color: '#8b0000' }}>{voiceError}</div>}
       </div>
 
       <div style={{ marginTop: 12 }}>
@@ -264,8 +295,10 @@ export default function Popup() {
             {tryStatus === 'sending' ? 'Playing…' : 'Try speech'}
           </button>
         </div>
-        {tryStatus === 'ok' && <div style={{ color: '#006400', marginTop: 8 }}>Test speech completed.</div>}
-        {tryStatus === 'error' && <div style={{ color: '#8b0000', marginTop: 8 }}>Test speech failed or was cancelled.</div>}
+        <div aria-live="polite">
+          {tryStatus === 'ok' && <div style={{ color: '#006400', marginTop: 8 }}>Test speech completed.</div>}
+          {tryStatus === 'error' && <div role="alert" style={{ color: '#8b0000', marginTop: 8 }}>{tryError ?? 'Test speech failed.'}</div>}
+        </div>
       </section>
 
       <section style={{ marginTop: 12 }}>
@@ -277,10 +310,11 @@ export default function Popup() {
           </div>
         )}
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={handlePause} style={{ padding: '8px 10px', flex: 1 }}>Pause</button>
-          <button onClick={handleResume} style={{ padding: '8px 10px', flex: 1 }}>Resume</button>
-          <button onClick={handleCancel} style={{ padding: '8px 10px', flex: 1 }}>Cancel</button>
+          <button onClick={() => handleControl('pause')} disabled={!isPausable(playbackStatus)} style={{ padding: '8px 10px', flex: 1 }}>Pause</button>
+          <button onClick={() => handleControl('resume')} disabled={playbackStatus?.state !== 'paused'} style={{ padding: '8px 10px', flex: 1 }}>Resume</button>
+          <button onClick={() => handleControl('cancel')} disabled={!isCancellable(playbackStatus)} style={{ padding: '8px 10px', flex: 1 }}>Cancel</button>
         </div>
+        {controlError && <div role="alert" style={{ color: '#8b0000', marginTop: 8 }}>{controlError}</div>}
       </section>
 
       <p style={{ fontSize: '.85rem', marginTop: 12 }}>
@@ -296,8 +330,11 @@ export default function Popup() {
           Configured TTS server available.
         </div>
       )}
+      {settingsWarning && <div role="status" style={{ marginTop: 8, color: '#7a4b00' }}>{settingsWarning}</div>}
+      {settingsError && <div role="alert" style={{ marginTop: 8, color: '#8b0000' }}>{settingsError}</div>}
+      {statusError && <div role="alert" style={{ marginTop: 8, color: '#8b0000' }}>{statusError}</div>}
       {readError && (
-        <div style={{ marginTop: 12, padding: 8, background: '#fff4f4', color: '#8b0000', borderRadius: 4 }}>
+        <div role="alert" style={{ marginTop: 12, padding: 8, background: '#fff4f4', color: '#8b0000', borderRadius: 4 }}>
           {readError}
         </div>
       )}
