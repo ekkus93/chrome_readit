@@ -43,6 +43,14 @@ jobs:
       - name: Scan full Git history for secret patterns
         run: bash scripts/check-secret-patterns.sh
 
+      - name: Validate release script syntax
+        run: |
+          set -euo pipefail
+          bash -n scripts/check-fix2-hygiene.sh
+          bash -n scripts/check-secret-patterns.sh
+          bash -n scripts/validate-real-coqui.sh
+          python -m py_compile scripts/publish-real-coqui-status.py
+
       - name: Run extension tests with coverage
         run: |
           set -euo pipefail
