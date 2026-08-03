@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { DEBUG_PARAGRAPH_FIXTURE } from '../lib/debug-fixtures'
-import { isPlaybackEvent, type PlaybackSource } from '../lib/playback-protocol'
+import {
+  isPlaybackEvent,
+  isPlaybackStatus,
+  type PlaybackSource,
+  type PlaybackStatus,
+} from '../lib/playback-protocol'
 import { DEFAULT_SETTINGS, getSettings, saveSettings, type Settings } from '../lib/storage'
 import { fetchServerVoices, type VoiceOption } from '../lib/voices'
 
@@ -23,9 +28,11 @@ export default function Popup() {
   const [ttsServerUp, setTtsServerUp] = useState<boolean | null>(null)
   const [tryText, setTryText] = useState<string>('Hello from the popup')
   const [tryStatus, setTryStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
+  const [playbackStatus, setPlaybackStatus] = useState<PlaybackStatus | null>(null)
   const [readError, setReadError] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
   const persistedSettingsRef = useRef<Settings>(DEFAULT_SETTINGS)
+  const completionTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -66,20 +73,46 @@ export default function Popup() {
   }, [ttsUrl])
 
   useEffect(() => {
-    const listener = (message: unknown) => {
-      if (!isPlaybackEvent(message) || message.status.source !== 'popup-test') return false
-      if (message.event === 'completed') {
+    let mounted = true
+    const applyStatus = (status: PlaybackStatus) => {
+      if (!mounted) return
+      setPlaybackStatus(status)
+      if (status.source !== 'popup-test') return
+      if (completionTimerRef.current !== null) {
+        window.clearTimeout(completionTimerRef.current)
+        completionTimerRef.current = null
+      }
+      if (status.state === 'completed') {
         setTryStatus('ok')
-        window.setTimeout(() => setTryStatus('idle'), 1200)
-      } else if (message.event === 'failed' || message.event === 'cancelled') {
+        completionTimerRef.current = window.setTimeout(() => {
+          if (mounted) setTryStatus('idle')
+          completionTimerRef.current = null
+        }, 1200)
+      } else if (status.state === 'failed' || status.state === 'cancelled') {
         setTryStatus('error')
-      } else {
+      } else if (status.state !== 'idle') {
         setTryStatus('sending')
       }
+    }
+
+    const listener = (message: unknown) => {
+      if (!isPlaybackEvent(message)) return false
+      applyStatus(message.status)
       return false
     }
     chrome.runtime.onMessage.addListener(listener)
-    return () => chrome.runtime.onMessage.removeListener?.(listener)
+    chrome.runtime.sendMessage({ kind: 'SPEECH_STATUS' }, (response) => {
+      if (!chrome.runtime.lastError && isPlaybackStatus(response)) applyStatus(response)
+    })
+
+    return () => {
+      mounted = false
+      chrome.runtime.onMessage.removeListener?.(listener)
+      if (completionTimerRef.current !== null) {
+        window.clearTimeout(completionTimerRef.current)
+        completionTimerRef.current = null
+      }
+    }
   }, [])
 
   useEffect(() => {
@@ -237,6 +270,12 @@ export default function Popup() {
 
       <section style={{ marginTop: 12 }}>
         <label style={labelStyle}>Playback controls</label>
+        {playbackStatus && (
+          <div aria-live="polite" style={{ fontSize: '.85rem', color: 'GrayText', marginBottom: 6 }}>
+            Playback: {playbackStatus.state}
+            {playbackStatus.totalChunks > 0 && ` — chunk ${playbackStatus.currentChunk} of ${playbackStatus.totalChunks}`}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={handlePause} style={{ padding: '8px 10px', flex: 1 }}>Pause</button>
           <button onClick={handleResume} style={{ padding: '8px 10px', flex: 1 }}>Resume</button>
