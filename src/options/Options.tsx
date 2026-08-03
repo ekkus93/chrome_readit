@@ -22,6 +22,7 @@ import {
 import { fetchServerVoices, type VoiceOption } from '../lib/voices'
 
 const ACTIVE_TEST_STATUS_POLL_MS = 100
+const TEST_SPEECH_SUPERSEDED_MESSAGE = 'Test speech was superseded by another playback request.'
 
 function isTerminalStatus(status: PlaybackStatus): boolean {
   return ['idle', 'completed', 'cancelled', 'failed'].includes(status.state)
@@ -158,7 +159,7 @@ export default function Options() {
           && status.sessionId !== testRequestBaselineSessionIdRef.current) {
           clearTrackedTest()
           setTestStatus('error')
-          setTestError('Test speech was superseded by another playback request.')
+          setTestError(TEST_SPEECH_SUPERSEDED_MESSAGE)
           return
         }
       }
@@ -168,7 +169,7 @@ export default function Options() {
         if (!isTerminalStatus(status)) {
           clearTrackedTest()
           setTestStatus('error')
-          setTestError('Test speech was superseded by another playback request.')
+          setTestError(TEST_SPEECH_SUPERSEDED_MESSAGE)
         }
         return
       }
@@ -179,7 +180,9 @@ export default function Options() {
       } else if (status.state === 'failed' || status.state === 'cancelled') {
         clearTrackedTest()
         setTestStatus('error')
-        setTestError(status.error?.message ?? 'Test speech failed or was cancelled.')
+        setTestError(status.error?.code === 'SESSION_SUPERSEDED'
+          ? TEST_SPEECH_SUPERSEDED_MESSAGE
+          : status.error?.message ?? 'Test speech failed or was cancelled.')
       } else {
         setTestStatus('sending')
         setTestError(null)
