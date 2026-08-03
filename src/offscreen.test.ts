@@ -11,24 +11,27 @@ type ChromeMock = {
   }
 }
 
+let chromeMock: ChromeMock
+
 describe('offscreen message routing', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.resetAllMocks()
 
-    const globalState = globalThis as typeof globalThis & {
+    const globalState = globalThis as unknown as {
       __readitOffscreenRuntimeState?: unknown
       chrome?: ChromeMock
     }
     delete globalState.__readitOffscreenRuntimeState
 
-    globalState.chrome = {
+    chromeMock = {
       runtime: {
         onMessage: { addListener: vi.fn() },
         sendMessage: vi.fn(),
         lastError: undefined,
       },
     }
+    globalState.chrome = chromeMock
 
     vi.stubGlobal('Audio', vi.fn(() => ({
       src: '',
@@ -48,14 +51,12 @@ describe('offscreen message routing', () => {
     vi.resetModules()
     await import('./offscreen')
 
-    const chromeObj = (globalThis as typeof globalThis & { chrome: ChromeMock }).chrome
-    expect(chromeObj.runtime.onMessage.addListener).toHaveBeenCalledTimes(1)
+    expect(chromeMock.runtime.onMessage.addListener).toHaveBeenCalledTimes(1)
   })
 
   it('returns the coordinator status through the shared protocol', async () => {
     await import('./offscreen')
-    const chromeObj = (globalThis as typeof globalThis & { chrome: ChromeMock }).chrome
-    const listener = chromeObj.runtime.onMessage.addListener.mock.calls[0]?.[0] as Listener
+    const listener = chromeMock.runtime.onMessage.addListener.mock.calls[0]?.[0] as Listener
     const sendResponse = vi.fn()
 
     const claimed = listener({ kind: PLAYBACK_STATUS }, null, sendResponse)
@@ -70,8 +71,7 @@ describe('offscreen message routing', () => {
 
   it('does not claim unrelated runtime messages', async () => {
     await import('./offscreen')
-    const chromeObj = (globalThis as typeof globalThis & { chrome: ChromeMock }).chrome
-    const listener = chromeObj.runtime.onMessage.addListener.mock.calls[0]?.[0] as Listener
+    const listener = chromeMock.runtime.onMessage.addListener.mock.calls[0]?.[0] as Listener
 
     expect(listener({ kind: 'UNRELATED' }, null, vi.fn())).toBe(false)
   })
