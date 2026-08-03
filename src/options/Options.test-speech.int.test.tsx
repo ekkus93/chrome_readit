@@ -184,9 +184,10 @@ describe('Options coordinator test speech', () => {
 
   it('sends expected-session controls and displays structured failures', async () => {
     const { sendMessage, getListener } = installChrome()
+    let queriedStatus = playbackStatus()
     sendMessage.mockImplementation(async (message: Record<string, unknown>): Promise<unknown> => {
       if (message.action === 'probe-tts') return { ok: true, status: 200 }
-      if (message.kind === PLAYBACK_STATUS) return playbackStatus()
+      if (message.kind === PLAYBACK_STATUS) return queriedStatus
       if (message.kind === PLAYBACK_CONTROL) {
         return {
           ok: false,
@@ -198,6 +199,17 @@ describe('Options coordinator test speech', () => {
 
     render(<Options />)
     await screen.findByText(/Playback: idle/i)
+    queriedStatus = playbackStatus({
+      sequence: 2,
+      state: 'playing',
+      sessionId: 'session-active',
+      requestId: 'request-active',
+      source: 'selection',
+      currentChunk: 1,
+      totalChunks: 1,
+      currentParagraph: 1,
+      totalParagraphs: 1,
+    })
     act(() => {
       getListener()?.({
         kind: PLAYBACK_EVENT,
