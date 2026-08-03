@@ -1,15 +1,16 @@
 # Chrome Read It FIX2 Real Coqui Validation Request
 
 **Requested:** 2026-08-03  
-**Request sequence:** 10  
-**Purpose:** Trigger the durable `Real Coqui Validation` workflow on this exact commit.  
+**Request sequence:** 11  
+**Purpose:** Validate deterministic post-build image resolution and continue the complete real-Coqui evidence matrix on this exact commit.  
 **Ordinary CI:** The same commit must also pass `.github/workflows/ci.yml`.  
 **Runtime status:** GitHub issue `#3` is overwritten at workflow start and completion.
 
 The runtime workflow must retain evidence for:
 
 - cold model-volume reset and clean no-cache image build;
-- deterministic exact candidate image identity, non-root container identity, and single Uvicorn worker;
+- deterministic configured image reference and immutable candidate image ID;
+- non-root container identity and single Uvicorn worker;
 - actual Coqui VCTK model initialization;
 - `/api/ping`, `/api/ready`, and `/api/voices`;
 - non-empty structurally valid WAV synthesis using the configured VCTK voice `p225`;
@@ -32,4 +33,4 @@ The same exact candidate must validate:
 - popup and Options pause/resume/cancel controls;
 - retained, fail-closed Chromium and JUnit artifacts.
 
-This request file is a durable validation entry point, not proof that the workflow passed. Record the resulting exact SHA, run IDs, attempts, job IDs, artifact IDs/digests, image identity, browser result, and runtime result in the FIX2 evidence addendum before changing the overall disposition.
+This request file is a durable validation entry point, not proof that the workflow passed. Record the resulting exact SHA, run IDs, attempts, job IDs, artifact IDs/digests, configured image reference, immutable image ID, browser result, and runtime result in the FIX2 evidence addendum before changing the overall disposition.
