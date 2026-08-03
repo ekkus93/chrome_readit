@@ -37,6 +37,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Verify TypeScript coverage surface
+        run: node scripts/check-coverage-surface.mjs
+
       - name: Run FIX2 hygiene checks
         run: bash scripts/check-fix2-hygiene.sh
 
@@ -49,27 +52,44 @@ jobs:
           bash -n scripts/check-fix2-hygiene.sh
           bash -n scripts/check-secret-patterns.sh
           bash -n scripts/validate-real-coqui.sh
-          python -m py_compile scripts/publish-real-coqui-status.py
+          python -m py_compile scripts/publish-real-coqui-status.py scripts/check_python_coverage.py
+          node --check scripts/check-coverage-surface.mjs
+          node --check scripts/check-coverage-thresholds.mjs
+          node --check scripts/coverage-policy.mjs
 
       - name: Run extension tests with coverage
         run: |
           set -euo pipefail
           mkdir -p reports
           npx vitest --run --coverage \
-            --coverage.thresholds.lines=80 \
-            --coverage.thresholds.functions=80 \
-            --coverage.thresholds.statements=80 \
-            --coverage.thresholds.branches=70 \
+            --coverage.thresholds.lines=85 \
+            --coverage.thresholds.functions=85 \
+            --coverage.thresholds.statements=85 \
+            --coverage.thresholds.branches=75 \
             --reporter=default \
             --reporter=junit \
             --outputFile.junit=reports/vitest-junit.xml
+          node scripts/check-coverage-thresholds.mjs
 
       - name: Upload Vitest JUnit report
         if: ${{ always() && hashFiles('reports/vitest-junit.xml') != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: vitest-junit-${{ github.run_id }}
+          name: vitest-junit-${{ github.run_id }}-${{ github.run_attempt }}
           path: reports/vitest-junit.xml
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload TypeScript coverage evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: typescript-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            coverage/coverage-final.json
+            coverage/index.html
+            coverage/assets
+            reports/typescript-coverage-summary.json
           if-no-files-found: error
           retention-days: 14
 
@@ -126,7 +146,7 @@ jobs:
         if: ${{ always() && hashFiles('reports/chromium-e2e.log') != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: chromium-e2e-${{ github.run_id }}
+          name: chromium-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           path: reports/chromium-e2e.log
           if-no-files-found: error
           retention-days: 14
@@ -141,8 +161,71 @@ jobs:
       - name: Install Coqui service test dependencies
         run: python -m pip install --disable-pip-version-check -r docker/coqui-local/requirements-test.txt
 
-      - name: Run Coqui service tests
-        run: python -m pytest -q docker/coqui-local/tests
+      - name: Run Coqui service tests with branch coverage
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python -m pytest --version
+          python -m coverage --version
+          python -c "import pytest_cov; print('pytest-cov', pytest_cov.__version__)"
+          python -m pytest -q docker/coqui-local/tests \
+            --cov=docker/coqui-local \
+            --cov-config=.coveragerc \
+            --cov-branch \
+            --cov-report=term-missing \
+            --cov-report=xml:reports/coqui-coverage.xml \
+            --cov-report=json:reports/coqui-coverage.json \
+            --junitxml=reports/coqui-junit.xml
+          python scripts/check_python_coverage.py
+
+      - name: Upload Python coverage evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: python-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/coqui-coverage.xml
+            reports/coqui-coverage.json
+            reports/coqui-junit.xml
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish coverage summary
+        env:
+          CI_HEAD_SHA: ${{ github.sha }}
+          CI_RUN_ID: ${{ github.run_id }}
+          CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          ts = json.loads(Path('reports/typescript-coverage-summary.json').read_text())
+          py = json.loads(Path('reports/coqui-coverage.json').read_text())
+          lines = [
+              '# Coverage evidence',
+              '',
+              f"- Head SHA: `{os.environ['CI_HEAD_SHA']}`",
+              f"- Run: `{os.environ['CI_RUN_ID']}`",
+              f"- Attempt: `{os.environ['CI_RUN_ATTEMPT']}`",
+              f"- TypeScript statements: `{ts['global']['statements']['pct']:.2f}%`",
+              f"- TypeScript branches: `{ts['global']['branches']['pct']:.2f}%`",
+              f"- TypeScript functions: `{ts['global']['functions']['pct']:.2f}%`",
+              f"- TypeScript lines: `{ts['global']['lines']['pct']:.2f}%`",
+              f"- Python statements: `{py['totals']['percent_statements_covered']:.2f}%`",
+              f"- Python branches: `{py['totals']['percent_branches_covered']:.2f}%`",
+              '- Critical TypeScript files: `passed`',
+              '- Coverage policy: `passed`',
+              '',
+          ]
+          text = '\n'.join(lines)
+          print(text)
+          summary = os.environ.get('GITHUB_STEP_SUMMARY')
+          if summary:
+              with open(summary, 'a', encoding='utf-8') as handle:
+                  handle.write(text)
+          PY
 
       - name: Validate Compose security defaults
         run: |
@@ -152,10 +235,18 @@ jobs:
           grep -q 'source: coqui_models' /tmp/chrome-readit-compose.yml
           grep -q 'target: /home/readit/.local/share/tts' /tmp/chrome-readit-compose.yml
 
-      - name: Upload coverage to Codecov
+      - name: Upload TypeScript coverage to Codecov
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238
         with:
           files: coverage/coverage-final.json
-          flags: unit
+          flags: typescript-unit
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Upload Python coverage to Codecov
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238
+        with:
+          files: reports/coqui-coverage.xml
+          flags: python-coqui
           fail_ci_if_error: true
           verbose: true
