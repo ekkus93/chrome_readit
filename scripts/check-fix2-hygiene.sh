@@ -60,7 +60,8 @@ if grep -RInE --include='*.tsx' \
   fail_match 'popup or Options ignores a runtime response with an empty callback' cat /tmp/chrome-readit-empty-callback.txt
 fi
 
-if grep -RIn -- '--legacy-peer-deps' package.json package-lock.json .github scripts 2>/dev/null \
+if grep -RIn --exclude='check-fix2-hygiene.sh' -- '--legacy-peer-deps' \
+  package.json package-lock.json .github scripts 2>/dev/null \
   >/tmp/chrome-readit-legacy-peer.txt; then
   fail_match 'the dependency-resolution bypass remains in active configuration' cat /tmp/chrome-readit-legacy-peer.txt
 fi
