@@ -145,6 +145,55 @@ describe('PlaybackCoordinator', () => {
     expect(fetchAudio).toHaveBeenCalledTimes(2)
   })
 
+  it('does not start fetched audio while synthesis is paused', async () => {
+    const audio = new FakeAudio()
+    let resolveFetch: ((value: { bytes: ArrayBuffer; mime: string }) => void) | undefined
+    const fetchAudio = vi.fn(() => new Promise<{ bytes: ArrayBuffer; mime: string }>((resolve) => {
+      resolveFetch = resolve
+    }))
+    const coordinator = new PlaybackCoordinator({
+      createAudio: () => audio as unknown as HTMLAudioElement,
+      createObjectUrl: () => 'blob:paused-fetch',
+      revokeObjectUrl: vi.fn(),
+      fetchAudio,
+      createSessionId: () => 'session-paused',
+      now: () => performance.now(),
+      sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, Math.min(milliseconds, 1))),
+      emit: vi.fn(),
+    })
+
+    const started = await coordinator.start(request('Hello.', 'request-paused'))
+    if (!started.ok) throw new Error('start failed')
+    await vi.waitFor(() => expect(resolveFetch).toBeTypeOf('function'))
+    await coordinator.control('pause', started.sessionId)
+    resolveFetch?.({ bytes: new Uint8Array([1, 2, 3]).buffer, mime: 'audio/wav' })
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(audio.trace.some((entry) => entry.startsWith('play:'))).toBe(false)
+    expect(coordinator.getStatus().state).toBe('paused')
+
+    await coordinator.control('resume', started.sessionId)
+    await waitForPlay(audio, 1)
+  })
+
+  it('classifies unexpected synthesis failures as TTS fetch failures', async () => {
+    const audio = new FakeAudio()
+    const coordinator = new PlaybackCoordinator({
+      createAudio: () => audio as unknown as HTMLAudioElement,
+      createObjectUrl: () => 'blob:unused',
+      revokeObjectUrl: vi.fn(),
+      fetchAudio: vi.fn(async () => { throw new Error('network failed') }),
+      createSessionId: () => 'session-failed',
+      now: () => 0,
+      sleep: async () => undefined,
+      emit: vi.fn(),
+    })
+
+    await coordinator.start(request('Hello.', 'request-failed'))
+    await vi.waitFor(() => expect(coordinator.getStatus().state).toBe('failed'))
+    expect(coordinator.getStatus().error?.code).toBe('TTS_FETCH_FAILED')
+  })
+
   it('pauses, resumes, and cancels the same player idempotently', async () => {
     const { audio, coordinator } = harness()
     const started = await coordinator.start(request('Hello.', 'request-1'))
