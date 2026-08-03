@@ -1,34 +1,70 @@
 /* @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { PLAYBACK_CONTROL, PLAYBACK_EVENT, PLAYBACK_STATUS } from '../lib/playback-protocol'
 import Popup from './Popup'
+
+type RuntimeListener = (message: unknown) => boolean
+
+function status(state: string, sessionId: string | null = null) {
+  const active = sessionId !== null
+  return {
+    kind: PLAYBACK_STATUS,
+    sequence: active ? 2 : 0,
+    state,
+    sessionId,
+    requestId: active ? 'request-active' : null,
+    source: active ? 'selection' : null,
+    currentChunk: active ? 1 : 0,
+    totalChunks: active ? 1 : 0,
+    currentParagraph: active ? 1 : 0,
+    totalParagraphs: active ? 1 : 0,
+  }
+}
+
+function installChrome() {
+  let listener: RuntimeListener | undefined
+  const sendMessage = vi.fn(async (message: Record<string, unknown>) => {
+    if (message.kind === PLAYBACK_STATUS) return status('idle')
+    if (message.kind === PLAYBACK_CONTROL) {
+      return {
+        ok: true,
+        sessionId: message.expectedSessionId ?? null,
+        state: message.action === 'pause' ? 'paused' : message.action === 'resume' ? 'playing' : 'cancelled',
+      }
+    }
+    if (message.kind === 'READ_SELECTION') {
+      return { ok: true, accepted: true, requestId: 'request-read', sessionId: 'session-read' }
+    }
+    return { ok: false }
+  })
+  ;(globalThis as unknown as { chrome?: unknown }).chrome = {
+    runtime: {
+      sendMessage,
+      lastError: undefined,
+      onMessage: {
+        addListener: vi.fn((next: RuntimeListener) => { listener = next }),
+        removeListener: vi.fn(),
+      },
+    },
+    storage: {
+      sync: {
+        get: vi.fn(() => Promise.resolve({ rate: 1, voice: 'p225', ttsUrl: 'http://localhost:5002/api/tts' })),
+        set: vi.fn(() => Promise.resolve()),
+      },
+    },
+  }
+  return { sendMessage, getListener: () => listener }
+}
 
 describe('Popup playback control buttons', () => {
   beforeEach(() => {
-    vi.resetModules()
     vi.resetAllMocks()
-    ;(globalThis as unknown as { chrome?: unknown }).chrome = {
-      runtime: {
-        sendMessage: vi.fn(),
-        lastError: undefined,
-        onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
-      },
-      storage: {
-        sync: {
-          get: vi.fn(() => Promise.resolve({ rate: 1.0, voice: '', ttsUrl: 'http://localhost:5002/api/tts' })),
-          set: vi.fn(() => Promise.resolve()),
-        },
-      },
-    }
     vi.stubGlobal('fetch', vi.fn((input: unknown) => {
-      const url = String(input)
-      if (url.endsWith('/api/voices')) {
-        return Promise.resolve(new Response(JSON.stringify({ voices: ['p225'] }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }))
+      if (String(input).endsWith('/api/voices')) {
+        return Promise.resolve(new Response(JSON.stringify({ voices: ['p225'] }), { status: 200 }))
       }
       return Promise.resolve(new Response(null, { status: 404 }))
     }))
@@ -39,56 +75,82 @@ describe('Popup playback control buttons', () => {
     vi.unstubAllGlobals()
   })
 
-  function getGlobal(path: string[]) {
-    let object: unknown = globalThis
-    for (const part of path) {
-      if (object && typeof object === 'object' && part in (object as Record<string, unknown>)) {
-        object = (object as Record<string, unknown>)[part]
-      } else return undefined
-    }
-    return object
-  }
-
-  it('sends pause/resume/cancel messages when buttons are clicked', async () => {
+  it('gates controls by state and sends shared expected-session messages', async () => {
+    const { sendMessage, getListener } = installChrome()
     render(<Popup />)
-    const user = userEvent.setup()
 
-    await user.click(await screen.findByRole('button', { name: /^Pause$/i }))
-    await user.click(await screen.findByRole('button', { name: /^Resume$/i }))
-    await user.click(await screen.findByRole('button', { name: /^Cancel$/i }))
+    expect(await screen.findByRole('button', { name: /^Pause$/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /^Resume$/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /^Cancel$/i })).toBeDisabled()
 
-    const runtimeSend = getGlobal(['chrome', 'runtime', 'sendMessage']) as { mock?: { calls?: unknown[][] } }
-    const calls = runtimeSend.mock?.calls ?? []
-    expect(calls.some((call) => (call[0] as Record<string, unknown>)?.kind === 'PAUSE_SPEECH')).toBe(true)
-    expect(calls.some((call) => (call[0] as Record<string, unknown>)?.kind === 'RESUME_SPEECH')).toBe(true)
-    expect(calls.some((call) => (call[0] as Record<string, unknown>)?.kind === 'CANCEL_SPEECH')).toBe(true)
+    act(() => {
+      getListener()?.({
+        kind: PLAYBACK_EVENT,
+        event: 'state-changed',
+        atMs: 1,
+        status: status('playing', 'session-active'),
+      })
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /^Pause$/i }))
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      kind: PLAYBACK_CONTROL,
+      action: 'pause',
+      expectedSessionId: 'session-active',
+    })
+
+    act(() => {
+      getListener()?.({
+        kind: PLAYBACK_EVENT,
+        event: 'state-changed',
+        atMs: 2,
+        status: status('paused', 'session-active'),
+      })
+    })
+    await userEvent.click(screen.getByRole('button', { name: /^Resume$/i }))
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      kind: PLAYBACK_CONTROL,
+      action: 'resume',
+      expectedSessionId: 'session-active',
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /^Cancel$/i }))
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      kind: PLAYBACK_CONTROL,
+      action: 'cancel',
+      expectedSessionId: 'session-active',
+    })
   })
 
   it('updates and persists speech rate changes', async () => {
+    const { sendMessage } = installChrome()
+    void sendMessage
     render(<Popup />)
     fireEvent.change(await screen.findByLabelText(/^Rate/i), { target: { value: '1.7' } })
 
-    const chromeObject = getGlobal(['chrome']) as { storage: { sync: { set: { mock?: { calls?: unknown[][] } } } } }
-    await waitFor(() => {
-      const calls = chromeObject.storage.sync.set.mock?.calls ?? []
-      expect(calls.length).toBeGreaterThan(0)
-      expect(calls.at(-1)?.[0]).toMatchObject({ rate: 1.7 })
-    })
+    const chromeObject = (globalThis as unknown as {
+      chrome: { storage: { sync: { set: ReturnType<typeof vi.fn> } } }
+    }).chrome
+    await waitFor(() => expect(chromeObject.storage.sync.set).toHaveBeenCalledWith({ rate: 1.7 }))
     expect(await screen.findByText(/Rate:\s*1\.70/)).toBeTruthy()
   })
 
   it.each([
-    ['No selected text on the active page.', 'No selected text on the active page.'],
-    ['No TTS service URL is configured.', 'No TTS service URL is configured.'],
-    ['Playback not supported on this page', 'Playback not supported on this page'],
-  ])('shows a useful read error: %s', async (error, expected) => {
-    const chromeObject = getGlobal(['chrome']) as { runtime: { sendMessage: ReturnType<typeof vi.fn> } }
-    chromeObject.runtime.sendMessage.mockImplementation((message: Record<string, unknown>, callback?: (value: unknown) => void) => {
-      if (message.kind === 'READ_SELECTION') callback?.({ ok: false, error })
+    ['No selected text on the active page.'],
+    ['No TTS service URL is configured.'],
+    ['Playback not supported on this page'],
+  ])('shows a structured read error: %s', async (message) => {
+    const { sendMessage } = installChrome()
+    sendMessage.mockImplementation(async (request: Record<string, unknown>) => {
+      if (request.kind === PLAYBACK_STATUS) return status('idle')
+      if (request.kind === 'READ_SELECTION') {
+        return { ok: false, accepted: false, error: { code: 'INVALID_REQUEST', message } }
+      }
+      return { ok: false }
     })
 
     render(<Popup />)
     await userEvent.click(await screen.findByRole('button', { name: /Read selected text/i }))
-    expect(await screen.findByText(expected)).toBeTruthy()
+    expect(await screen.findByText(message)).toBeTruthy()
   })
 })
