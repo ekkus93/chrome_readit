@@ -6,9 +6,15 @@ import {
 } from './lib/playback-protocol'
 import { createBrowserPlaybackCoordinator, type PlaybackCoordinator } from './offscreen/playback-coordinator'
 
+const DIAGNOSTICS_ENABLED = import.meta.env.DEV || import.meta.env.MODE === 'test'
+
 type OffscreenRuntimeState = {
   initialized: boolean
   coordinator: PlaybackCoordinator
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 function emitPlaybackEvent(event: PlaybackEvent): void {
@@ -64,6 +70,15 @@ if (!runtimeState.initialized) {
 
       if (isPlaybackStatusRequest(message)) {
         sendResponse(runtimeState.coordinator.getStatus())
+        return true
+      }
+
+      if (DIAGNOSTICS_ENABLED && isRecord(message) && message.kind === 'PLAYBACK_DIAGNOSTICS') {
+        sendResponse({
+          ok: true,
+          status: runtimeState.coordinator.getStatus(),
+          events: runtimeState.coordinator.getDiagnosticEvents(),
+        })
         return true
       }
     } catch (error) {
