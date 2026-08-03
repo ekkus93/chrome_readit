@@ -26,9 +26,16 @@ jobs:
   real-coqui:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REAL_COQUI_STATUS_ISSUE: '3'
+
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Publish runtime start
+        run: python scripts/publish-real-coqui-status.py --phase in_progress
 
       - name: Record environment
         run: |
@@ -72,107 +79,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish real Coqui status issue
+      - name: Publish runtime completion
         if: ${{ always() }}
         env:
-          GH_TOKEN: ${{ github.token }}
           JOB_STATUS: ${{ job.status }}
-          STATUS_ISSUE: '3'
-        run: |
-          set -euo pipefail
-          python <<'PY'
-          import json
-          import os
-          import subprocess
-          import time
-          from datetime import datetime, timezone
-
-          repo = os.environ['GITHUB_REPOSITORY']
-          run_id = int(os.environ['GITHUB_RUN_ID'])
-          attempt = int(os.environ['GITHUB_RUN_ATTEMPT'])
-          sha = os.environ['GITHUB_SHA']
-          conclusion = os.environ['JOB_STATUS']
-          issue_number = int(os.environ['STATUS_ISSUE'])
-          artifact_name = f'real-coqui-{run_id}-{attempt}'
-          artifact = None
-
-          for _ in range(6):
-              raw = subprocess.run(
-                  ['gh', 'api', f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100'],
-                  check=True,
-                  text=True,
-                  capture_output=True,
-              )
-              payload = json.loads(raw.stdout)
-              artifact = next(
-                  (item for item in payload.get('artifacts', []) if item.get('name') == artifact_name),
-                  None,
-              )
-              if artifact is not None:
-                  break
-              time.sleep(2)
-
-          artifact_id = artifact.get('id') if isinstance(artifact, dict) else None
-          artifact_digest = artifact.get('digest') if isinstance(artifact, dict) else None
-          artifact_size = artifact.get('size_in_bytes') if isinstance(artifact, dict) else None
-          observed = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-          body = '\n'.join([
-              '<!-- maintained by .github/workflows/real-coqui-validation.yml -->',
-              '# Latest Real Coqui Validation',
-              '',
-              f'- **Status:** `completed`',
-              f'- **Conclusion:** `{conclusion}`',
-              f'- **Run:** `{run_id}`',
-              f'- **Attempt:** `{attempt}`',
-              f'- **Commit:** `{sha}`',
-              f'- **Artifact:** `{artifact_name}`',
-              f'- **Artifact ID:** `{artifact_id if artifact_id is not None else "pending"}`',
-              f'- **Artifact digest:** `{artifact_digest if artifact_digest is not None else "pending"}`',
-              f'- **Artifact bytes:** `{artifact_size if artifact_size is not None else "pending"}`',
-              f'- **Observed:** `{observed}`',
-              '',
-              '## Machine-readable status',
-              '',
-              '```json',
-              json.dumps({
-                  'schema_version': 1,
-                  'workflow': {
-                      'name': 'Real Coqui Validation',
-                      'run_id': run_id,
-                      'run_attempt': attempt,
-                      'head_sha': sha,
-                      'conclusion': conclusion,
-                      'run_url': f'https://github.com/{repo}/actions/runs/{run_id}',
-                  },
-                  'artifact': {
-                      'name': artifact_name,
-                      'id': artifact_id,
-                      'digest': artifact_digest,
-                      'size_in_bytes': artifact_size,
-                  },
-              }, indent=2, sort_keys=True),
-              '```',
-              '',
-              'This issue is overwritten by the durable real-model validation workflow. It is not a historical log.',
-              '',
-          ])
-
-          issue = json.loads(subprocess.run(
-              ['gh', 'api', f'repos/{repo}/issues/{issue_number}'],
-              check=True,
-              text=True,
-              capture_output=True,
-          ).stdout)
-          marker = '<!-- maintained by .github/workflows/real-coqui-validation.yml -->'
-          if not isinstance(issue.get('body'), str) or not issue['body'].startswith(marker):
-              raise SystemExit('Runtime status issue ownership marker is missing.')
-
-          patch_path = os.path.join(os.environ['RUNNER_TEMP'], 'real-coqui-status.json')
-          with open(patch_path, 'w', encoding='utf-8') as handle:
-              json.dump({'body': body}, handle)
-          subprocess.run([
-              'gh', 'api', '--method', 'PATCH',
-              f'repos/{repo}/issues/{issue_number}',
-              '--input', patch_path,
-          ], check=True)
-          PY
+        run: >-
+          python scripts/publish-real-coqui-status.py
+          --phase completed
+          --conclusion "${JOB_STATUS}"
