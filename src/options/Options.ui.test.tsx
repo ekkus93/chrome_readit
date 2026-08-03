@@ -3,12 +3,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { PLAYBACK_CONTROL, PLAYBACK_EVENT, PLAYBACK_STATUS } from '../lib/playback-protocol'
+import { PLAYBACK_CONTROL, PLAYBACK_EVENT, PLAYBACK_STATUS, type PlaybackStatus } from '../lib/playback-protocol'
 import Options from './Options'
 
 type RuntimeListener = (message: unknown) => boolean
 
-function status(state: string, sessionId: string | null = null) {
+function status(state: PlaybackStatus['state'], sessionId: string | null = null): PlaybackStatus {
   const active = sessionId !== null
   return {
     kind: PLAYBACK_STATUS,
@@ -21,12 +21,14 @@ function status(state: string, sessionId: string | null = null) {
     totalChunks: active ? 1 : 0,
     currentParagraph: active ? 1 : 0,
     totalParagraphs: active ? 1 : 0,
+    ...(state === 'cancelled' ? { error: { code: 'CANCELLED' as const, message: 'Playback was cancelled.' } } : {}),
+    ...(state === 'failed' ? { error: { code: 'INTERNAL_PLAYBACK_ERROR' as const, message: 'Playback failed.' } } : {}),
   }
 }
 
 function installChrome() {
   let listener: RuntimeListener | undefined
-  const sendMessage = vi.fn(async (message: Record<string, unknown>) => {
+  const sendMessage = vi.fn(async (message: Record<string, unknown>): Promise<unknown> => {
     if (message.kind === PLAYBACK_STATUS) return status('idle')
     if (message.kind === PLAYBACK_CONTROL) {
       return {
@@ -76,9 +78,9 @@ describe('Options playback control buttons', () => {
     const { sendMessage, getListener } = installChrome()
     render(<Options />)
 
-    expect(await screen.findByRole('button', { name: /^Pause$/i })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /^Resume$/i })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /^Stop$/i })).toBeDisabled()
+    expect((await screen.findByRole('button', { name: /^Pause$/i }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /^Resume$/i }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /^Stop$/i }) as HTMLButtonElement).disabled).toBe(true)
 
     act(() => {
       getListener()?.({
