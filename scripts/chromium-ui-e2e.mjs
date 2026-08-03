@@ -12,6 +12,7 @@ const EXTENSION_NAME = 'Read It – Reader'
 const PLAYBACK_STATUS = 'PLAYBACK_STATUS'
 const PLAYBACK_DIAGNOSTICS = 'PLAYBACK_DIAGNOSTICS'
 const LONG_AUDIO_MARKER = 'UI_REPLACEMENT_FIXTURE'
+const extensionTargetBySession = new Map()
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -240,7 +241,12 @@ async function launchChrome(initialUrl) {
         new Promise((resolveExit) => chromeProcess.once('exit', resolveExit)),
         delay(3_000).then(() => chromeProcess.kill('SIGKILL')),
       ])
-      await rm(profileDirectory, { recursive: true, force: true })
+      await rm(profileDirectory, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      })
     },
   }
 }
@@ -283,10 +289,17 @@ async function findWorker(cdp, port) {
 async function createExtensionPage(cdp, extensionId, path) {
   const created = await cdp.send('Target.createTarget', { url: `chrome-extension://${extensionId}/${path}` })
   const sessionId = await attachTarget(cdp, created.targetId)
+  extensionTargetBySession.set(sessionId, created.targetId)
+  await cdp.send('Target.activateTarget', { targetId: created.targetId })
   await waitFor(`${path} ready`, async () => (
     await evaluate(cdp, sessionId, 'document.readyState') === 'complete'
   ))
   return { targetId: created.targetId, sessionId }
+}
+
+async function activateExtensionSession(cdp, sessionId) {
+  const targetId = extensionTargetBySession.get(sessionId)
+  if (targetId) await cdp.send('Target.activateTarget', { targetId })
 }
 
 async function sendExtensionMessage(cdp, sessionId, message) {
@@ -319,6 +332,7 @@ async function waitForState(cdp, sessionId, playbackSessionId, state) {
 }
 
 async function setReactValue(cdp, sessionId, selector, value) {
+  await activateExtensionSession(cdp, sessionId)
   const changed = await evaluate(cdp, sessionId, `(() => {
     const element = document.querySelector(${JSON.stringify(selector)})
     if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return false
@@ -333,6 +347,7 @@ async function setReactValue(cdp, sessionId, selector, value) {
 }
 
 async function clickButton(cdp, sessionId, label) {
+  await activateExtensionSession(cdp, sessionId)
   const result = await evaluate(cdp, sessionId, `(() => {
     const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === ${JSON.stringify(label)})
     if (!(button instanceof HTMLButtonElement)) return { found: false, disabled: false }
@@ -345,6 +360,7 @@ async function clickButton(cdp, sessionId, label) {
 }
 
 async function clickSelector(cdp, sessionId, selector) {
+  await activateExtensionSession(cdp, sessionId)
   const clicked = await evaluate(cdp, sessionId, `(() => {
     const button = document.querySelector(${JSON.stringify(selector)})
     if (!(button instanceof HTMLButtonElement) || button.disabled) return false
@@ -370,12 +386,14 @@ async function setSelection(cdp, sessionId, text) {
 }
 
 async function waitForBodyText(cdp, sessionId, text) {
+  await activateExtensionSession(cdp, sessionId)
   await waitFor(`UI text ${text}`, async () => (
     await evaluate(cdp, sessionId, `document.body.innerText.includes(${JSON.stringify(text)})`)
   ))
 }
 
 async function buttonEnabled(cdp, sessionId, label) {
+  await activateExtensionSession(cdp, sessionId)
   return await evaluate(cdp, sessionId, `(() => {
     const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === ${JSON.stringify(label)})
     return button instanceof HTMLButtonElement && !button.disabled
@@ -406,14 +424,15 @@ async function main() {
     const selectionSessionId = await attachTarget(cdp, selectionTarget.id)
     const popup = await createExtensionPage(cdp, extensionId, 'src/popup.html')
     const options = await createExtensionPage(cdp, extensionId, 'src/options.html')
+    await activateExtensionSession(cdp, popup.sessionId)
     await waitFor('popup controls', async () => await evaluate(cdp, popup.sessionId, 'Boolean(document.querySelector("#tryText"))'))
+    await activateExtensionSession(cdp, options.sessionId)
     await waitFor('Options controls', async () => await evaluate(cdp, options.sessionId, 'Boolean(document.querySelector("#test"))'))
 
     const diagnosticsBefore = await queryDiagnostics(cdp, popup.sessionId)
     const sessions = []
 
     await setSelection(cdp, selectionSessionId, `${LONG_AUDIO_MARKER} selection one.`)
-    await cdp.send('Target.activateTarget', { targetId: selectionTarget.id })
     await clickSelector(cdp, popup.sessionId, 'button[aria-label="Read selected text"]')
     const selectionOne = await waitForActiveSource(cdp, popup.sessionId, 'selection')
     sessions.push(selectionOne.sessionId)
@@ -431,7 +450,6 @@ async function main() {
     await waitFor('popup test button recovery', () => buttonEnabled(cdp, popup.sessionId, 'Try speech'))
 
     await setSelection(cdp, selectionSessionId, `${LONG_AUDIO_MARKER} selection two.`)
-    await cdp.send('Target.activateTarget', { targetId: selectionTarget.id })
     await clickSelector(cdp, popup.sessionId, 'button[aria-label="Read selected text"]')
     const selectionTwo = await waitForActiveSource(cdp, popup.sessionId, 'selection', optionsTest.sessionId)
     sessions.push(selectionTwo.sessionId)
@@ -439,7 +457,6 @@ async function main() {
     await waitFor('Options test button recovery', () => buttonEnabled(cdp, options.sessionId, 'Test speech'))
 
     await setSelection(cdp, selectionSessionId, `${LONG_AUDIO_MARKER} selection three.`)
-    await cdp.send('Target.activateTarget', { targetId: selectionTarget.id })
     await clickSelector(cdp, popup.sessionId, 'button[aria-label="Read selected text"]')
     const selectionThree = await waitForActiveSource(cdp, popup.sessionId, 'selection', selectionTwo.sessionId)
     sessions.push(selectionThree.sessionId)
