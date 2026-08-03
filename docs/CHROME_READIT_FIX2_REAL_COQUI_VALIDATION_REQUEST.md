@@ -1,7 +1,7 @@
 # Chrome Read It FIX2 Real Coqui Validation Request
 
 **Requested:** 2026-08-03  
-**Request sequence:** 3  
+**Request sequence:** 4  
 **Purpose:** Trigger the durable `Real Coqui Validation` workflow on this exact commit.  
 **Ordinary CI:** The same commit must also pass `.github/workflows/ci.yml`.  
 **Runtime status:** GitHub issue `#3` is overwritten at workflow start and completion.
