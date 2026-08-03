@@ -43,8 +43,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p reports/real-coqui
-          docker image inspect chrome_readit-coqui-local \
-            > reports/real-coqui/image-inspect.json 2>/dev/null || true
+          image_id="$(docker compose -f docker/docker-compose.yml images -q coqui-local)"
+          if [[ -n "${image_id}" ]]; then
+            docker image inspect "${image_id}" \
+              > reports/real-coqui/image-inspect.json 2>/dev/null || true
+          fi
           docker volume ls --format json \
             > reports/real-coqui/volumes.json 2>/dev/null || true
           docker compose -f docker/docker-compose.yml logs --no-color coqui-local \
