@@ -9,10 +9,19 @@ PORT="${COQUI_PORT:-5002}"
 BASE_URL="http://127.0.0.1:${PORT}"
 READY_TIMEOUT_SECONDS="${REAL_COQUI_READY_TIMEOUT_SECONDS:-900}"
 KEEP_RUNNING="${REAL_COQUI_KEEP_RUNNING:-0}"
+PREFERRED_VOICE="${REAL_COQUI_VOICE:-p225}"
 
 mkdir -p "${ARTIFACT_DIR}"
 
+capture_runtime_evidence() {
+  docker compose -f "${COMPOSE_FILE}" ps --format json \
+    >"${ARTIFACT_DIR}/compose-ps-final.json" 2>/dev/null || true
+  docker compose -f "${COMPOSE_FILE}" logs --no-color coqui-local \
+    >"${ARTIFACT_DIR}/final-container.log" 2>&1 || true
+}
+
 cleanup() {
+  capture_runtime_evidence
   if [[ "${KEEP_RUNNING}" != "1" ]]; then
     docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
   fi
@@ -49,8 +58,8 @@ docker compose -f "${COMPOSE_FILE}" up -d coqui-local
 deadline=$((SECONDS + READY_TIMEOUT_SECONDS))
 until curl --silent --fail "${BASE_URL}/api/ready" >"${ARTIFACT_DIR}/ready.json"; do
   if (( SECONDS >= deadline )); then
-    docker compose -f "${COMPOSE_FILE}" logs --no-color coqui-local \
-      >"${ARTIFACT_DIR}/startup-timeout.log" 2>&1 || true
+    capture_runtime_evidence
+    cp "${ARTIFACT_DIR}/final-container.log" "${ARTIFACT_DIR}/startup-timeout.log" 2>/dev/null || true
     fail "service did not become ready within ${READY_TIMEOUT_SECONDS}s"
   fi
   sleep 2
@@ -59,29 +68,29 @@ done
 request_json GET "${BASE_URL}/api/ping" >"${ARTIFACT_DIR}/ping.json"
 request_json GET "${BASE_URL}/api/voices" >"${ARTIFACT_DIR}/voices.json"
 
-python - "${ARTIFACT_DIR}/ready.json" "${ARTIFACT_DIR}/voices.json" <<'PY'
+voice="$(python - "${ARTIFACT_DIR}/ready.json" "${ARTIFACT_DIR}/voices.json" "${PREFERRED_VOICE}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 ready = json.loads(Path(sys.argv[1]).read_text())
-voices = json.loads(Path(sys.argv[2]).read_text())
+voices = json.loads(Path(sys.argv[2]).read_text()).get("voices")
+preferred = sys.argv[3]
 if ready.get("ok") is not True or ready.get("ready") is not True:
     raise SystemExit("readiness response is not ready")
 if ready.get("accepting_requests") is not True:
     raise SystemExit("readiness response is not accepting requests")
-if not isinstance(voices.get("voices"), list):
+if not isinstance(voices, list):
     raise SystemExit("voices response does not contain a list")
-print(voices["voices"][0] if voices["voices"] else "")
-PY
-voice="$(python - "${ARTIFACT_DIR}/voices.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-voices = json.loads(Path(sys.argv[1]).read_text()).get("voices", [])
-print(voices[0] if voices else "")
+if preferred in voices:
+    print(preferred)
+elif voices:
+    print(voices[0])
+else:
+    print("")
 PY
 )"
+printf '%s\n' "${voice}" >"${ARTIFACT_DIR}/selected-voice.txt"
 
 python - "${voice}" >"${ARTIFACT_DIR}/request.json" <<'PY'
 import json
@@ -172,4 +181,5 @@ docker run --rm -v "${model_volume}:/models:ro" "${image_id}" \
   sh -c 'find /models -mindepth 1 -maxdepth 4 -type f -print -quit | grep -q .' \
   || fail "model cache volume is empty after recreation"
 
+capture_runtime_evidence
 printf 'Real Coqui validation passed. Evidence: %s\n' "${ARTIFACT_DIR}"
