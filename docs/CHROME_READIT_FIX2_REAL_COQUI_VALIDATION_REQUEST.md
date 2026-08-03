@@ -1,8 +1,8 @@
 # Chrome Read It FIX2 Real Coqui Validation Request
 
 **Requested:** 2026-08-03  
-**Request sequence:** 18  
-**Purpose:** Validate the comprehensive test-coverage hardening implementation, expanded TypeScript and Python branch-coverage gates, permanent attempt-specific evidence artifacts, complete Chromium Block 13 matrix, and real-Coqui runtime matrix together on one exact final candidate.  
+**Request sequence:** 19  
+**Purpose:** Validate the comprehensive test-coverage hardening implementation, the stale Popup/Options playback-control session-race fix, all 290 TypeScript tests, all 57 Python tests, expanded TypeScript and Python branch-coverage gates, permanent attempt-specific evidence artifacts, complete Chromium Block 13 matrix, and real-Coqui runtime matrix together on one exact final candidate.  
 **Ordinary CI:** The same commit must also pass `.github/workflows/ci.yml`.  
 **Runtime status:** GitHub issue `#3` is overwritten at workflow start and completion.
 
@@ -25,6 +25,7 @@ The runtime workflow must retain evidence for:
 The same exact candidate must validate:
 
 - the complete intended TypeScript production coverage surface and exact approved exclusions;
+- all 290 TypeScript tests and all 57 Python tests;
 - global TypeScript statement, line, function, and branch thresholds;
 - critical-file TypeScript line and branch floors;
 - Python statement and branch thresholds for the Coqui service and healthcheck;
@@ -47,6 +48,7 @@ The same exact candidate must validate:
 - selection → popup → Options → selection → selection replacement;
 - explicit terminal `SESSION_SUPERSEDED` event normalization on Popup and Options;
 - popup and Options supersession recovery while the superseded surface is foregrounded;
+- Popup and Options refreshing authoritative playback status before Pause, Resume, or Cancel so controls cannot target a superseded session;
 - popup and Options pause/resume/cancel controls;
 - one bounded retry when a Chrome profile cleanup race masks the harness verdict, with no conversion of an unverified run into success;
 - retained, fail-closed Chromium and JUnit artifacts.
