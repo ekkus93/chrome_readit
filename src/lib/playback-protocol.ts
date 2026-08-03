@@ -6,6 +6,8 @@ export const PLAYBACK_EVENT = 'PLAYBACK_EVENT' as const
 export type PlaybackSource = 'selection' | 'popup-test' | 'options-test' | 'debug-fixture'
 export type PlaybackState = 'idle' | 'starting' | 'synthesizing' | 'playing' | 'paused' | 'waiting' | 'completed' | 'cancelled' | 'failed'
 export type PlaybackControlAction = 'pause' | 'resume' | 'cancel'
+export type PlaybackCleanupStage = 'pause' | 'clear-source' | 'reload' | 'revoke-url' | 'accounting'
+export type PlaybackTransition = 'continuation' | 'sentence' | 'paragraph' | 'end'
 
 export type PlaybackErrorCode =
   | 'INVALID_REQUEST'
@@ -18,8 +20,12 @@ export type PlaybackErrorCode =
   | 'TTS_EMPTY_RESPONSE'
   | 'TTS_RESPONSE_TOO_LARGE'
   | 'TTS_FETCH_FAILED'
+  | 'TTS_TIMEOUT'
   | 'AUDIO_PLAYBACK_FAILED'
+  | 'AUDIO_CLEANUP_FAILED'
+  | 'INTERNAL_PLAYBACK_ERROR'
   | 'OFFSCREEN_INTERRUPTED'
+  | 'OFFSCREEN_UNSUPPORTED'
   | 'SESSION_SUPERSEDED'
   | 'SESSION_NOT_FOUND'
   | 'CANCELLED'
@@ -28,6 +34,7 @@ export type PlaybackError = {
   code: PlaybackErrorCode
   message: string
   status?: number
+  stage?: PlaybackCleanupStage
 }
 
 export type PlaybackSettingsSnapshot = {
@@ -64,6 +71,7 @@ export type PlaybackStatusRequest = {
 
 export type PlaybackStatus = {
   kind: typeof PLAYBACK_STATUS
+  sequence: number
   state: PlaybackState
   sessionId: string | null
   requestId: string | null
@@ -72,6 +80,7 @@ export type PlaybackStatus = {
   totalChunks: number
   currentParagraph: number
   totalParagraphs: number
+  persistenceDegraded?: boolean
   error?: PlaybackError
 }
 
@@ -82,6 +91,7 @@ export type PlaybackEventName =
   | 'chunk-ended'
   | 'completed'
   | 'cancelled'
+  | 'superseded'
   | 'failed'
 
 export type PlaybackEvent = {
@@ -90,7 +100,7 @@ export type PlaybackEvent = {
   atMs: number
   status: PlaybackStatus
   chunkId?: string
-  transition?: 'continuation' | 'sentence' | 'paragraph' | 'end'
+  transition?: PlaybackTransition
 }
 
 const PLAYBACK_SOURCES = new Set<PlaybackSource>(['selection', 'popup-test', 'options-test', 'debug-fixture'])
@@ -113,6 +123,7 @@ const PLAYBACK_EVENT_NAMES = new Set<PlaybackEventName>([
   'chunk-ended',
   'completed',
   'cancelled',
+  'superseded',
   'failed',
 ])
 const PLAYBACK_ERROR_CODES = new Set<PlaybackErrorCode>([
@@ -126,12 +137,26 @@ const PLAYBACK_ERROR_CODES = new Set<PlaybackErrorCode>([
   'TTS_EMPTY_RESPONSE',
   'TTS_RESPONSE_TOO_LARGE',
   'TTS_FETCH_FAILED',
+  'TTS_TIMEOUT',
   'AUDIO_PLAYBACK_FAILED',
+  'AUDIO_CLEANUP_FAILED',
+  'INTERNAL_PLAYBACK_ERROR',
   'OFFSCREEN_INTERRUPTED',
+  'OFFSCREEN_UNSUPPORTED',
   'SESSION_SUPERSEDED',
   'SESSION_NOT_FOUND',
   'CANCELLED',
 ])
+const CLEANUP_STAGES = new Set<PlaybackCleanupStage>([
+  'pause',
+  'clear-source',
+  'reload',
+  'revoke-url',
+  'accounting',
+])
+const TRANSITIONS = new Set<PlaybackTransition>(['continuation', 'sentence', 'paragraph', 'end'])
+const CHUNK_EVENTS = new Set<PlaybackEventName>(['chunk-started', 'chunk-ended'])
+const TERMINAL_STATES = new Set<PlaybackState>(['completed', 'cancelled', 'failed'])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -139,6 +164,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
 }
 
 function isPlaybackSettingsSnapshot(value: unknown): value is PlaybackSettingsSnapshot {
@@ -149,6 +178,20 @@ function isPlaybackSettingsSnapshot(value: unknown): value is PlaybackSettingsSn
     && Number.isFinite(value.rate)
 }
 
+function hasConsistentProgress(value: Record<string, unknown>): boolean {
+  const currentChunk = value.currentChunk
+  const totalChunks = value.totalChunks
+  const currentParagraph = value.currentParagraph
+  const totalParagraphs = value.totalParagraphs
+  if (![currentChunk, totalChunks, currentParagraph, totalParagraphs].every(isNonNegativeInteger)) return false
+  if (totalChunks === 0) return currentChunk === 0 && currentParagraph === 0 && totalParagraphs === 0
+  return currentChunk >= 1
+    && currentChunk <= totalChunks
+    && totalParagraphs >= 1
+    && currentParagraph >= 1
+    && currentParagraph <= totalParagraphs
+}
+
 export function isPlaybackSource(value: unknown): value is PlaybackSource {
   return typeof value === 'string' && PLAYBACK_SOURCES.has(value as PlaybackSource)
 }
@@ -156,7 +199,9 @@ export function isPlaybackSource(value: unknown): value is PlaybackSource {
 export function isPlaybackError(value: unknown): value is PlaybackError {
   if (!isRecord(value) || typeof value.code !== 'string' || !PLAYBACK_ERROR_CODES.has(value.code as PlaybackErrorCode)) return false
   if (typeof value.message !== 'string') return false
-  return value.status === undefined || (typeof value.status === 'number' && Number.isInteger(value.status))
+  if (value.status !== undefined && (typeof value.status !== 'number' || !Number.isInteger(value.status))) return false
+  if (value.stage !== undefined && (typeof value.stage !== 'string' || !CLEANUP_STAGES.has(value.stage as PlaybackCleanupStage))) return false
+  return value.code === 'AUDIO_CLEANUP_FAILED' ? value.stage !== undefined : value.stage === undefined
 }
 
 export function isStartPlaybackRequest(value: unknown): value is StartPlaybackRequest {
@@ -199,22 +244,60 @@ export function isPlaybackStatusRequest(value: unknown): value is PlaybackStatus
 
 export function isPlaybackStatus(value: unknown): value is PlaybackStatus {
   if (!isRecord(value) || value.kind !== PLAYBACK_STATUS) return false
+  if (!isNonNegativeInteger(value.sequence)) return false
   if (typeof value.state !== 'string' || !PLAYBACK_STATES.has(value.state as PlaybackState)) return false
   if (value.sessionId !== null && !isNonEmptyString(value.sessionId)) return false
   if (value.requestId !== null && !isNonEmptyString(value.requestId)) return false
   if (value.source !== null && !isPlaybackSource(value.source)) return false
+  if (value.persistenceDegraded !== undefined && typeof value.persistenceDegraded !== 'boolean') return false
   if (value.error !== undefined && !isPlaybackError(value.error)) return false
-  return [value.currentChunk, value.totalChunks, value.currentParagraph, value.totalParagraphs]
-    .every((entry) => typeof entry === 'number' && Number.isInteger(entry) && entry >= 0)
+  if (!hasConsistentProgress(value)) return false
+
+  const hasIdentity = value.sessionId !== null && value.requestId !== null && value.source !== null
+  const hasNoIdentity = value.sessionId === null && value.requestId === null && value.source === null
+  if (!hasIdentity && !hasNoIdentity) return false
+  if (value.state === 'idle' && !hasNoIdentity) return false
+  if (value.state !== 'idle' && !hasIdentity && value.state !== 'failed') return false
+  if (value.state === 'failed' && value.error === undefined) return false
+  if ((value.state === 'completed' || value.state === 'cancelled') && value.error !== undefined && value.state === 'completed') return false
+  if (!TERMINAL_STATES.has(value.state) && value.error !== undefined) return false
+  return true
 }
 
 export function isPlaybackEvent(value: unknown): value is PlaybackEvent {
   if (!isRecord(value) || value.kind !== PLAYBACK_EVENT) return false
   if (typeof value.event !== 'string' || !PLAYBACK_EVENT_NAMES.has(value.event as PlaybackEventName)) return false
   if (typeof value.atMs !== 'number' || !Number.isFinite(value.atMs)) return false
-  return isPlaybackStatus(value.status)
+  if (!isPlaybackStatus(value.status)) return false
+
+  const event = value.event as PlaybackEventName
+  const isChunkEvent = CHUNK_EVENTS.has(event)
+  if (isChunkEvent) {
+    if (!isNonEmptyString(value.chunkId)) return false
+    if (typeof value.transition !== 'string' || !TRANSITIONS.has(value.transition as PlaybackTransition)) return false
+  } else if (value.chunkId !== undefined || value.transition !== undefined) {
+    return false
+  }
+
+  if ((event === 'completed' && value.status.state !== 'completed')
+    || (event === 'cancelled' && value.status.state !== 'cancelled')
+    || (event === 'superseded' && (value.status.state !== 'cancelled' || value.status.error?.code !== 'SESSION_SUPERSEDED'))
+    || (event === 'failed' && value.status.state !== 'failed')
+    || (event === 'chunk-started' && value.status.state !== 'playing')) return false
+
+  return true
 }
 
-export function createPlaybackError(code: PlaybackErrorCode, message: string, status?: number): PlaybackError {
-  return status === undefined ? { code, message } : { code, message, status }
+export function createPlaybackError(
+  code: PlaybackErrorCode,
+  message: string,
+  status?: number,
+  stage?: PlaybackCleanupStage,
+): PlaybackError {
+  return {
+    code,
+    message,
+    ...(status === undefined ? {} : { status }),
+    ...(stage === undefined ? {} : { stage }),
+  }
 }
