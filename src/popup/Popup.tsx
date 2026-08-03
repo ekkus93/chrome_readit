@@ -15,6 +15,8 @@ import {
 import { DEFAULT_SETTINGS, getSettingsResult, saveSettings, type Settings } from '../lib/storage'
 import { fetchServerVoices, type VoiceOption } from '../lib/voices'
 
+const ACTIVE_TEST_STATUS_POLL_MS = 100
+
 function isTerminalStatus(status: PlaybackStatus): boolean {
   return ['idle', 'completed', 'cancelled', 'failed'].includes(status.state)
 }
@@ -48,7 +50,9 @@ export default function Popup() {
   const [readError, setReadError] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
   const persistedSettingsRef = useRef<Settings>(DEFAULT_SETTINGS)
+  const latestPlaybackStatusRef = useRef<PlaybackStatus | null>(null)
   const testSessionIdRef = useRef<string | null>(null)
+  const testRequestBaselineSessionIdRef = useRef<string | null>(null)
   const nextTestRequestEpochRef = useRef(0)
   const pendingTestRequestEpochRef = useRef<number | null>(null)
   const completionTimerRef = useRef<number | null>(null)
@@ -120,28 +124,40 @@ export default function Popup() {
 
   useEffect(() => {
     let mounted = true
+    let pollInFlight = false
+
+    const clearTrackedTest = () => {
+      testSessionIdRef.current = null
+      testRequestBaselineSessionIdRef.current = null
+      pendingTestRequestEpochRef.current = null
+    }
+
     const applyStatus = (status: PlaybackStatus) => {
       if (!mounted) return
+      latestPlaybackStatusRef.current = status
       setPlaybackStatus(status)
       setStatusError(status.persistenceDegraded
         ? 'Playback is working, but restart-safe status persistence is unavailable.'
         : null)
 
       let trackedSessionId = testSessionIdRef.current
-      if (!trackedSessionId
-        && pendingTestRequestEpochRef.current !== null
-        && status.source === 'popup-test'
-        && status.sessionId !== null
-        && !isTerminalStatus(status)) {
-        trackedSessionId = status.sessionId
-        testSessionIdRef.current = trackedSessionId
+      if (!trackedSessionId && pendingTestRequestEpochRef.current !== null) {
+        if (status.source === 'popup-test' && status.sessionId !== null) {
+          trackedSessionId = status.sessionId
+          testSessionIdRef.current = trackedSessionId
+        } else if (status.sessionId !== null
+          && status.sessionId !== testRequestBaselineSessionIdRef.current) {
+          clearTrackedTest()
+          setTryStatus('error')
+          setTryError('Test speech was superseded by another playback request.')
+          return
+        }
       }
       if (!trackedSessionId) return
 
       if (status.sessionId !== trackedSessionId) {
         if (!isTerminalStatus(status)) {
-          testSessionIdRef.current = null
-          pendingTestRequestEpochRef.current = null
+          clearTrackedTest()
           setTryStatus('error')
           setTryError('Test speech was superseded by another playback request.')
         }
@@ -153,8 +169,7 @@ export default function Popup() {
         completionTimerRef.current = null
       }
       if (status.state === 'completed') {
-        testSessionIdRef.current = null
-        pendingTestRequestEpochRef.current = null
+        clearTrackedTest()
         setTryStatus('ok')
         setTryError(null)
         completionTimerRef.current = window.setTimeout(() => {
@@ -162,13 +177,28 @@ export default function Popup() {
           completionTimerRef.current = null
         }, 1200)
       } else if (status.state === 'failed' || status.state === 'cancelled') {
-        testSessionIdRef.current = null
-        pendingTestRequestEpochRef.current = null
+        clearTrackedTest()
         setTryStatus('error')
         setTryError(status.error?.message ?? 'Test speech failed or was cancelled.')
       } else {
         setTryStatus('sending')
         setTryError(null)
+      }
+    }
+
+    const pollStatus = async (force = false) => {
+      if (!mounted || pollInFlight) return
+      if (!force
+        && pendingTestRequestEpochRef.current === null
+        && testSessionIdRef.current === null) return
+      pollInFlight = true
+      try {
+        const result = await queryPlaybackStatus()
+        if (!mounted) return
+        if (result.ok) applyStatus(result.status)
+        else setStatusError(result.error.message)
+      } finally {
+        pollInFlight = false
       }
     }
 
@@ -178,14 +208,14 @@ export default function Popup() {
       return false
     }
     chrome.runtime.onMessage.addListener(listener)
-    void queryPlaybackStatus().then((result) => {
-      if (!mounted) return
-      if (result.ok) applyStatus(result.status)
-      else setStatusError(result.error.message)
-    })
+    void pollStatus(true)
+    const pollIntervalId = window.setInterval(() => {
+      void pollStatus()
+    }, ACTIVE_TEST_STATUS_POLL_MS)
 
     return () => {
       mounted = false
+      window.clearInterval(pollIntervalId)
       chrome.runtime.onMessage.removeListener?.(listener)
       if (completionTimerRef.current !== null) {
         window.clearTimeout(completionTimerRef.current)
@@ -238,6 +268,7 @@ export default function Popup() {
     const requestEpoch = ++nextTestRequestEpochRef.current
     pendingTestRequestEpochRef.current = requestEpoch
     testSessionIdRef.current = null
+    testRequestBaselineSessionIdRef.current = latestPlaybackStatusRef.current?.sessionId ?? null
     setTryStatus('sending')
     setTryError(null)
     const response = await requestReadText(text, 'popup-test')
@@ -245,11 +276,13 @@ export default function Popup() {
     if (!response.ok) {
       pendingTestRequestEpochRef.current = null
       testSessionIdRef.current = null
+      testRequestBaselineSessionIdRef.current = null
       setTryStatus('error')
       setTryError(response.error.message)
       return
     }
     testSessionIdRef.current = response.sessionId
+    testRequestBaselineSessionIdRef.current = null
     pendingTestRequestEpochRef.current = null
   }
 
