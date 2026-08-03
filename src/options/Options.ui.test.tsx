@@ -1,68 +1,131 @@
 /* @vitest-environment jsdom */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { PLAYBACK_CONTROL, PLAYBACK_EVENT, PLAYBACK_STATUS } from '../lib/playback-protocol'
 import Options from './Options'
+
+type RuntimeListener = (message: unknown) => boolean
+
+function status(state: string, sessionId: string | null = null) {
+  const active = sessionId !== null
+  return {
+    kind: PLAYBACK_STATUS,
+    sequence: active ? 2 : 0,
+    state,
+    sessionId,
+    requestId: active ? 'request-active' : null,
+    source: active ? 'selection' : null,
+    currentChunk: active ? 1 : 0,
+    totalChunks: active ? 1 : 0,
+    currentParagraph: active ? 1 : 0,
+    totalParagraphs: active ? 1 : 0,
+  }
+}
+
+function installChrome() {
+  let listener: RuntimeListener | undefined
+  const sendMessage = vi.fn(async (message: Record<string, unknown>) => {
+    if (message.kind === PLAYBACK_STATUS) return status('idle')
+    if (message.kind === PLAYBACK_CONTROL) {
+      return {
+        ok: true,
+        sessionId: message.expectedSessionId ?? null,
+        state: message.action === 'pause' ? 'paused' : message.action === 'resume' ? 'playing' : 'cancelled',
+      }
+    }
+    if (message.action === 'probe-tts') return { ok: true }
+    return { ok: false }
+  })
+  ;(globalThis as unknown as { chrome?: unknown }).chrome = {
+    storage: {
+      sync: {
+        get: vi.fn(() => Promise.resolve({ rate: 1, voice: 'p225', ttsUrl: 'http://localhost:5002/api/tts' })),
+        set: vi.fn(() => Promise.resolve()),
+      },
+    },
+    runtime: {
+      sendMessage,
+      onMessage: {
+        addListener: vi.fn((next: RuntimeListener) => { listener = next }),
+        removeListener: vi.fn(),
+      },
+    },
+  }
+  return { sendMessage, getListener: () => listener }
+}
 
 describe('Options playback control buttons', () => {
   beforeEach(() => {
-    vi.resetModules()
     vi.resetAllMocks()
-    ;(globalThis as unknown as { chrome?: unknown }).chrome = {
-      storage: {
-        sync: {
-          get: vi.fn(() => Promise.resolve({
-            rate: 1,
-            voice: '',
-            ttsUrl: 'http://localhost:5002/api/tts',
-          })),
-          set: vi.fn(() => Promise.resolve()),
-        },
-      },
-      runtime: {
-        sendMessage: vi.fn(async () => ({ ok: true })),
-        onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
-      },
-    }
+    vi.stubGlobal('fetch', vi.fn((input: unknown) => {
+      if (String(input).endsWith('/api/voices')) {
+        return Promise.resolve(new Response(JSON.stringify({ voices: ['p225'] }), { status: 200 }))
+      }
+      return Promise.resolve(new Response(null, { status: 404 }))
+    }))
   })
 
-  function getGlobal(path: string[]) {
-    let object: unknown = globalThis
-    for (const part of path) {
-      if (object && typeof object === 'object' && part in (object as Record<string, unknown>)) {
-        object = (object as Record<string, unknown>)[part]
-      } else return undefined
-    }
-    return object
-  }
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
 
-  it('sends pause/resume/stop messages when Options buttons are clicked', async () => {
+  it('gates controls and sends shared expected-session messages', async () => {
+    const { sendMessage, getListener } = installChrome()
     render(<Options />)
-    const user = userEvent.setup()
 
-    await user.click(await screen.findByRole('button', { name: /^Pause$/i }))
-    await user.click(await screen.findByRole('button', { name: /^Resume$/i }))
-    await user.click(await screen.findByRole('button', { name: /^Stop$/i }))
+    expect(await screen.findByRole('button', { name: /^Pause$/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /^Resume$/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /^Stop$/i })).toBeDisabled()
 
-    const runtimeSend = getGlobal(['chrome', 'runtime', 'sendMessage']) as { mock?: { calls?: unknown[][] } }
-    const calls = runtimeSend.mock?.calls ?? []
-    expect(calls.some((call) => (call[0] as Record<string, unknown>)?.kind === 'PAUSE_SPEECH')).toBe(true)
-    expect(calls.some((call) => (call[0] as Record<string, unknown>)?.kind === 'RESUME_SPEECH')).toBe(true)
-    expect(calls.some((call) => (call[0] as Record<string, unknown>)?.kind === 'CANCEL_SPEECH')).toBe(true)
+    act(() => {
+      getListener()?.({
+        kind: PLAYBACK_EVENT,
+        event: 'state-changed',
+        atMs: 1,
+        status: status('playing', 'session-active'),
+      })
+    })
+    await userEvent.click(screen.getByRole('button', { name: /^Pause$/i }))
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      kind: PLAYBACK_CONTROL,
+      action: 'pause',
+      expectedSessionId: 'session-active',
+    })
+
+    act(() => {
+      getListener()?.({
+        kind: PLAYBACK_EVENT,
+        event: 'state-changed',
+        atMs: 2,
+        status: status('paused', 'session-active'),
+      })
+    })
+    await userEvent.click(screen.getByRole('button', { name: /^Resume$/i }))
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      kind: PLAYBACK_CONTROL,
+      action: 'resume',
+      expectedSessionId: 'session-active',
+    })
+    await userEvent.click(screen.getByRole('button', { name: /^Stop$/i }))
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      kind: PLAYBACK_CONTROL,
+      action: 'cancel',
+      expectedSessionId: 'session-active',
+    })
   })
 
-  it('persists updated speech rate and reflects it in the UI', async () => {
+  it('persists updated speech rate only after storage succeeds', async () => {
+    installChrome()
     render(<Options />)
     fireEvent.change(await screen.findByLabelText(/Speech rate/i), { target: { value: '1.35' } })
 
-    const chromeObject = getGlobal(['chrome']) as { storage: { sync: { set: { mock?: { calls?: unknown[][] } } } } }
-    await waitFor(() => {
-      const calls = chromeObject.storage.sync.set.mock?.calls ?? []
-      expect(calls.length).toBeGreaterThan(0)
-      expect(calls.at(-1)?.[0]).toMatchObject({ rate: 1.35 })
-    })
-
+    const chromeObject = (globalThis as unknown as {
+      chrome: { storage: { sync: { set: ReturnType<typeof vi.fn> } } }
+    }).chrome
+    await waitFor(() => expect(chromeObject.storage.sync.set).toHaveBeenCalledWith({ rate: 1.35 }))
     expect(await screen.findByText(/Speech rate:\s*1\.35/)).toBeTruthy()
   })
 })
