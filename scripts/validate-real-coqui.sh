@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIR}"
 COMPOSE_FILE="${ROOT_DIR}/docker/docker-compose.yml"
 ARTIFACT_DIR="${REAL_COQUI_ARTIFACT_DIR:-${ROOT_DIR}/reports/real-coqui}"
 PORT="${COQUI_PORT:-5002}"
@@ -127,14 +128,14 @@ if [[ -n "${voice}" ]]; then
 fi
 
 python - "${PORT}" "${ARTIFACT_DIR}/compose-port.json" <<'PY'
-import json
 import subprocess
 import sys
+from pathlib import Path
+
 port = sys.argv[1]
 out = subprocess.check_output([
     "docker", "compose", "-f", "docker/docker-compose.yml", "ps", "--format", "json"
 ], text=True)
-Path = __import__("pathlib").Path
 Path(sys.argv[2]).write_text(out)
 if f"127.0.0.1:{port}->5002/tcp" not in out:
     raise SystemExit("Compose did not publish the service on loopback only")
@@ -165,7 +166,9 @@ docker compose -f "${COMPOSE_FILE}" logs --no-color coqui-local \
 
 model_volume="$(docker volume ls --format '{{.Name}}' | grep -E '(^|_)coqui_models$' | head -n 1 || true)"
 [[ -n "${model_volume}" ]] || fail "persistent Coqui model volume was not found"
-docker run --rm -v "${model_volume}:/models:ro" alpine:3.20 \
+image_id="$(docker compose -f "${COMPOSE_FILE}" images -q coqui-local)"
+[[ -n "${image_id}" ]] || fail "built Coqui image ID was not found"
+docker run --rm -v "${model_volume}:/models:ro" "${image_id}" \
   sh -c 'find /models -mindepth 1 -maxdepth 4 -type f -print -quit | grep -q .' \
   || fail "model cache volume is empty after recreation"
 
