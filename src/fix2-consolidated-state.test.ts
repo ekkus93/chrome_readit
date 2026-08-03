@@ -45,19 +45,37 @@ describe('consolidated FIX2 source state', () => {
     expect(hygiene).toContain('chrome-readit-legacy-protocol.txt')
   })
 
-  it('uses the exact built image for root-independent real-model evidence', () => {
+  it('uses the exact built image and configured VCTK voice for real-model evidence', () => {
     const script = read('scripts/validate-real-coqui.sh')
 
     expect(script).toContain('cd "${ROOT_DIR}"')
+    expect(script).toContain('PREFERRED_VOICE="${REAL_COQUI_VOICE:-p225}"')
+    expect(script).toContain('if preferred in voices:')
+    expect(script).toContain('selected-voice.txt')
+    expect(script).toContain('capture_runtime_evidence')
+    expect(script).toContain('final-container.log')
     expect(script).toContain('images -q coqui-local')
     expect(script).toContain('docker run --rm -v "${model_volume}:/models:ro" "${image_id}"')
     expect(script).not.toContain('alpine:')
   })
 
-  it('prevents stale workflow rerun attempts from publishing status', () => {
-    const publisher = read('.github/workflows/publish-ci-status.yml')
+  it('routes E2E diagnostics through an ensured offscreen document', () => {
+    const worker = read('src/background/service-worker.ts')
+    const offscreen = read('src/offscreen.ts')
 
-    expect(publisher).toContain('current_attempt = int(current_run.get(\'run_attempt\') or 1)')
-    expect(publisher).toContain('if current_attempt != run_attempt:')
+    expect(worker).toContain("message.kind === 'PLAYBACK_DIAGNOSTICS'")
+    expect(worker).toContain("sendToOffscreen({ kind: 'PLAYBACK_DIAGNOSTICS_OFFSCREEN' })")
+    expect(offscreen).toContain("message.kind === 'PLAYBACK_DIAGNOSTICS_OFFSCREEN'")
+  })
+
+  it('prevents stale workflow attempts from publishing either status issue', () => {
+    const ciPublisher = read('.github/workflows/publish-ci-status.yml')
+    const runtimePublisher = read('scripts/publish-real-coqui-status.py')
+
+    expect(ciPublisher).toContain('current_attempt = int(current_run.get(\'run_attempt\') or 1)')
+    expect(ciPublisher).toContain('if current_attempt != run_attempt:')
+    expect(runtimePublisher).toContain('latest_run_id != run_id')
+    expect(runtimePublisher).toContain('current_attempt != attempt')
+    expect(runtimePublisher).toContain('Runtime artifact belongs to a different workflow run.')
   })
 })
