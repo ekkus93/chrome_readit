@@ -88,3 +88,5 @@ jobs:
           git commit -m "Make real Coqui evidence harness reproducible"
           git pull --rebase origin master
           git push origin HEAD:master
+
+# retriggered by Ralph loop on 2026-08-03
