@@ -1,158 +1,221 @@
-# Read It — Chrome extension (React + TypeScript + Vite)
+# Read It — Chrome text-to-speech extension
 
 [![CI](https://github.com/ekkus93/chrome_readit/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/ekkus93/chrome_readit/actions/workflows/ci.yml)
-
 [![Coverage](https://codecov.io/gh/ekkus93/chrome_readit/branch/master/graph/badge.svg)](https://codecov.io/gh/ekkus93/chrome_readit)
 
-This repository contains "Read It", a Chrome extension built with React + TypeScript and Vite. The extension provides a keyboard-first, accessible UI to read selected text aloud using a local Coqui TTS Docker server with 109 high-quality voices.
+Read It is a Manifest V3 Chrome extension that reads selected text through a local Coqui TTS service. It provides keyboard-accessible playback controls, configurable voices and rates, sentence-aware chunking, and explicit paragraph pacing.
 
-This README documents what the extension does, how it's implemented, current project state, how to build & load it locally, and how to start the TTS server.
+## Architecture
 
-## What the extension does
+Read It has one production playback owner:
 
-  - Playback controls: Pause, Resume and Cancel (stop) while reading; available via popup/options buttons and keyboard commands.
+```text
+Popup / Options / keyboard / context menu
+                    │
+                    ▼
+        Manifest V3 service worker
+        selection capture + routing only
+                    │
+                    ▼
+        Extension offscreen document
+     normalization → segmentation → packing
+       synthesis queue → one Audio element
+                    │
+                    ▼
+       Local Coqui FastAPI service
+```
 
-## High-level architecture
+### Extension responsibilities
 
-  - Background worker: sentence-chunk pipeline that captures selected text, fetches TTS audio, and sequences playback through an offscreen document.
-  - Chunking: sentence-aware chunking (character-based) with a current max chunk size of 400 characters and a per-chunk ack-or-timeout behavior to avoid stalls.
-- `src/lib/messaging.ts` — Shared message types and helpers for extension communication.
-- `src/lib/storage.ts` — Small storage wrapper for getting/saving voice and rate settings via `chrome.storage.sync`.
-- `src/popup/Popup.tsx` — React popup UI allowing the user to trigger reading and configure voice/rate.
-  - `src/background/timeout.integration.test.ts` — integration test verifying per-chunk ack-or-timeout behavior and that the background proceeds when content acks are slow or missing.
-  - `src/background/splitting.integration.test.ts` — integration test verifying sentence-aware splitting and that each chunk is sent to the TTS server and forwarded to the page in order.
-- `docker/coqui-local/Dockerfile` & `docker/coqui-local/app.py` — FastAPI server providing TTS endpoints with 109 voices.
+- `src/background/service-worker.ts`
+  - captures the active page selection;
+  - loads and migrates settings;
+  - ensures the offscreen document exists;
+  - routes start, status, pause, resume, and cancel requests;
+  - does **not** own the playback queue or fetch audio.
+- `src/offscreen/playback-coordinator.ts`
+  - owns the active session and queue;
+  - synthesizes the current chunk and at most one prefetched chunk;
+  - uses one persistent `HTMLAudioElement`;
+  - stops and cleans the old session before accepting a replacement;
+  - continues queue progression independently of service-worker memory;
+  - emits typed status and diagnostic events.
+- `src/lib/text-normalization.ts`
+  - normalizes line endings, whitespace, and paragraph boundaries;
+  - enforces the selected-text length limit.
+- `src/lib/text-segmentation.ts`
+  - handles decimals, versions, domains, URLs, email addresses, abbreviations, quotes, ellipses, and sentence-ending punctuation;
+  - does not treat semicolons as sentence endings.
+- `src/lib/chunk-packing.ts`
+  - packs adjacent complete sentences instead of making one TTS request per sentence;
+  - never crosses paragraph boundaries;
+  - uses 280/400/500-character target, soft, and hard limits.
+- `src/lib/playback-pacing.ts`
+  - preserves bounded continuation, sentence, and paragraph pauses at high playback rates.
+- `src/lib/playback-protocol.ts`
+  - defines and validates all cross-context playback messages and structured errors.
 
-Key implementation notes:
-- Selection playback happens in an extension-owned offscreen document; popup/options test playback stays local to those extension pages
-- Settings are stored under `settings` in `chrome.storage.sync` with default voice 'p225' and rate `1.0`
+Popup test speech, Options test speech, selection reading, keyboard commands, and context-menu reading all use the same offscreen coordinator. There are no separate UI-local or content-script audio players.
 
-## Files of interest
+## Requirements
 
-- `src/manifest.ts` — manifest settings (permissions include `storage`, `activeTab`, `scripting`, `contextMenus`, `offscreen`; `host_permissions` currently set to `<all_urls>`).
-  - ✅ Added Pause/Resume/Cancel playback controls (UI + keyboard commands) and tests; improved background pipeline to prefetch audio and handle per-chunk timeouts.
-- `src/background/service-worker.ts` — command/context-menu logic, sentence chunking, and playback session orchestration.
-- `src/offscreen.ts` — the production playback engine for selection reads.
-- `src/popup/Popup.tsx` and `src/options/Options.tsx` — React UIs for quick controls and persistent options.
+- Node.js 22.12 or newer
+- npm
+- Chrome or Chromium with Manifest V3 offscreen-document support
+- Docker with the Compose plugin
 
-## How to build and load locally
+The tested Node version is recorded in `.nvmrc`.
 
-### Prerequisites
-- Node.js 18+ and npm
-- Docker and Docker Compose
-- Chrome browser
+## Start the local TTS service
 
-### Step 1: Start the TTS Server
-
-First, start the Coqui TTS Docker server that provides the 109 voices:
+From the repository root:
 
 ```bash
-# From the repository root directory
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-This will:
-- Download and build the Coqui TTS container with VITS multi-speaker model
-- Start the FastAPI server on `http://localhost:5002`
-- Pre-download the TTS model (may take a few minutes on first run)
-- Make 109 voices available via `/api/voices` endpoint
-- Leave host-side playback disabled for the normal extension workflow
+The default Compose configuration:
 
-**Note:** Keep this terminal running. The extension requires the TTS server to be running.
+- publishes the API only on `127.0.0.1:5002`;
+- uses `tts_models/en/vctk/vits` unless overridden;
+- persists the Coqui model cache in the `coqui_models` volume;
+- runs a single inference worker behind a bounded queue;
+- rejects empty, oversized, overloaded, invalid-voice, and timed-out requests;
+- removes temporary WAV files after each response or failure;
+- runs as a non-root container user;
+- exposes no host-audio playback or debug endpoint.
 
-### Step 2: Build the Chrome Extension
+The first startup may take several minutes while the configured model is downloaded into the persistent volume.
 
-Install dependencies and build the extension:
+### Service endpoints
+
+- `GET /api/ping` — process liveness
+- `GET /api/ready` — model and queue readiness
+- `GET /api/voices` — voices exposed by the active model
+- `POST /api/tts` — synthesize a bounded text chunk and return `audio/wav`
+
+Normal extension playback uses only `POST /api/tts`. Legacy stored URLs ending in `/api/tts/play` are migrated automatically to `/api/tts`.
+
+### Service configuration
+
+Compose accepts these environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `COQUI_PORT` | `5002` | Host loopback port |
+| `COQUI_MODEL` | `tts_models/en/vctk/vits` | Coqui model identifier |
+| `COQUI_VOICES` | empty | Optional comma-separated voice override |
+| `MAX_TEXT_CHARS` | `500` | Maximum characters per synthesis request |
+| `SYNTH_QUEUE_CAPACITY` | `4` | Active plus queued synthesis jobs |
+| `SYNTH_TIMEOUT_SECONDS` | `120` | Per-request wait limit |
+
+To intentionally expose the service beyond the local machine, edit the Compose port binding explicitly and apply appropriate network authentication and firewall controls. Remote exposure is not the default or supported security posture.
+
+## Build and load the extension
 
 ```bash
-# Install dependencies
-npm install
-
-# Build for distribution
+npm ci --legacy-peer-deps
 npm run build
 ```
 
-### Step 3: Load the Extension in Chrome
+Then:
 
-1. Open Chrome and go to `chrome://extensions/`
-2. Enable "Developer mode" (toggle in top right)
-3. Click "Load unpacked"
-4. Select the `dist/` folder from your project directory
-5. The extension should now appear in your extensions list
+1. Open `chrome://extensions/`.
+2. Enable **Developer mode**.
+3. Select **Load unpacked**.
+4. Choose this repository's `dist/` directory.
 
-### Step 4: Test the Extension
+## Use the extension
 
-- Select text on any web page
-- Use `Alt+Shift+R` to read the selection
-- Right-click selected text → "Read selection aloud"
-- Click the extension icon for the popup UI
-- Go to extension options for settings and "Test Speech"
+- Select text and press `Alt+Shift+R`.
+- Right-click selected text and choose **Read selection aloud**.
+- Use the popup or Options page to choose a voice and playback rate.
+- Pause with `Alt+Shift+P`.
+- Resume with `Alt+Shift+U`.
+- Cancel with `Alt+Shift+C`.
 
-**Troubleshooting:**
-- If TTS doesn't work, check that the Docker container is running on port 5002
-- Check browser console (F12) for any extension errors
-- Ensure the extension has the correct permissions
+A new read or test request atomically supersedes the active session. Pause, resume, and cancel always target the same offscreen player.
 
-## Recommendations / next steps
+## Validation
 
-Below are remaining recommended improvements, prioritized by impact.
-
-1. **Permissions audit (HIGH for publishing):** Review `host_permissions` and either narrow the match patterns or switch to `optional_permissions` and programmatic injection where possible. Currently uses `<all_urls>` for broad web access.
-
-2. **Additional tests & coverage (MEDIUM):** Some unit coverage exists. Remaining work: add more background-path tests (e.g., TTS server communication edge cases) and consider integration/e2e tests (Playwright) that load the unpacked extension into a Chromium instance.
-
-3. **CI improvements (MEDIUM):** Parse the built `dist/manifest.json` after `npm run build` to discover referenced assets instead of hardcoding icon names. Consider adding Vitest coverage reports and gating thresholds.
-
-4. **UX polish (LOW):** Improve popup feedback (e.g., "No selection", "Reading…", handle voice-list race conditions) and consider an explicit "Save" action on the Options page if preferred.
-
-5. **Docs & release readiness (LOW):** Add a short publishing guide (Chrome Web Store packaging, keys, CHANGELOG) and confirm icon assets exist for all platforms.
-
-6. **Performance optimization (LOW):** Consider lazy-loading the TTS model or implementing voice caching for faster startup.
-
-## TTS Server (Coqui Docker)
-
-The extension uses a local Coqui TTS Docker server that provides 109 high-quality voices. The server runs a FastAPI application with the following endpoints:
-
-- `GET /api/voices` — List all available voices
-- `POST /api/tts` — Generate speech audio for browser playback (returns WAV file)
-- `POST /api/tts/play` — Manual debug endpoint for host/server playback
-
-### Quick Start
+### Extension gates
 
 ```bash
-# Start the TTS server (from repository root)
-docker compose -f docker/docker-compose.yml up --build
+npm run lint
+npm run typecheck
+npm test -- --run
+npm run build
 ```
 
-The server will be available at `http://localhost:5002`. The extension is configured to use this endpoint by default.
+### Coqui service tests
 
-### Configuration
+```bash
+python -m pip install -r docker/coqui-local/requirements-test.txt
+python -m pytest -q docker/coqui-local/tests
+docker compose -f docker/docker-compose.yml config
+```
 
-The Docker setup includes:
-- **VITS multi-speaker model** with 109 voices
-- **espeak-ng phonemizer** for better text processing
-- **FastAPI server** with automatic voice fallback to 'p225'
-- **Model caching** to avoid re-downloads
-- **Host playback disabled** in the normal extension workflow so only the browser plays audio
+The server tests use a deterministic fake TTS backend; they do not download the real Coqui model.
 
-### Voice Selection
+### Real Chromium topology test
 
-The extension defaults to voice 'p225' but you can change this in the extension options. Available voices include various speakers with different genders, ages, and accents.
+Build a diagnostic test bundle, then run the unpacked-extension harness with Chrome available through `CHROME_PATH`:
 
-### Troubleshooting
+```bash
+npm run build:e2e
+CHROME_PATH=/path/to/chrome xvfb-run -a npm run test:chromium
+```
 
-**Container won't start:**
-- Ensure Docker and Docker Compose are installed
-- Check available disk space (models are ~200MB)
-- Try `docker system prune` if you have disk space issues
+The harness uses Chrome DevTools Protocol and a deterministic local WAV server. It verifies:
 
-**TTS server not responding:**
-- Verify the container is running: `docker ps`
-- Check container logs: `docker logs <container-name>`
-- Ensure port 5002 is not in use by another service
+- short-sentence packing;
+- semicolon preservation;
+- bounded paragraph pacing at the maximum supported rate;
+- no overlapping chunk intervals;
+- stop-before-replace behavior;
+- queue continuation after forced service-worker termination;
+- unique session identifiers after worker restart.
 
-**Audio quality issues:**
-- The VITS model provides high-quality speech
-- Voice 'p225' is a good default for clear, natural speech
-- Some voices may work better for different types of text
+## Troubleshooting
 
+### The popup says the server is unavailable
+
+```bash
+docker compose -f docker/docker-compose.yml ps
+docker compose -f docker/docker-compose.yml logs coqui-local
+curl --fail http://127.0.0.1:5002/api/ready
+```
+
+`/api/ping` can succeed while the model is still loading. The extension probes `/api/ready` because playback requires a ready model.
+
+### A voice is rejected
+
+Query the active model:
+
+```bash
+curl http://127.0.0.1:5002/api/voices
+```
+
+Voice availability depends on `COQUI_MODEL`. Single-speaker models may return an empty list and ignore the configured voice name.
+
+### The model downloads again
+
+Confirm the effective Compose configuration includes:
+
+```text
+source: coqui_models
+target: /home/readit/.local/share/tts
+```
+
+### Chrome cannot load the bundle
+
+Run `npm run build` again. The build fails closed if the CRXJS extension plugin is unavailable, and CI verifies the generated background, popup, Options, and offscreen entries.
+
+## Security and privacy
+
+Selected text is sent only to the configured TTS endpoint. The default endpoint is loopback-only. Read It does not log selected text or audio payloads. The extension currently declares broad host permissions so it can capture selections on user-opened pages; this should be revisited before Chrome Web Store publication.
+
+## Design and implementation documents
+
+- `docs/CHROME_READIT_PLAYBACK_HARDENING_SPEC_2026-08-02.md`
+- `docs/CHROME_READIT_PLAYBACK_HARDENING_TODO_2026-08-02.md`
