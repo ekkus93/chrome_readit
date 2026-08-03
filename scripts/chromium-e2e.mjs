@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const EXTENSION_DIR = resolve(ROOT, 'dist')
 const CHROME_PATH = process.env.CHROME_PATH || process.env.CHROMIUM_PATH || 'google-chrome'
+const EXTENSION_NAME = 'Read It – Reader'
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -272,6 +273,35 @@ function assertNoOverlappingChunks(events) {
   }
 }
 
+async function findReadItWorkerTarget(cdp, port) {
+  const targets = await listTargets(port)
+  const workers = targets.filter((target) => (
+    target.type === 'service_worker' && String(target.url).startsWith('chrome-extension://')
+  ))
+
+  for (const target of workers) {
+    let probeSessionId
+    try {
+      const attached = await cdp.send('Target.attachToTarget', {
+        targetId: target.id,
+        flatten: true,
+      })
+      probeSessionId = attached.sessionId
+      await cdp.send('Runtime.enable', {}, probeSessionId)
+      const name = await evaluate(cdp, probeSessionId, 'chrome.runtime?.getManifest?.().name')
+      if (name === EXTENSION_NAME) return target
+    } catch {
+      // Ignore unrelated or disappearing extension targets.
+    } finally {
+      if (probeSessionId) {
+        await cdp.send('Target.detachFromTarget', { sessionId: probeSessionId }).catch(() => {})
+      }
+    }
+  }
+
+  return null
+}
+
 async function main() {
   const fakeTts = await startFakeTtsServer()
   const chrome = await launchChrome()
@@ -279,10 +309,10 @@ async function main() {
 
   try {
     await cdp.connect()
-    const workerTarget = await waitFor('extension service worker', async () => {
-      const targets = await listTargets(chrome.port)
-      return targets.find((target) => target.type === 'service_worker' && String(target.url).startsWith('chrome-extension://'))
-    })
+    const workerTarget = await waitFor(
+      'Read It extension service worker',
+      () => findReadItWorkerTarget(cdp, chrome.port),
+    )
     const extensionId = new URL(workerTarget.url).host
 
     const workerAttached = await cdp.send('Target.attachToTarget', {
