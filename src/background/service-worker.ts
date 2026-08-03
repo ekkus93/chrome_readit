@@ -1,8 +1,4 @@
-import {
-  isLegacyPlaybackControlRequest,
-  isMsg,
-  type Msg,
-} from '../lib/messaging'
+import { isMsg, type Msg } from '../lib/messaging'
 import {
   PLAYBACK_CONTROL,
   PLAYBACK_STATUS,
@@ -376,18 +372,6 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
       accepted: false,
       error: createPlaybackError('INVALID_REQUEST', 'READ_TEXT requires text and an explicit playback source.'),
     })
-    return true
-  }
-  if (isLegacyPlaybackControlRequest(message)) {
-    if (message.kind === 'SPEECH_STATUS') void queryPlaybackStatus().then(sendResponse)
-    else {
-      const action: PlaybackControlAction = message.kind === 'PAUSE_SPEECH'
-        ? 'pause'
-        : message.kind === 'RESUME_SPEECH'
-          ? 'resume'
-          : 'cancel'
-      void routeControl(action).then(sendResponse)
-    }
     return true
   }
   if (isRecord(message) && (message.action === 'probe-tts' || message.kind === 'probe-tts' || message.kind === 'TEST_TTS')) {
