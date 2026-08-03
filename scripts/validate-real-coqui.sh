@@ -137,17 +137,36 @@ if [[ -n "${voice}" ]]; then
 fi
 
 python - "${PORT}" "${ARTIFACT_DIR}/compose-port.json" <<'PY'
+import json
 import subprocess
 import sys
 from pathlib import Path
 
-port = sys.argv[1]
+port = int(sys.argv[1])
 out = subprocess.check_output([
     "docker", "compose", "-f", "docker/docker-compose.yml", "ps", "--format", "json"
 ], text=True)
 Path(sys.argv[2]).write_text(out)
-if f"127.0.0.1:{port}->5002/tcp" not in out:
+records = [json.loads(line) for line in out.splitlines() if line.strip()]
+if not records:
+    raise SystemExit("Compose returned no running service records")
+publishers = [
+    publisher
+    for record in records
+    for publisher in record.get("Publishers", [])
+    if isinstance(publisher, dict)
+]
+expected = any(
+    publisher.get("URL") == "127.0.0.1"
+    and publisher.get("TargetPort") == 5002
+    and publisher.get("PublishedPort") == port
+    and publisher.get("Protocol") == "tcp"
+    for publisher in publishers
+)
+if not expected:
     raise SystemExit("Compose did not publish the service on loopback only")
+if any(publisher.get("URL") not in ("127.0.0.1", None, "") for publisher in publishers):
+    raise SystemExit("Compose exposed the service on a non-loopback address")
 PY
 
 container_id="$(docker compose -f "${COMPOSE_FILE}" ps -q coqui-local)"
