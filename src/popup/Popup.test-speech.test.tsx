@@ -201,6 +201,7 @@ describe('Popup coordinator test speech and voice loading', () => {
 
   it('sends expected-session controls and surfaces failures', async () => {
     const { sendMessage, getListener } = installChrome()
+    let queriedStatus = playbackStatus()
     sendMessage.mockImplementation((
       message: Record<string, unknown>,
       callback?: (response: unknown) => void,
@@ -209,7 +210,7 @@ describe('Popup coordinator test speech and voice loading', () => {
         callback?.({ ok: true })
         return undefined
       }
-      if (message.kind === PLAYBACK_STATUS) return Promise.resolve(playbackStatus())
+      if (message.kind === PLAYBACK_STATUS) return Promise.resolve(queriedStatus)
       if (message.kind === PLAYBACK_CONTROL) {
         return Promise.resolve({
           ok: false,
@@ -221,22 +222,23 @@ describe('Popup coordinator test speech and voice loading', () => {
 
     render(<Popup />)
     await screen.findByText(/Playback: idle/i)
+    queriedStatus = playbackStatus({
+      sequence: 2,
+      state: 'playing',
+      sessionId: 'session-active',
+      requestId: 'request-active',
+      source: 'selection',
+      currentChunk: 1,
+      totalChunks: 1,
+      currentParagraph: 1,
+      totalParagraphs: 1,
+    })
     act(() => {
       getListener()?.({
         kind: PLAYBACK_EVENT,
         event: 'state-changed',
         atMs: 1,
-        status: playbackStatus({
-          sequence: 2,
-          state: 'playing',
-          sessionId: 'session-active',
-          requestId: 'request-active',
-          source: 'selection',
-          currentChunk: 1,
-          totalChunks: 1,
-          currentParagraph: 1,
-          totalParagraphs: 1,
-        }),
+        status: queriedStatus,
       })
     })
 
