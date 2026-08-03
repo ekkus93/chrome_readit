@@ -102,6 +102,12 @@ jobs:
               print(f'Skipping stale run {run_id}; latest applicable run is {latest_run_id}.')
               raise SystemExit(0)
 
+          current_run = gh_json(f'repos/{repo}/actions/runs/{run_id}')
+          current_attempt = int(current_run.get('run_attempt') or 1)
+          if current_attempt != run_attempt:
+              print(f'Ignoring stale attempt {run_attempt}; current attempt is {current_attempt}.')
+              raise SystemExit(0)
+
           job_pages = gh_json(
               f'repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100',
               paginate=True,
