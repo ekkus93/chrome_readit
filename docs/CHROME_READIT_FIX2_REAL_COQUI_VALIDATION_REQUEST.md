@@ -1,8 +1,8 @@
 # Chrome Read It FIX2 Real Coqui Validation Request
 
 **Requested:** 2026-08-03  
-**Request sequence:** 11  
-**Purpose:** Validate deterministic post-build image resolution and continue the complete real-Coqui evidence matrix on this exact commit.  
+**Request sequence:** 12  
+**Purpose:** Validate the normalized Popup/Options supersession contract and the complete real-Coqui evidence matrix on one exact final candidate.  
 **Ordinary CI:** The same commit must also pass `.github/workflows/ci.yml`.  
 **Runtime status:** GitHub issue `#3` is overwritten at workflow start and completion.
 
@@ -29,6 +29,7 @@ The same exact candidate must validate:
 - service-worker restart and control routing;
 - real foreground popup and Options interactions;
 - selection → popup → Options → selection → selection replacement;
+- explicit terminal `SESSION_SUPERSEDED` event normalization on Popup and Options;
 - popup and Options supersession recovery while the superseded surface is foregrounded;
 - popup and Options pause/resume/cancel controls;
 - retained, fail-closed Chromium and JUnit artifacts.
