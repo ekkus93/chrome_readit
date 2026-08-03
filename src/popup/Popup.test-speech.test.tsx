@@ -3,12 +3,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { PLAYBACK_CONTROL, PLAYBACK_EVENT, PLAYBACK_STATUS } from '../lib/playback-protocol'
+import {
+  PLAYBACK_CONTROL,
+  PLAYBACK_EVENT,
+  PLAYBACK_STATUS,
+  type PlaybackStatus,
+} from '../lib/playback-protocol'
 import Popup from './Popup'
 
 type RuntimeListener = (message: unknown) => boolean
 
-function playbackStatus(overrides: Record<string, unknown> = {}) {
+function playbackStatus(overrides: Partial<PlaybackStatus> = {}): PlaybackStatus {
   return {
     kind: PLAYBACK_STATUS,
     sequence: 1,
@@ -26,7 +31,10 @@ function playbackStatus(overrides: Record<string, unknown> = {}) {
 
 function installChrome() {
   let listener: RuntimeListener | undefined
-  const sendMessage = vi.fn((message: Record<string, unknown>, callback?: (response: unknown) => void) => {
+  const sendMessage = vi.fn((
+    message: Record<string, unknown>,
+    callback?: (response: unknown) => void,
+  ): Promise<unknown> | undefined => {
     if (message.action === 'probe-tts') {
       callback?.({ ok: true })
       return undefined
@@ -137,9 +145,9 @@ describe('Popup coordinator test speech and voice loading', () => {
   it('clears the disabled test button after supersession', async () => {
     const { getListener } = installChrome()
     render(<Popup />)
-    const button = await screen.findByRole('button', { name: /Try speech/i })
+    const button = await screen.findByRole('button', { name: /Try speech/i }) as HTMLButtonElement
     await userEvent.click(button)
-    expect(button).toBeDisabled()
+    expect(button.disabled).toBe(true)
 
     act(() => {
       getListener()?.({
@@ -161,12 +169,15 @@ describe('Popup coordinator test speech and voice loading', () => {
     })
 
     expect(await screen.findByText(/superseded by another playback request/i)).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Try speech/i })).not.toBeDisabled()
+    expect((screen.getByRole('button', { name: /Try speech/i }) as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('shows the structured start failure message', async () => {
     const { sendMessage } = installChrome()
-    sendMessage.mockImplementation((message: Record<string, unknown>, callback?: (response: unknown) => void) => {
+    sendMessage.mockImplementation((
+      message: Record<string, unknown>,
+      callback?: (response: unknown) => void,
+    ): Promise<unknown> | undefined => {
       if (message.action === 'probe-tts') {
         callback?.({ ok: true })
         return undefined
