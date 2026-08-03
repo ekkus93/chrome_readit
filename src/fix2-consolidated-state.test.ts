@@ -45,11 +45,14 @@ describe('consolidated FIX2 source state', () => {
     expect(hygiene).toContain('chrome-readit-legacy-protocol.txt')
   })
 
-  it('uses the exact image and a fail-closed real-model evidence matrix', () => {
+  it('uses a deterministic exact image and a fail-closed real-model evidence matrix', () => {
     const script = read('scripts/validate-real-coqui.sh')
     const workflow = read('.github/workflows/real-coqui-validation.yml')
+    const compose = read('docker/docker-compose.yml')
 
+    expect(compose).toContain('image: chrome-readit-coqui-local:fix2')
     expect(script).toContain('dc down -v --remove-orphans')
+    expect(script).toContain('dc images -q coqui-local')
     expect(script).toContain('PREFERRED_VOICE="${REAL_COQUI_VOICE:-p225}"')
     expect(script).toContain('if preferred in voices:')
     expect(script).toContain('selected-voice.txt')
@@ -110,6 +113,8 @@ describe('consolidated FIX2 source state', () => {
     expect(uiHarness).toContain('const extensionTargetBySession = new Map()')
     expect(uiHarness).toContain('async function activateExtensionSession')
     expect(uiHarness).toContain("await cdp.send('Target.activateTarget', { targetId })")
+    expect(uiHarness).toContain("await activateExtensionSession(cdp, popup.sessionId)\n    const optionsTest = await waitForActiveSource(cdp, popup.sessionId, 'options-test', popupTest.sessionId)")
+    expect(uiHarness).toContain("await activateExtensionSession(cdp, options.sessionId)\n    const selectionTwo = await waitForActiveSource(cdp, options.sessionId, 'selection', optionsTest.sessionId)")
     expect(cleanupWrapper).toContain('const completedAssertions = /"ok"\\s*:\\s*true/')
     expect(cleanupWrapper).toContain('/tmp\\/chrome-readit-e2e-')
     expect(cleanupWrapper).toContain('maxRetries: 10')
