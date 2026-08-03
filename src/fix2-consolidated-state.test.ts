@@ -59,13 +59,15 @@ describe('consolidated FIX2 source state', () => {
     expect(script).not.toContain('alpine:')
   })
 
-  it('routes E2E diagnostics through an ensured offscreen document', () => {
+  it('retains direct E2E player snapshots in the service worker', () => {
     const worker = read('src/background/service-worker.ts')
     const offscreen = read('src/offscreen.ts')
 
-    expect(worker).toContain("message.kind === 'PLAYBACK_DIAGNOSTICS'")
-    expect(worker).toContain("sendToOffscreen({ kind: 'PLAYBACK_DIAGNOSTICS_OFFSCREEN' })")
-    expect(offscreen).toContain("message.kind === 'PLAYBACK_DIAGNOSTICS_OFFSCREEN'")
+    expect(offscreen).toContain('player: getRuntimeState().coordinator.getPlayerDiagnostics()')
+    expect(worker).toContain('const diagnosticEvents: PlaybackEvent[] = []')
+    expect(worker).toContain('if (isPlayerDiagnostics(player)) latestPlayerDiagnostics = player')
+    expect(worker).toContain('events: [...diagnosticEvents]')
+    expect(worker).toContain('player: { ...latestPlayerDiagnostics }')
   })
 
   it('prevents stale workflow attempts from publishing either status issue', () => {
