@@ -323,6 +323,15 @@ async function findOffscreenTarget(port, extensionId) {
   )) ?? null
 }
 
+async function waitForActivePlayer(cdp, sessionId, label) {
+  return await waitFor(label, async () => {
+    const diagnostics = await sendExtensionMessage(cdp, sessionId, { kind: DIAGNOSTICS })
+    return diagnostics?.ok === true && diagnostics.player?.activePlayerCount === 1
+      ? diagnostics
+      : null
+  })
+}
+
 async function verifyCommandRegistrationAndGlobalRouting(cdp, page) {
   const commands = await evaluate(cdp, page.sessionId, '(async () => await chrome.commands.getAll())()')
   const manifestCommands = await evaluate(cdp, page.sessionId, 'chrome.runtime.getManifest().commands')
@@ -348,6 +357,7 @@ async function verifyCommandRegistrationAndGlobalRouting(cdp, page) {
   const start = await startPlayback(cdp, page.sessionId, 'BLOCK13_TAIL_LONG global command routing.')
   assert(start?.ok === true, `global command session was rejected: ${JSON.stringify(start)}`)
   await waitForState(cdp, page.sessionId, start.sessionId, 'playing')
+  await waitForActivePlayer(cdp, page.sessionId, 'global command audible player')
 
   for (const [action, state] of [['pause', 'paused'], ['resume', 'playing'], ['cancel', 'cancelled']]) {
     const response = await sendExtensionMessage(cdp, page.sessionId, { kind: PLAYBACK_CONTROL, action })
@@ -361,6 +371,7 @@ async function verifyOffscreenDestruction(cdp, chrome, extensionId, page) {
   const start = await startPlayback(cdp, page.sessionId, 'BLOCK13_TAIL_LONG offscreen destruction.')
   assert(start?.ok === true, `offscreen destruction session was rejected: ${JSON.stringify(start)}`)
   await waitForState(cdp, page.sessionId, start.sessionId, 'playing')
+  await waitForActivePlayer(cdp, page.sessionId, 'offscreen destruction audible player')
 
   const offscreen = await waitFor('offscreen document target', () => findOffscreenTarget(chrome.port, extensionId))
   const closed = await cdp.send('Target.closeTarget', { targetId: offscreen.id })
