@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import math
 import os
 import tempfile
 import threading
@@ -14,9 +16,44 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
+LOGGER = logging.getLogger("chrome-readit-coqui")
+
 
 class TTSBackend(Protocol):
     def tts_to_file(self, *, text: str, file_path: str, speaker: str | None = None) -> None: ...
+
+
+def _positive_int_environment(name: str, default: str) -> int:
+    raw = os.environ.get(name, default).strip()
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a positive integer") from error
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def _positive_float_environment(name: str, default: str) -> float:
+    raw = os.environ.get(name, default).strip()
+    try:
+        value = float(raw)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a positive finite number") from error
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a positive finite number")
+    return value
+
+
+def _deduplicate_strings(values: Iterable[object]) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        candidate = str(value).strip()
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            output.append(candidate)
+    return output
 
 
 @dataclass(frozen=True)
@@ -29,16 +66,15 @@ class ServiceConfig:
 
     @classmethod
     def from_environment(cls) -> "ServiceConfig":
-        forced_voices = tuple(
-            voice.strip()
-            for voice in os.environ.get("COQUI_VOICES", "").split(",")
-            if voice.strip()
-        )
+        model_name = os.environ.get("COQUI_MODEL", "tts_models/en/vctk/vits").strip()
+        if not model_name:
+            raise ValueError("COQUI_MODEL must not be empty")
+        forced_voices = tuple(_deduplicate_strings(os.environ.get("COQUI_VOICES", "").split(",")))
         return cls(
-            model_name=os.environ.get("COQUI_MODEL", "tts_models/en/vctk/vits"),
-            max_text_chars=max(1, int(os.environ.get("MAX_TEXT_CHARS", "500"))),
-            queue_capacity=max(1, int(os.environ.get("SYNTH_QUEUE_CAPACITY", "4"))),
-            synthesis_timeout_seconds=max(1.0, float(os.environ.get("SYNTH_TIMEOUT_SECONDS", "120"))),
+            model_name=model_name,
+            max_text_chars=_positive_int_environment("MAX_TEXT_CHARS", "500"),
+            queue_capacity=_positive_int_environment("SYNTH_QUEUE_CAPACITY", "4"),
+            synthesis_timeout_seconds=_positive_float_environment("SYNTH_TIMEOUT_SECONDS", "120"),
             forced_voices=forced_voices,
         )
 
@@ -64,15 +100,6 @@ def load_coqui_model(config: ServiceConfig) -> TTSBackend:
     return TTS(model_name=config.model_name, progress_bar=False, gpu=False)
 
 
-def _deduplicate_strings(values: Iterable[object]) -> list[str]:
-    output: list[str] = []
-    for value in values:
-        candidate = str(value).strip()
-        if candidate and candidate not in output:
-            output.append(candidate)
-    return output
-
-
 def discover_voices(backend: object, forced_voices: tuple[str, ...] = ()) -> list[str]:
     if forced_voices:
         return list(forced_voices)
@@ -86,20 +113,45 @@ def discover_voices(backend: object, forced_voices: tuple[str, ...] = ()) -> lis
     return []
 
 
+@dataclass(frozen=True)
+class RuntimeMetrics:
+    queue_capacity: int
+    slots_in_use: int
+    active_inference: int
+    queued_futures: int
+    timed_out_running: int
+    tracked_temp_files: int
+    cleanup_failures: int
+
+    @property
+    def accepting_requests(self) -> bool:
+        return self.slots_in_use < self.queue_capacity
+
+
 class SynthesisRuntime:
     def __init__(self, config: ServiceConfig, model_loader: ModelLoader) -> None:
         self.config = config
         self._model_loader = model_loader
         self._backend: TTSBackend | None = None
+        self._voices: tuple[str, ...] = ()
         self._executor: ThreadPoolExecutor | None = None
         self._slots = threading.BoundedSemaphore(config.queue_capacity)
+        self._metrics_lock = threading.Lock()
+        self._slots_in_use = 0
+        self._active_inference = 0
+        self._queued_futures = 0
+        self._timed_out_futures: set[Future[str]] = set()
         self._temp_paths: set[str] = set()
+        self._cleanup_failures: dict[str, int] = {}
         self._temp_paths_lock = threading.Lock()
         self.ready = False
 
     def start(self) -> None:
-        self._backend = self._model_loader(self.config)
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="coqui-synthesis")
+        backend = self._model_loader(self.config)
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="coqui-synthesis")
+        self._backend = backend
+        self._voices = tuple(discover_voices(backend, self.config.forced_voices))
+        self._executor = executor
         self.ready = True
 
     def shutdown(self) -> None:
@@ -107,76 +159,154 @@ class SynthesisRuntime:
         executor = self._executor
         self._executor = None
         if executor is not None:
-            executor.shutdown(wait=True, cancel_futures=True)
+            # Coqui's in-process Python inference cannot be force-cancelled safely.
+            # Do not block the shutdown handler indefinitely; running work retains
+            # its slot and cleanup callback until the thread actually exits.
+            executor.shutdown(wait=False, cancel_futures=True)
         with self._temp_paths_lock:
             paths = list(self._temp_paths)
         for path in paths:
             self.cleanup_path(path)
         self._backend = None
+        self._voices = ()
 
     def voices(self) -> list[str]:
-        backend = self._backend
-        if backend is None:
-            return []
-        return discover_voices(backend, self.config.forced_voices)
+        return list(self._voices)
+
+    def metrics(self) -> RuntimeMetrics:
+        with self._metrics_lock, self._temp_paths_lock:
+            return RuntimeMetrics(
+                queue_capacity=self.config.queue_capacity,
+                slots_in_use=self._slots_in_use,
+                active_inference=self._active_inference,
+                queued_futures=self._queued_futures,
+                timed_out_running=len(self._timed_out_futures),
+                tracked_temp_files=len(self._temp_paths),
+                cleanup_failures=sum(self._cleanup_failures.values()),
+            )
 
     def tracked_temp_paths(self) -> tuple[str, ...]:
         with self._temp_paths_lock:
             return tuple(sorted(self._temp_paths))
 
-    def cleanup_path(self, path: str) -> None:
+    def cleanup_failures(self) -> dict[str, int]:
+        with self._temp_paths_lock:
+            return dict(self._cleanup_failures)
+
+    def cleanup_path(self, path: str) -> bool:
+        candidate = Path(path)
         try:
-            Path(path).unlink(missing_ok=True)
-        finally:
+            candidate.unlink(missing_ok=True)
+        except OSError:
             with self._temp_paths_lock:
-                self._temp_paths.discard(path)
+                self._temp_paths.add(path)
+                self._cleanup_failures[path] = self._cleanup_failures.get(path, 0) + 1
+            LOGGER.exception("Temporary audio cleanup failed")
+            return False
+
+        with self._temp_paths_lock:
+            self._temp_paths.discard(path)
+            self._cleanup_failures.pop(path, None)
+        return True
+
+    def _resolve_voice(self, voice: str | None) -> str | None:
+        if not self._voices:
+            return None
+        selected = voice.strip() if isinstance(voice, str) and voice.strip() else self._voices[0]
+        if selected not in self._voices:
+            raise InvalidVoiceError(f"Voice '{selected}' is not available")
+        return selected
+
+    def _acquire_slot(self) -> None:
+        if not self._slots.acquire(blocking=False):
+            raise OverflowError("Synthesis queue is full")
+        with self._metrics_lock:
+            self._slots_in_use += 1
+            if self._slots_in_use > self.config.queue_capacity:
+                self._slots_in_use -= 1
+                self._slots.release()
+                raise RuntimeError("Synthesis queue accounting exceeded capacity")
+
+    def _release_slot(self, future: Future[str] | None = None) -> None:
+        with self._metrics_lock:
+            if future is not None:
+                self._timed_out_futures.discard(future)
+            if self._slots_in_use <= 0:
+                raise RuntimeError("Synthesis queue accounting became negative")
+            self._slots_in_use -= 1
+        self._slots.release()
+
+    def _run_synthesis(
+        self,
+        backend: TTSBackend,
+        text: str,
+        selected_voice: str | None,
+        output_path: str,
+    ) -> str:
+        with self._metrics_lock:
+            if self._queued_futures <= 0:
+                raise RuntimeError("Queued synthesis accounting became negative")
+            self._queued_futures -= 1
+            self._active_inference += 1
+        try:
+            if selected_voice is None:
+                backend.tts_to_file(text=text, file_path=output_path)
+            else:
+                backend.tts_to_file(text=text, file_path=output_path, speaker=selected_voice)
+
+            output = Path(output_path)
+            if not output.exists() or output.stat().st_size <= 0:
+                raise RuntimeError("TTS backend produced an empty audio file")
+            return output_path
+        finally:
+            with self._metrics_lock:
+                if self._active_inference <= 0:
+                    raise RuntimeError("Active inference accounting became negative")
+                self._active_inference -= 1
 
     def submit(self, text: str, voice: str | None) -> tuple[Future[str], str]:
         backend = self._backend
         executor = self._executor
         if not self.ready or backend is None or executor is None:
             raise RuntimeError("TTS backend is not ready")
-        if not self._slots.acquire(blocking=False):
-            raise OverflowError("Synthesis queue is full")
 
-        descriptor, output_path = tempfile.mkstemp(suffix=".wav", prefix="chrome-readit-")
-        os.close(descriptor)
-        with self._temp_paths_lock:
-            self._temp_paths.add(output_path)
-
+        selected_voice = self._resolve_voice(voice)
+        self._acquire_slot()
+        output_path: str | None = None
+        descriptor: int | None = None
+        future: Future[str] | None = None
         try:
-            future = executor.submit(self._synthesize, backend, text, voice, output_path)
+            descriptor, output_path = tempfile.mkstemp(suffix=".wav", prefix="chrome-readit-")
+            os.close(descriptor)
+            descriptor = None
+            with self._temp_paths_lock:
+                self._temp_paths.add(output_path)
+            with self._metrics_lock:
+                self._queued_futures += 1
+            try:
+                future = executor.submit(self._run_synthesis, backend, text, selected_voice, output_path)
+            except Exception:
+                with self._metrics_lock:
+                    self._queued_futures -= 1
+                raise
+            future.add_done_callback(lambda completed: self._release_slot(completed))
+            return future, output_path
         except Exception:
-            self._slots.release()
-            self.cleanup_path(output_path)
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    LOGGER.exception("Temporary descriptor cleanup failed")
+            if output_path is not None:
+                self.cleanup_path(output_path)
+            if future is None:
+                self._release_slot()
             raise
 
-        future.add_done_callback(lambda _future: self._slots.release())
-        return future, output_path
-
-    def _synthesize(
-        self,
-        backend: TTSBackend,
-        text: str,
-        voice: str | None,
-        output_path: str,
-    ) -> str:
-        available_voices = discover_voices(backend, self.config.forced_voices)
-        selected_voice: str | None = None
-        if available_voices:
-            selected_voice = voice or available_voices[0]
-            if selected_voice not in available_voices:
-                raise InvalidVoiceError(f"Voice '{selected_voice}' is not available")
-
-        if selected_voice is None:
-            backend.tts_to_file(text=text, file_path=output_path)
-        else:
-            backend.tts_to_file(text=text, file_path=output_path, speaker=selected_voice)
-
-        output = Path(output_path)
-        if not output.exists() or output.stat().st_size <= 0:
-            raise RuntimeError("TTS backend produced an empty audio file")
-        return output_path
+    def mark_timed_out(self, future: Future[str]) -> None:
+        with self._metrics_lock:
+            if not future.done():
+                self._timed_out_futures.add(future)
 
 
 def error_payload(code: str, message: str) -> dict[str, object]:
@@ -216,9 +346,14 @@ def create_app(
 
     @application.exception_handler(RequestValidationError)
     async def validation_exception_handler(_request: Request, _exception: RequestValidationError) -> JSONResponse:
+        return JSONResponse(status_code=422, content=error_payload("INVALID_REQUEST", "The request body is invalid."))
+
+    @application.exception_handler(Exception)
+    async def unexpected_exception_handler(_request: Request, _exception: Exception) -> JSONResponse:
+        LOGGER.exception("Unhandled TTS service error")
         return JSONResponse(
-            status_code=422,
-            content=error_payload("INVALID_REQUEST", "The request body is invalid."),
+            status_code=500,
+            content=error_payload("INTERNAL_ERROR", "The TTS service failed unexpectedly."),
         )
 
     @application.get("/api/ping")
@@ -226,10 +361,22 @@ def create_app(
         return {"ok": True}
 
     @application.get("/api/ready")
-    def ready() -> dict[str, bool]:
+    def ready() -> dict[str, object]:
         if not runtime.ready:
             raise_api_error(503, "NOT_READY", "The TTS model is not ready.")
-        return {"ok": True, "ready": True}
+        metrics = runtime.metrics()
+        if not metrics.accepting_requests:
+            raise_api_error(503, "QUEUE_FULL", "The synthesis queue is full.")
+        return {
+            "ok": True,
+            "ready": True,
+            "accepting_requests": True,
+            "queue_capacity": metrics.queue_capacity,
+            "slots_in_use": metrics.slots_in_use,
+            "active_inference": metrics.active_inference,
+            "queued_futures": metrics.queued_futures,
+            "timed_out_running": metrics.timed_out_running,
+        }
 
     @application.get("/api/voices")
     def voices() -> dict[str, list[str]]:
@@ -243,16 +390,14 @@ def create_app(
         if not text:
             raise_api_error(400, "EMPTY_TEXT", "Text must not be empty.")
         if len(text) > service_config.max_text_chars:
-            raise_api_error(
-                413,
-                "TEXT_TOO_LONG",
-                f"Text exceeds the {service_config.max_text_chars}-character limit.",
-            )
+            raise_api_error(413, "TEXT_TOO_LONG", f"Text exceeds the {service_config.max_text_chars}-character limit.")
         if not runtime.ready:
             raise_api_error(503, "NOT_READY", "The TTS model is not ready.")
 
         try:
             future, output_path = runtime.submit(text, request.voice)
+        except InvalidVoiceError as error:
+            raise_api_error(400, "INVALID_VOICE", str(error))
         except OverflowError:
             raise_api_error(429, "QUEUE_FULL", "The synthesis queue is full.")
         except RuntimeError:
@@ -261,11 +406,9 @@ def create_app(
         try:
             completed_path = future.result(timeout=service_config.synthesis_timeout_seconds)
         except FutureTimeoutError:
+            runtime.mark_timed_out(future)
             future.add_done_callback(lambda _future: runtime.cleanup_path(output_path))
             raise_api_error(504, "SYNTHESIS_TIMEOUT", "Speech synthesis timed out.")
-        except InvalidVoiceError as error:
-            runtime.cleanup_path(output_path)
-            raise_api_error(400, "INVALID_VOICE", str(error))
         except Exception:
             runtime.cleanup_path(output_path)
             raise_api_error(500, "SYNTHESIS_FAILED", "Speech synthesis failed.")
