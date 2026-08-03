@@ -66,6 +66,23 @@ function paragraphsFromNormalizedText(text: string): string[] {
   return text.split(/\n\n+/).map((paragraph) => paragraph.trim()).filter(Boolean)
 }
 
+function shouldFlushBeforeSentence(
+  currentText: string,
+  candidateText: string,
+  targetChars: number,
+  softMaxChars: number,
+): boolean {
+  if (!currentText) return false
+  const currentLength = codePointLength(currentText)
+  const candidateLength = codePointLength(candidateText)
+  if (candidateLength > softMaxChars) return true
+
+  // Once the current chunk has useful substance, retain whichever boundary is
+  // closer to the target instead of blindly filling every chunk to soft max.
+  if (currentLength < Math.ceil(targetChars / 2)) return false
+  return Math.abs(targetChars - currentLength) <= Math.abs(targetChars - candidateLength)
+}
+
 export function packPlaybackChunks(
   normalizedText: string,
   options: ChunkPackingOptions = {},
@@ -111,7 +128,7 @@ export function packPlaybackChunks(
       }
 
       const candidate = packed ? `${packed} ${sentence}` : sentence
-      if (packed && codePointLength(candidate) > softMaxChars) {
+      if (shouldFlushBeforeSentence(packed, candidate, targetChars, softMaxChars)) {
         flushPacked()
         packed = sentence
       } else {
