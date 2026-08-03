@@ -57,6 +57,13 @@ function request(text: string, requestId: string, source: StartPlaybackRequest['
   }
 }
 
+function lastIndexMatching(values: string[], predicate: (value: string) => boolean): number {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    if (predicate(values[index])) return index
+  }
+  return -1
+}
+
 function harness() {
   const audio = new FakeAudio()
   const events: PlaybackEvent[] = []
@@ -105,8 +112,8 @@ describe('PlaybackCoordinator', () => {
     await coordinator.start(request('Second.', 'request-2', 'popup-test'))
     await waitForPlay(audio, 2)
 
-    const secondPlayIndex = audio.trace.findLastIndex((entry) => entry.startsWith('play:'))
-    const pauseBeforeSecond = audio.trace.slice(0, secondPlayIndex).findLastIndex((entry) => entry === 'pause')
+    const secondPlayIndex = lastIndexMatching(audio.trace, (entry) => entry.startsWith('play:'))
+    const pauseBeforeSecond = lastIndexMatching(audio.trace.slice(0, secondPlayIndex), (entry) => entry === 'pause')
     expect(pauseBeforeSecond).toBeGreaterThanOrEqual(0)
     expect(audio.maxActiveSources).toBe(1)
     expect(coordinator.getStatus()).toMatchObject({ requestId: 'request-2', source: 'popup-test', state: 'playing' })
