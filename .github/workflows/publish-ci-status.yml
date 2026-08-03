@@ -28,7 +28,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       REPOSITORY: ${{ github.repository }}
-      ISSUE_NUMBER: '1'
+      ISSUE_NUMBER: '2'
       MONITORED_BRANCH: master
       PUBLISHER_FILE: .github/workflows/publish-ci-status.yml
       RUN_ID: ${{ github.event.workflow_run.id }}
@@ -54,7 +54,6 @@ jobs:
           import json
           import os
           import subprocess
-          import sys
           from datetime import datetime, timezone
           from typing import Any
 
@@ -65,6 +64,7 @@ jobs:
           run_id = int(os.environ['RUN_ID'])
           run_attempt = int(os.environ['RUN_ATTEMPT'])
           head_branch = os.environ['HEAD_BRANCH']
+          run_status = os.environ['RUN_STATUS']
 
           if head_branch != monitored_branch:
               print(f'Ignoring branch {head_branch}; publisher monitors {monitored_branch}.')
@@ -114,7 +114,7 @@ jobs:
               jobs_raw.extend(page_jobs)
 
           artifacts_raw = []
-          if os.environ['RUN_STATUS'] == 'completed':
+          if run_status == 'completed':
               artifact_pages = gh_json(
                   f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100',
                   paginate=True,
@@ -226,13 +226,15 @@ jobs:
                   'run_attempt': run_attempt,
                   'run_url': os.environ['RUN_URL'],
                   'event': os.environ['RUN_EVENT'],
-                  'status': os.environ['RUN_STATUS'],
+                  'status': run_status,
                   'conclusion': os.environ['RUN_CONCLUSION'] or None,
                   'head_branch': head_branch,
                   'head_sha': os.environ['HEAD_SHA'],
                   'created_at': os.environ['CREATED_AT'],
                   'updated_at': os.environ['UPDATED_AT'],
               },
+              'jobs_data_state': 'available' if jobs_raw else ('pending' if run_status != 'completed' else 'empty'),
+              'artifacts_data_state': 'available' if artifacts_raw else ('pending' if run_status != 'completed' else 'empty'),
               'problem_steps': problem_steps,
               'jobs': jobs,
               'artifacts': artifacts,
@@ -262,8 +264,10 @@ jobs:
               f"- **Commit:** {markdown_code(payload['workflow']['head_sha'])}",
               f"- **Branch/event:** {markdown_code(head_branch)} / {markdown_code(payload['workflow']['event'])}",
               f"- **Jobs:** {markdown_code(f'{completed_jobs} completed, {failed_jobs} failed, {running_jobs} running')}",
+              f"- **Job data:** {markdown_code(payload['jobs_data_state'])}",
               *problem_lines,
               f"- **Artifacts:** {markdown_code(len(artifacts))}",
+              f"- **Artifact data:** {markdown_code(payload['artifacts_data_state'])}",
               f"- **Observed:** {markdown_code(observed)}",
               '',
               '## Machine-readable status',
