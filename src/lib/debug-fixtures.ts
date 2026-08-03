@@ -1,11 +1,27 @@
-export const DEBUG_PARAGRAPH_FIXTURE = [
+const OVERSIZED_SENTENCE = [
+  'This deliberately oversized sentence exercises ranked clause splitting while preserving every word exactly once;',
+  'it continues with enough neutral fixture language to exceed the production hard chunk maximum,',
+  'and it repeats a deterministic sequence for testability:',
+  ...Array.from({ length: 80 }, (_, index) => `fixture${index + 1}`),
+].join(' ') + '.'
+
+export const DEBUG_COLLISION_FIXTURE = [
   [
-    'This is the first sentence of the first paragraph.',
-    'It is intentionally long enough to make the background chunker produce more than one chunk before the paragraph ends.',
-    'That gives the debug harness a reliable sentence transition inside a paragraph.',
-    'It also keeps the paragraph boundary close to a chunk boundary so the handoff can be inspected more easily in the DEV logs.',
-    'If overlap still exists, this is where it should be easiest to hear.',
+    'Short one. Short two. Short three.',
+    'A semicolon joins this clause; it must not force another synthesis request.',
+    'The value is 3.14 and version 1.2.3 is current.',
+    'Visit example.com or https://example.com/readit and email reader@example.com.',
+    'Dr. Smith met Mr. Jones in the U.S. at 5 p.m. today.',
+    'A.I. systems changed quickly.',
   ].join(' '),
-  'This is the first sentence of the second paragraph. If the transition is wrong, this line is where overlap is easiest to hear.',
-  'This third paragraph gives the queue one more boundary so DEV traces show sentence and paragraph transitions distinctly.',
+  [
+    'St. Louis is large. I live on Main St. It is quiet.',
+    'John Smith Jr. arrived. He is John Smith Jr. He arrived again.',
+    '“Quoted punctuation stays attached.” (Parenthesized text follows.)',
+    'Wait... what happened? He stopped... Then he left.',
+  ].join(' '),
+  OVERSIZED_SENTENCE,
 ].join('\n\n')
+
+// Backward-compatible name for existing development UI references.
+export const DEBUG_PARAGRAPH_FIXTURE = DEBUG_COLLISION_FIXTURE
