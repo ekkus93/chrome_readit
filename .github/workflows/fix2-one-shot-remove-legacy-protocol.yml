@@ -1,0 +1,106 @@
+name: FIX2 One-Shot Remove Legacy Protocol
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/fix2-one-shot-remove-legacy-protocol.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout latest master
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Remove guarded legacy adapter
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          import re
+
+          messaging_path = Path('src/lib/messaging.ts')
+          messaging = messaging_path.read_text()
+          messaging = re.sub(
+              r"\nexport type LegacyPlaybackControlRequest =\n(?:  \| \{ kind: '[A-Z_]+' \}\n)+",
+              "\n",
+              messaging,
+              count=1,
+          )
+          messaging = re.sub(
+              r"\nexport function isLegacyPlaybackControlRequest\(value: unknown\): value is LegacyPlaybackControlRequest \{.*?\n\}\n?",
+              "\n",
+              messaging,
+              count=1,
+              flags=re.S,
+          )
+          if 'LegacyPlaybackControlRequest' in messaging or 'SPEECH_STATUS' in messaging:
+              raise SystemExit('legacy declarations remain in messaging.ts')
+          messaging_path.write_text(messaging)
+
+          worker_path = Path('src/background/service-worker.ts')
+          worker = worker_path.read_text()
+          worker = worker.replace('  isLegacyPlaybackControlRequest,\n', '', 1)
+          worker = re.sub(
+              r"\n  if \(isLegacyPlaybackControlRequest\(message\)\) \{.*?\n    return true\n  \}",
+              "",
+              worker,
+              count=1,
+              flags=re.S,
+          )
+          forbidden = ('isLegacyPlaybackControlRequest', 'SPEECH_STATUS', 'PAUSE_SPEECH', 'RESUME_SPEECH', 'CANCEL_SPEECH')
+          remaining = [name for name in forbidden if name in worker]
+          if remaining:
+              raise SystemExit(f'legacy worker names remain: {remaining}')
+          worker_path.write_text(worker)
+
+          hygiene_path = Path('scripts/check-fix2-hygiene.sh')
+          hygiene = hygiene_path.read_text()
+          marker = "if grep -RInE --include='*.ts' --include='*.tsx' \\\n"
+          legacy_check = '''if grep -RInE --include='*.ts' --include='*.tsx' \\
+  --exclude='*.test.ts' --exclude='*.test.tsx' \\
+  'SPEECH_STATUS|PAUSE_SPEECH|RESUME_SPEECH|CANCEL_SPEECH|LegacyPlaybackControlRequest' src \\
+  >/tmp/chrome-readit-legacy-protocol.txt; then
+  fail_match 'the obsolete playback message protocol remains active' cat /tmp/chrome-readit-legacy-protocol.txt
+fi
+
+'''
+          if 'chrome-readit-legacy-protocol.txt' not in hygiene:
+              insertion = hygiene.find(marker)
+              if insertion < 0:
+                  raise SystemExit('hygiene insertion marker not found')
+              hygiene = hygiene[:insertion] + legacy_check + hygiene[insertion:]
+              hygiene = hygiene.replace(
+                  '  /tmp/chrome-readit-extra-audio.txt \\\n',
+                  '  /tmp/chrome-readit-legacy-protocol.txt \\\n  /tmp/chrome-readit-extra-audio.txt \\\n',
+                  1,
+              )
+          hygiene_path.write_text(hygiene)
+          PY
+
+      - name: Validate shared protocol only
+        run: |
+          npm ci
+          bash scripts/check-fix2-hygiene.sh
+          npm run lint
+          npm run typecheck
+          npx vitest --run src/background/service-worker.test.ts src/lib/playback-runtime-client.test.ts src/popup/Popup.test-speech.test.tsx src/options/Options.test-speech.int.test.tsx
+
+      - name: Remove temporary workflow
+        run: rm -f .github/workflows/fix2-one-shot-remove-legacy-protocol.yml
+
+      - name: Commit and push safely
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/lib/messaging.ts src/background/service-worker.ts scripts/check-fix2-hygiene.sh .github/workflows/fix2-one-shot-remove-legacy-protocol.yml
+          git commit -m "Remove obsolete playback message adapter"
+          git pull --rebase origin master
+          git push origin HEAD:master
