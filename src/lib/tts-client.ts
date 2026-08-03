@@ -101,6 +101,29 @@ async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Pr
   }
 }
 
+function readChunkWithAbort(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  linked: LinkedAbort,
+  externalSignal?: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (linked.signal.aborted) return Promise.reject(abortError(linked, externalSignal))
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (operation: () => void) => {
+      if (settled) return
+      settled = true
+      linked.signal.removeEventListener('abort', onAbort)
+      operation()
+    }
+    const onAbort = () => finish(() => reject(abortError(linked, externalSignal)))
+    linked.signal.addEventListener('abort', onAbort, { once: true })
+    void reader.read().then(
+      (result) => finish(() => resolve(result)),
+      (error) => finish(() => reject(abortError(linked, externalSignal, error))),
+    )
+  })
+}
+
 async function readBoundedBody(
   response: Response,
   maxResponseBytes: number,
@@ -121,9 +144,10 @@ async function readBoundedBody(
     while (true) {
       let result: ReadableStreamReadResult<Uint8Array>
       try {
-        result = await reader.read()
+        result = await readChunkWithAbort(reader, linked, externalSignal)
       } catch (error) {
-        throw abortError(linked, externalSignal, error)
+        await cancelReader(reader)
+        throw error
       }
       if (result.done) break
       if (!result.value || result.value.byteLength === 0) continue
@@ -197,7 +221,11 @@ export async function fetchTtsAudio(options: FetchTtsAudioOptions): Promise<TtsA
 
     const declaredLength = parseContentLength(response.headers.get('content-length'))
     if (declaredLength !== null && declaredLength > maxResponseBytes) {
-      await response.body?.cancel()
+      try {
+        await response.body?.cancel()
+      } catch {
+        // Body cancellation is best-effort after a declared-size rejection.
+      }
       throw new TtsClientError(createPlaybackError(
         'TTS_RESPONSE_TOO_LARGE',
         `The TTS response exceeded the ${maxResponseBytes}-byte limit.`,
