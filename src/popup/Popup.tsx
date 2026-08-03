@@ -291,7 +291,17 @@ export default function Popup() {
 
   async function handleControl(action: PlaybackControlAction) {
     setControlError(null)
-    const response = await sendPlaybackControl(action, playbackStatus?.sessionId ?? undefined)
+    const latest = await queryPlaybackStatus()
+    let controlStatus = latestPlaybackStatusRef.current ?? playbackStatus
+    if (latest.ok) {
+      controlStatus = latest.status
+      latestPlaybackStatusRef.current = latest.status
+      setPlaybackStatus(latest.status)
+      setStatusError(latest.status.persistenceDegraded
+        ? 'Playback is working, but restart-safe status persistence is unavailable.'
+        : null)
+    }
+    const response = await sendPlaybackControl(action, controlStatus?.sessionId ?? undefined)
     if (!response.ok) {
       setControlError(response.error.message)
       return
