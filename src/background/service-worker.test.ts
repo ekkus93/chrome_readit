@@ -64,6 +64,8 @@ describe('background playback router', () => {
   })
 
   it('captures the active selection and forwards one start request to offscreen', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
     const chromeMock = installChromeMock()
     chromeMock.tabs.query.mockResolvedValue([{ id: 42, url: 'https://example.com' }])
     chromeMock.scripting.executeScript.mockResolvedValue([{ result: ' Selected text. ' }])
@@ -90,7 +92,7 @@ describe('background playback router', () => {
         rate: 1.25,
       },
     })
-    expect(globalThis.fetch).toBeUndefined()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('preserves the source for popup and Options test requests', async () => {
