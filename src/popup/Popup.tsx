@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { DEBUG_PARAGRAPH_FIXTURE } from '../lib/debug-fixtures'
+import { isPlaybackEvent, type PlaybackSource } from '../lib/playback-protocol'
 import { DEFAULT_SETTINGS, getSettings, saveSettings, type Settings } from '../lib/storage'
 import { fetchServerVoices, type VoiceOption } from '../lib/voices'
-// Use real Chrome typings from @types/chrome when installed; avoid file-scoped
-// shims so TypeScript can check extension APIs correctly.
+
+function responseError(response: Record<string, unknown> | undefined, fallback: string): string {
+  if (typeof response?.error === 'string') return response.error
+  if (response?.error && typeof response.error === 'object' && 'message' in response.error) {
+    const message = (response.error as { message?: unknown }).message
+    if (typeof message === 'string') return message
+  }
+  return fallback
+}
 
 export default function Popup() {
   const showDebugFixture = import.meta.env.DEV
@@ -21,17 +29,15 @@ export default function Popup() {
 
   useEffect(() => {
     let mounted = true
-    void getSettings().then((s) => {
+    void getSettings().then((settings) => {
       if (!mounted) return
-      persistedSettingsRef.current = s
-      setRate(s.rate)
-      setVoice(s.voice)
-      setTtsUrl(s.ttsUrl)
+      persistedSettingsRef.current = settings
+      setRate(settings.rate)
+      setVoice(settings.voice)
+      setTtsUrl(settings.ttsUrl)
       setLoaded(true)
     })
-    return () => {
-      mounted = false
-    }
+    return () => { mounted = false }
   }, [])
 
   useEffect(() => {
@@ -54,39 +60,55 @@ export default function Popup() {
     if (!ttsUrl) return
     let mounted = true
     void fetchServerVoices(ttsUrl).then((serverVoices) => {
-      if (!mounted) return
-      setVoices(serverVoices)
+      if (mounted) setVoices(serverVoices)
     })
-    return () => {
-      mounted = false
-    }
+    return () => { mounted = false }
   }, [ttsUrl])
 
-  // Probe the configured TTS server through the background so the popup can
-  // surface whether the extension can currently reach it.
+  useEffect(() => {
+    const listener = (message: unknown) => {
+      if (!isPlaybackEvent(message) || message.status.source !== 'popup-test') return false
+      if (message.event === 'completed') {
+        setTryStatus('ok')
+        window.setTimeout(() => setTryStatus('idle'), 1200)
+      } else if (message.event === 'failed' || message.event === 'cancelled') {
+        setTryStatus('error')
+      } else {
+        setTryStatus('sending')
+      }
+      return false
+    }
+    chrome.runtime.onMessage.addListener(listener)
+    return () => chrome.runtime.onMessage.removeListener?.(listener)
+  }, [])
+
   useEffect(() => {
     let mounted = true
     const probe = () => {
       try {
-        chrome.runtime.sendMessage({ action: 'probe-tts' }, (resp) => {
-          if (!mounted) return
-          if (resp && resp.ok) setTtsServerUp(true)
-          else setTtsServerUp(false)
+        chrome.runtime.sendMessage({ action: 'probe-tts' }, (response) => {
+          if (mounted) setTtsServerUp(Boolean(response?.ok))
         })
-      } catch (err) {
-        if (!mounted) return
-        console.warn('readit: probe-tts failed', err)
-        setTtsServerUp(false)
+      } catch (error) {
+        console.warn('readit: probe-tts failed', error)
+        if (mounted) setTtsServerUp(false)
       }
     }
     probe()
-    // allow re-probe on focus so the popup updates if the helper is started
-    const onFocus = () => probe()
-    window.addEventListener('focus', onFocus)
-    return () => { mounted = false; window.removeEventListener('focus', onFocus) }
+    window.addEventListener('focus', probe)
+    return () => {
+      mounted = false
+      window.removeEventListener('focus', probe)
+    }
   }, [])
 
-  async function requestRead(message: { kind: 'READ_SELECTION' } | { kind: 'READ_TEXT'; text: string }) {
+  async function requestRead(message: {
+    kind: 'READ_SELECTION'
+  } | {
+    kind: 'READ_TEXT'
+    text: string
+    source?: PlaybackSource
+  }) {
     return await new Promise<Record<string, unknown> | undefined>((resolve, reject) => {
       chrome.runtime.sendMessage(message, (response) => {
         if (chrome.runtime.lastError) {
@@ -99,136 +121,74 @@ export default function Popup() {
   }
 
   async function handleReadSelection() {
-    // Route read selection requests through the background so it can
-    // use the same injection/fallback logic when a content script is
-    // not present on the page.
     try {
       const response = await requestRead({ kind: 'READ_SELECTION' })
       if (response?.ok) {
         setReadError(null)
         return
       }
-      setReadError(typeof response?.error === 'string' ? response.error : 'Unable to start playback.')
-    } catch (err) {
-      console.warn('readit: failed to request background read', err)
-      setReadError(String(err))
+      setReadError(responseError(response, 'Unable to start playback.'))
+    } catch (error) {
+      console.warn('readit: failed to request background read', error)
+      setReadError(String(error))
     }
   }
 
   async function handleDebugFixture() {
     try {
-      const response = await requestRead({ kind: 'READ_TEXT', text: DEBUG_PARAGRAPH_FIXTURE })
+      const response = await requestRead({ kind: 'READ_TEXT', text: DEBUG_PARAGRAPH_FIXTURE, source: 'debug-fixture' })
       if (response?.ok) {
         setReadError(null)
         return
       }
-      setReadError(typeof response?.error === 'string' ? response.error : 'Unable to start debug playback.')
-    } catch (err) {
-      console.warn('readit: failed to request debug fixture playback', err)
-      setReadError(String(err))
+      setReadError(responseError(response, 'Unable to start debug playback.'))
+    } catch (error) {
+      console.warn('readit: failed to request debug fixture playback', error)
+      setReadError(String(error))
     }
   }
 
   async function handleTrySpeech() {
-    const text = (tryText || '').trim()
-    if (!text) return
+    const text = tryText.trim()
+    if (!text || tryStatus === 'sending') return
     setTryStatus('sending')
     try {
-      const resp = await new Promise<Record<string, unknown> | undefined>((resolve, reject) => {
-        chrome.runtime.sendMessage({ action: 'request-tts', text }, (response) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message ?? 'unknown runtime error'))
-            return
-          }
-          resolve(response as Record<string, unknown> | undefined)
-        })
-      })
-
-      if (!resp || !resp.ok) {
-        console.warn('[readit] popup tts failed', resp?.error)
+      const response = await requestRead({ kind: 'READ_TEXT', text, source: 'popup-test' })
+      if (!response?.ok) {
+        console.warn('[readit] popup test speech failed', responseError(response, 'Unable to start test speech.'))
         setTryStatus('error')
-        return
       }
-
-      const audio = resp.audio
-      const mime = typeof resp.mime === 'string' ? resp.mime : 'audio/wav'
-      if (typeof audio !== 'string' || audio.length === 0) {
-        console.warn('[readit] popup tts: no playable audio in response')
-        setTryStatus('error')
-        return
-      }
-      if (!mime.startsWith('audio/')) {
-        console.warn('[readit] popup tts: non-audio payload returned', mime)
-        setTryStatus('error')
-        return
-      }
-
-      const bin = atob(audio)
-      const len = bin.length
-      if (len === 0) {
-        console.warn('[readit] popup tts: decoded audio payload is empty')
-        setTryStatus('error')
-        return
-      }
-      const u8 = new Uint8Array(len)
-      for (let i = 0; i < len; i++) u8[i] = bin.charCodeAt(i)
-      const blob = new Blob([u8], { type: mime })
-      const url = URL.createObjectURL(blob)
-      const player = new Audio(url)
-      player.playbackRate = rate
-      player.autoplay = true
-      try {
-        await player.play()
-        setTryStatus('ok')
-        setTimeout(() => setTryStatus('idle'), 1200)
-      } catch (err) {
-        console.warn('[readit] popup audio play failed', err)
-        setTryStatus('error')
-      } finally {
-        setTimeout(() => URL.revokeObjectURL(url), 60_000)
-      }
-    } catch (err) {
-      console.warn('readit: try speech failed', err)
+    } catch (error) {
+      console.warn('readit: try speech failed', error)
       setTryStatus('error')
     }
+  }
+
+  async function handlePause() {
+    try { chrome.runtime.sendMessage({ kind: 'PAUSE_SPEECH' }, () => {}) } catch (error) { console.warn('readit: pause failed', error) }
+  }
+
+  async function handleResume() {
+    try { chrome.runtime.sendMessage({ kind: 'RESUME_SPEECH' }, () => {}) } catch (error) { console.warn('readit: resume failed', error) }
+  }
+
+  async function handleCancel() {
+    try { chrome.runtime.sendMessage({ kind: 'CANCEL_SPEECH' }, () => {}) } catch (error) { console.warn('readit: cancel failed', error) }
   }
 
   const labelStyle = { display: 'block', fontWeight: 600 }
   const buttonStyle = { width: '100%', padding: '12px', fontSize: '1rem' } as const
   const selectStyle = { width: '100%', padding: 8 } as const
-  const sliderStyle = { width: '100%' } as const
-
-  // Control handlers for pause/resume/cancel reading
-  async function handlePause() {
-    try { chrome.runtime.sendMessage({ kind: 'PAUSE_SPEECH' }, () => {}) } catch (e) { console.warn('readit: pause failed', e) }
-  }
-  async function handleResume() {
-    try { chrome.runtime.sendMessage({ kind: 'RESUME_SPEECH' }, () => {}) } catch (e) { console.warn('readit: resume failed', e) }
-  }
-  async function handleCancel() {
-    try { chrome.runtime.sendMessage({ kind: 'CANCEL_SPEECH' }, () => {}) } catch (e) { console.warn('readit: cancel failed', e) }
-  }
 
   return (
-    <div
-      role="application"
-      style={{ minWidth: 280, padding: 12, lineHeight: 1.4 }}
-    >
+    <div role="application" style={{ minWidth: 280, padding: 12, lineHeight: 1.4 }}>
       <h1 style={{ fontSize: '1.1rem', margin: '0 0 8px' }}>Read It</h1>
 
-      <button
-        onClick={handleReadSelection}
-        aria-label="Read selected text"
-        style={buttonStyle}
-      >
+      <button onClick={handleReadSelection} aria-label="Read selected text" style={buttonStyle}>
         Read selection (Alt+Shift+R)
       </button>
       {showDebugFixture && (
-        <button
-          onClick={handleDebugFixture}
-          aria-label="Debug paragraph transitions"
-          style={{ ...buttonStyle, marginTop: 8 }}
-        >
+        <button onClick={handleDebugFixture} aria-label="Debug paragraph transitions" style={{ ...buttonStyle, marginTop: 8 }}>
           Debug paragraph transitions
         </button>
       )}
@@ -238,13 +198,11 @@ export default function Popup() {
         <select
           id="voice"
           value={voice}
-          onChange={e => { const nextVoice = e.target.value || DEFAULT_SETTINGS.voice; setVoice(nextVoice) }}
+          onChange={(event) => setVoice(event.target.value || DEFAULT_SETTINGS.voice)}
           style={selectStyle}
         >
           {!voices.some((option) => option.name === voice) && <option value={voice}>{voice}</option>}
-          {voices.map(v => (
-            <option key={v.name} value={v.name}>{v.label}</option>
-          ))}
+          {voices.map((option) => <option key={option.name} value={option.name}>{option.label}</option>)}
         </select>
         <p style={{ fontSize: '.8rem', color: 'GrayText', marginTop: 6 }}>
           Voices come from the configured TTS server/model.
@@ -256,23 +214,25 @@ export default function Popup() {
         <input
           id="rate"
           type="range"
-          min={0.5} max={10} step={0.05}
+          min={0.5}
+          max={10}
+          step={0.05}
           value={rate}
-          onChange={e => { const r = Number(e.target.value); setRate(r) }}
-          style={sliderStyle}
+          onChange={(event) => setRate(Number(event.target.value))}
+          style={{ width: '100%' }}
         />
       </div>
 
       <section style={{ marginTop: 12 }}>
-        <label htmlFor="tryText" style={labelStyle}>Try speech on current page</label>
+        <label htmlFor="tryText" style={labelStyle}>Try speech</label>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <input id="tryText" value={tryText} onChange={e => setTryText(e.target.value)} style={{ flex: 1, padding: 8 }} />
-          <button onClick={handleTrySpeech} style={{ padding: '8px 12px' }}>
-            {tryStatus === 'sending' ? 'Sending…' : 'Try speech'}
+          <input id="tryText" value={tryText} onChange={(event) => setTryText(event.target.value)} style={{ flex: 1, padding: 8 }} />
+          <button onClick={handleTrySpeech} disabled={tryStatus === 'sending'} style={{ padding: '8px 12px' }}>
+            {tryStatus === 'sending' ? 'Playing…' : 'Try speech'}
           </button>
         </div>
-        {tryStatus === 'ok' && <div style={{ color: '#006400', marginTop: 8 }}>Played test speech in the popup.</div>}
-        {tryStatus === 'error' && <div style={{ color: '#8b0000', marginTop: 8 }}>Failed to play returned speech audio.</div>}
+        {tryStatus === 'ok' && <div style={{ color: '#006400', marginTop: 8 }}>Test speech completed.</div>}
+        {tryStatus === 'error' && <div style={{ color: '#8b0000', marginTop: 8 }}>Test speech failed or was cancelled.</div>}
       </section>
 
       <section style={{ marginTop: 12 }}>
@@ -306,9 +266,5 @@ export default function Popup() {
   )
 }
 
-// Auto-mount when this file is loaded as a page entry (popup.html).
-// This keeps the file self-contained and mirrors `src/main.tsx`'s behavior.
 const root = document.getElementById('root')
-if (root) {
-  createRoot(root).render(<Popup />)
-}
+if (root) createRoot(root).render(<Popup />)
