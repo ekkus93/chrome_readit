@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PLAYBACK_EVENT, PLAYBACK_STATUS } from '../lib/playback-protocol'
 import Popup from './Popup'
@@ -53,6 +53,11 @@ describe('Popup coordinator test speech and voice loading', () => {
     }))
   })
 
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
+
   it('loads server voices into the popup voice select', async () => {
     installChrome()
     render(<Popup />)
@@ -83,21 +88,23 @@ describe('Popup coordinator test speech and voice loading', () => {
     render(<Popup />)
     await userEvent.click(await screen.findByRole('button', { name: /Try speech/i }))
 
-    getListener()?.({
-      kind: PLAYBACK_EVENT,
-      event: 'completed',
-      atMs: 1,
-      status: {
-        kind: PLAYBACK_STATUS,
-        state: 'completed',
-        sessionId: 'session-1',
-        requestId: 'request-1',
-        source: 'popup-test',
-        currentChunk: 1,
-        totalChunks: 1,
-        currentParagraph: 1,
-        totalParagraphs: 1,
-      },
+    act(() => {
+      getListener()?.({
+        kind: PLAYBACK_EVENT,
+        event: 'completed',
+        atMs: 1,
+        status: {
+          kind: PLAYBACK_STATUS,
+          state: 'completed',
+          sessionId: 'session-1',
+          requestId: 'request-1',
+          source: 'popup-test',
+          currentChunk: 1,
+          totalChunks: 1,
+          currentParagraph: 1,
+          totalParagraphs: 1,
+        },
+      })
     })
 
     expect(await screen.findByText(/Test speech completed/i)).toBeTruthy()
