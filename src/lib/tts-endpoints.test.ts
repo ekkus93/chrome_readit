@@ -27,6 +27,6 @@ describe('TTS endpoint helpers', () => {
   })
 
   it('uses a generic label when endpoint parsing fails', () => {
-    expect(sanitizeEndpointForDisplay('not a URL')).toBe('configured endpoint')
+    expect(sanitizeEndpointForDisplay('not a URL')).toBe('the configured endpoint')
   })
 })
