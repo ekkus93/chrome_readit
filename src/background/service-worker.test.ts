@@ -39,7 +39,23 @@ function installChromeMock() {
     },
   }
   ;(globalThis as unknown as { chrome: typeof chrome }).chrome = chromeMock as unknown as typeof chrome
-  return chromeMock
+  return { chromeMock, sessionValues }
+}
+
+function status(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: PLAYBACK_STATUS,
+    sequence: 1,
+    state: 'playing',
+    sessionId: 'session-1',
+    requestId: 'request-1',
+    source: 'selection',
+    currentChunk: 1,
+    totalChunks: 2,
+    currentParagraph: 1,
+    totalParagraphs: 1,
+    ...overrides,
+  }
 }
 
 describe('background playback router', () => {
@@ -57,7 +73,7 @@ describe('background playback router', () => {
   it('captures the active selection and forwards one start request to offscreen', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
-    const chromeMock = installChromeMock()
+    const { chromeMock } = installChromeMock()
     chromeMock.tabs.query.mockResolvedValue([{ id: 42, url: 'https://example.com' }])
     chromeMock.scripting.executeScript.mockResolvedValue([{ result: ' Selected text. ' }])
     chromeMock.runtime.sendMessage.mockImplementation(async (message: Record<string, unknown>) => ({
@@ -86,8 +102,8 @@ describe('background playback router', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('preserves the source for popup and Options test requests', async () => {
-    const chromeMock = installChromeMock()
+  it('preserves the explicit source for popup and Options test requests', async () => {
+    const { chromeMock } = installChromeMock()
     chromeMock.runtime.sendMessage.mockImplementation(async (message: Record<string, unknown>) => ({
       ok: true,
       accepted: true,
@@ -106,8 +122,21 @@ describe('background playback router', () => {
     }))
   })
 
+  it('rejects READ_TEXT without an explicit source through the runtime listener', async () => {
+    const { chromeMock } = installChromeMock()
+    await import('./service-worker')
+    const listener = chromeMock.runtime.onMessage.addListener.mock.calls[0]?.[0]
+    const sendResponse = vi.fn()
+
+    expect(listener({ kind: 'READ_TEXT', text: 'Hello.' }, null, sendResponse)).toBe(true)
+    expect(sendResponse).toHaveBeenCalledWith(expect.objectContaining({
+      ok: false,
+      error: { code: 'INVALID_REQUEST', message: expect.any(String) },
+    }))
+  })
+
   it('returns a structured error for unsupported pages', async () => {
-    const chromeMock = installChromeMock()
+    const { chromeMock } = installChromeMock()
     chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: 'chrome://settings' }])
 
     const module = await import('./service-worker')
@@ -120,7 +149,7 @@ describe('background playback router', () => {
   })
 
   it('coalesces concurrent offscreen creation', async () => {
-    const chromeMock = installChromeMock()
+    const { chromeMock } = installChromeMock()
     let resolveCreation: (() => void) | undefined
     chromeMock.offscreen.createDocument.mockReturnValue(new Promise<void>((resolve) => { resolveCreation = resolve }))
 
@@ -134,32 +163,44 @@ describe('background playback router', () => {
     expect(chromeMock.offscreen.createDocument).toHaveBeenCalledTimes(1)
   })
 
-  it('forwards legacy controls through the shared protocol', async () => {
-    const chromeMock = installChromeMock()
+  it('fails explicitly when no supported offscreen existence API is available', async () => {
+    const { chromeMock } = installChromeMock()
+    delete (chromeMock.runtime as { getContexts?: unknown }).getContexts
+    delete (chromeMock.offscreen as { hasDocument?: unknown }).hasDocument
+
+    const module = await import('./service-worker')
+    await expect(module.__testing.ensureOffscreenPlaybackDocument()).rejects.toThrow('OFFSCREEN_UNSUPPORTED')
+    expect(chromeMock.offscreen.createDocument).not.toHaveBeenCalled()
+  })
+
+  it('forwards controls through the shared protocol with expected session protection', async () => {
+    const { chromeMock } = installChromeMock()
     chromeMock.runtime.sendMessage.mockResolvedValue({ ok: true, sessionId: 'session-1', state: 'paused' })
 
     const module = await import('./service-worker')
-    await module.__testing.routeControl('pause')
+    await module.__testing.routeControl('pause', 'session-1')
 
-    expect(chromeMock.runtime.sendMessage).toHaveBeenCalledWith({ kind: PLAYBACK_CONTROL, action: 'pause' })
+    expect(chromeMock.runtime.sendMessage).toHaveBeenCalledWith({
+      kind: PLAYBACK_CONTROL,
+      action: 'pause',
+      expectedSessionId: 'session-1',
+    })
   })
 
   it('reports an interrupted active session when a recreated offscreen document is idle', async () => {
-    const chromeMock = installChromeMock()
+    const { chromeMock } = installChromeMock()
     const module = await import('./service-worker')
-    await module.__testing.writeLastPlaybackStatus({
-      kind: PLAYBACK_STATUS,
-      state: 'playing',
+    await module.__testing.writeLastPlaybackStatus(status({
+      sequence: 8,
       sessionId: 'session-lost',
       requestId: 'request-lost',
-      source: 'selection',
       currentChunk: 2,
       totalChunks: 4,
-      currentParagraph: 1,
       totalParagraphs: 2,
-    })
+    }))
     chromeMock.runtime.sendMessage.mockResolvedValue({
       kind: PLAYBACK_STATUS,
+      sequence: 0,
       state: 'idle',
       sessionId: null,
       requestId: null,
@@ -170,9 +211,10 @@ describe('background playback router', () => {
       totalParagraphs: 0,
     })
 
-    const status = await module.__testing.queryPlaybackStatus()
+    const interrupted = await module.__testing.queryPlaybackStatus()
 
-    expect(status).toMatchObject({
+    expect(interrupted).toMatchObject({
+      sequence: 9,
       state: 'failed',
       sessionId: 'session-lost',
       currentChunk: 2,
@@ -184,11 +226,67 @@ describe('background playback router', () => {
     })
   })
 
-  it('derives non-synthesizing API health endpoints', async () => {
+  it('serializes writes so an older playing state cannot overwrite completion', async () => {
+    const { chromeMock, sessionValues } = installChromeMock()
+    const resolvers: Array<() => void> = []
+    chromeMock.storage.session.set.mockImplementation((updates: Record<string, unknown>) => new Promise<void>((resolve) => {
+      resolvers.push(() => {
+        Object.assign(sessionValues, updates)
+        resolve()
+      })
+    }))
+
+    const module = await import('./service-worker')
+    const first = module.__testing.writeLastPlaybackStatus(status({ sequence: 10 }))
+    const second = module.__testing.writeLastPlaybackStatus(status({
+      sequence: 11,
+      state: 'completed',
+      currentChunk: 2,
+      error: undefined,
+    }))
+
+    await vi.waitFor(() => expect(resolvers).toHaveLength(1))
+    resolvers[0]()
+    await vi.waitFor(() => expect(resolvers).toHaveLength(2))
+    resolvers[1]()
+    await Promise.all([first, second])
+
+    await expect(module.__testing.readLastPlaybackStatus()).resolves.toMatchObject({
+      sequence: 11,
+      state: 'completed',
+    })
+  })
+
+  it('rejects a late terminal status from an older session after a replacement starts', async () => {
+    installChromeMock()
+    const module = await import('./service-worker')
+    const replacement = status({
+      sequence: 1,
+      state: 'starting',
+      sessionId: 'session-new',
+      requestId: 'request-new',
+      currentChunk: 1,
+      totalChunks: 1,
+    })
+    const stale = status({
+      sequence: 99,
+      state: 'completed',
+      sessionId: 'session-old',
+      requestId: 'request-old',
+      currentChunk: 2,
+      totalChunks: 2,
+    })
+
+    expect(module.__testing.shouldAcceptStatus(null, replacement)).toBe(true)
+    expect(module.__testing.shouldAcceptStatus(replacement, stale)).toBe(false)
+  })
+
+  it('derives non-synthesizing API health endpoints including trailing slash inputs', async () => {
     installChromeMock()
     const module = await import('./service-worker')
 
     expect(module.deriveApiSiblingUrl('http://localhost:5002/api/tts', 'ping')).toBe('http://localhost:5002/api/ping')
+    expect(module.deriveApiSiblingUrl('http://localhost:5002/api/tts/', 'voices')).toBe('http://localhost:5002/api/voices')
     expect(module.deriveApiSiblingUrl('https://example.com/local/api/tts?voice=x', 'ready')).toBe('https://example.com/local/api/ready')
     expect(module.deriveApiSiblingUrl('invalid', 'ping')).toBeNull()
   })
