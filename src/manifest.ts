@@ -1,4 +1,6 @@
-const manifest = {
+import { defineManifest } from '@crxjs/vite-plugin'
+
+export default defineManifest({
   manifest_version: 3,
   name: 'Read It – Reader',
   version: '0.0.1',
@@ -39,6 +41,4 @@ const manifest = {
       description: 'Cancel/stop reading',
     },
   },
-} as const
-
-export default manifest
+})
