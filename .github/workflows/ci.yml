@@ -16,70 +16,54 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22.12.0'
+          cache: npm
 
       - name: Install dependencies
-        # Allow legacy peer deps resolution to avoid CI failing when some dev deps
-        # require React 18 while the project uses React 19. This is a pragmatic
-        # fix so CI can install and run tests; consider upgrading test libs
-        # to versions that declare React 19 peer deps in the future.
         run: npm ci --legacy-peer-deps
 
       - name: Lint
-        run: |
-          if npm run -s lint; then echo "lint passed"; else echo "lint failed"; exit 1; fi
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Run tests with coverage
-        # Run Vitest and collect coverage (lcov + html)
         run: npx vitest --run --coverage
 
       - name: Build
         run: npm run build
 
-      - name: Validate assets referenced in dist/manifest.json exist in dist/
-        # After build, parse the built manifest (dist/manifest.json) and ensure any referenced icons
-        # and web_accessible_resources are present in the build output (dist/).
+      - name: Validate extension manifest and assets
         run: |
           set -euo pipefail
-
-          # Extract referenced assets (icons + web_accessible_resources) from the built manifest
-          node -e "const fs=require('fs');const m=JSON.parse(fs.readFileSync('dist/manifest.json','utf8'));const icons=Object.values(m.icons||{});let war=[];if(m.web_accessible_resources){ if(Array.isArray(m.web_accessible_resources)){ m.web_accessible_resources.forEach(e=>{ if(typeof e==='string') war.push(e); else if(Array.isArray(e.resources)) war.push(...e.resources); else if(e.resources) war.push(...e.resources); }); } } const unique=[...new Set([...icons,...war])]; console.log(unique.join('\n'))" > /tmp/manifest-assets.txt || (echo 'Failed to read dist/manifest.json' && exit 1)
-
-          missing=0
-          while IFS= read -r asset; do
-            # skip empty lines
-            [ -z "${asset}" ] && continue
-            # Normalize path (dist relative)
-            path="dist/${asset}"
-            if [[ "${asset}" == *"*"* ]]; then
-              # asset contains a glob; check if any match
-              if compgen -G "${path}" >/dev/null; then
-                echo "Found matches for glob: ${asset}"
-              else
-                echo "::error file=dist/manifest.json::No files match glob ${asset} in dist/" >&2
-                missing=1
-              fi
-            else
-              if [ -f "${path}" ]; then
-                echo "Found ${path}"
-              else
-                echo "::error file=dist/manifest.json::Referenced asset ${asset} missing from dist/" >&2
-                missing=1
-              fi
-            fi
-          done < /tmp/manifest-assets.txt
-
-          if [ "$missing" -eq 1 ]; then
-            echo "One or more assets referenced in dist/manifest.json are missing from dist/." >&2
-            exit 1
-          fi
+          node <<'NODE'
+          const fs = require('fs')
+          const path = require('path')
+          const manifestPath = 'dist/manifest.json'
+          if (!fs.existsSync(manifestPath)) throw new Error('dist/manifest.json is missing')
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+          if (!manifest.background?.service_worker) throw new Error('background service worker missing')
+          if (!manifest.action?.default_popup) throw new Error('popup entry missing')
+          if (!manifest.options_page && !manifest.options_ui?.page) throw new Error('options entry missing')
+          const requiredHtml = ['src/offscreen.html']
+          for (const html of requiredHtml) {
+            if (!fs.existsSync(path.join('dist', html))) throw new Error(`${html} missing from dist`)
+          }
+          const assets = [...new Set([
+            ...Object.values(manifest.icons || {}),
+            ...(manifest.web_accessible_resources || []).flatMap((entry) =>
+              typeof entry === 'string' ? [entry] : (entry.resources || [])),
+          ])]
+          for (const asset of assets) {
+            if (asset.includes('*')) continue
+            if (!fs.existsSync(path.join('dist', asset))) throw new Error(`${asset} missing from dist`)
+          }
+          NODE
 
       - name: Upload coverage to Codecov
-        # Vitest (v8 reporter) emits coverage/coverage-final.json and other formats
-        # Update Codecov inputs to point to the JSON output instead of a non-existent lcov file.
         uses: codecov/codecov-action@v4
         with:
-          # coverage-final.json is produced by the v8 reporter used in this project
           files: coverage/coverage-final.json
           flags: unit
           fail_ci_if_error: true
