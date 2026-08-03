@@ -21,6 +21,8 @@ import {
 } from '../lib/storage'
 import { fetchServerVoices, type VoiceOption } from '../lib/voices'
 
+const ACTIVE_TEST_STATUS_POLL_MS = 100
+
 function isTerminalStatus(status: PlaybackStatus): boolean {
   return ['idle', 'completed', 'cancelled', 'failed'].includes(status.state)
 }
@@ -57,7 +59,9 @@ export default function Options() {
   const [serverTesting, setServerTesting] = useState(false)
   const [serverTestError, setServerTestError] = useState<string | null>(null)
   const persistedSettingsRef = useRef<Settings>(DEFAULT_SETTINGS)
+  const latestPlaybackStatusRef = useRef<PlaybackStatus | null>(null)
   const testSessionIdRef = useRef<string | null>(null)
+  const testRequestBaselineSessionIdRef = useRef<string | null>(null)
   const nextTestRequestEpochRef = useRef(0)
   const pendingTestRequestEpochRef = useRef<number | null>(null)
 
@@ -129,46 +133,72 @@ export default function Options() {
 
   useEffect(() => {
     let mounted = true
+    let pollInFlight = false
+
+    const clearTrackedTest = () => {
+      testSessionIdRef.current = null
+      testRequestBaselineSessionIdRef.current = null
+      pendingTestRequestEpochRef.current = null
+    }
+
     const applyStatus = (status: PlaybackStatus) => {
       if (!mounted) return
+      latestPlaybackStatusRef.current = status
       setPlaybackStatus(status)
       setStatusError(status.persistenceDegraded
         ? 'Playback is working, but restart-safe status persistence is unavailable.'
         : null)
 
       let trackedSessionId = testSessionIdRef.current
-      if (!trackedSessionId
-        && pendingTestRequestEpochRef.current !== null
-        && status.source === 'options-test'
-        && status.sessionId !== null
-        && !isTerminalStatus(status)) {
-        trackedSessionId = status.sessionId
-        testSessionIdRef.current = trackedSessionId
+      if (!trackedSessionId && pendingTestRequestEpochRef.current !== null) {
+        if (status.source === 'options-test' && status.sessionId !== null) {
+          trackedSessionId = status.sessionId
+          testSessionIdRef.current = trackedSessionId
+        } else if (status.sessionId !== null
+          && status.sessionId !== testRequestBaselineSessionIdRef.current) {
+          clearTrackedTest()
+          setTestStatus('error')
+          setTestError('Test speech was superseded by another playback request.')
+          return
+        }
       }
       if (!trackedSessionId) return
 
       if (status.sessionId !== trackedSessionId) {
         if (!isTerminalStatus(status)) {
-          testSessionIdRef.current = null
-          pendingTestRequestEpochRef.current = null
+          clearTrackedTest()
           setTestStatus('error')
           setTestError('Test speech was superseded by another playback request.')
         }
         return
       }
       if (status.state === 'completed') {
-        testSessionIdRef.current = null
-        pendingTestRequestEpochRef.current = null
+        clearTrackedTest()
         setTestStatus('ok')
         setTestError(null)
       } else if (status.state === 'failed' || status.state === 'cancelled') {
-        testSessionIdRef.current = null
-        pendingTestRequestEpochRef.current = null
+        clearTrackedTest()
         setTestStatus('error')
         setTestError(status.error?.message ?? 'Test speech failed or was cancelled.')
       } else {
         setTestStatus('sending')
         setTestError(null)
+      }
+    }
+
+    const pollStatus = async (force = false) => {
+      if (!mounted || pollInFlight) return
+      if (!force
+        && pendingTestRequestEpochRef.current === null
+        && testSessionIdRef.current === null) return
+      pollInFlight = true
+      try {
+        const result = await queryPlaybackStatus()
+        if (!mounted) return
+        if (result.ok) applyStatus(result.status)
+        else setStatusError(result.error.message)
+      } finally {
+        pollInFlight = false
       }
     }
 
@@ -178,14 +208,14 @@ export default function Options() {
       return false
     }
     chrome.runtime.onMessage.addListener(listener)
-    void queryPlaybackStatus().then((result) => {
-      if (!mounted) return
-      if (result.ok) applyStatus(result.status)
-      else setStatusError(result.error.message)
-    })
+    void pollStatus(true)
+    const pollIntervalId = window.setInterval(() => {
+      void pollStatus()
+    }, ACTIVE_TEST_STATUS_POLL_MS)
 
     return () => {
       mounted = false
+      window.clearInterval(pollIntervalId)
       chrome.runtime.onMessage.removeListener?.(listener)
     }
   }, [])
@@ -236,6 +266,7 @@ export default function Options() {
     const requestEpoch = ++nextTestRequestEpochRef.current
     pendingTestRequestEpochRef.current = requestEpoch
     testSessionIdRef.current = null
+    testRequestBaselineSessionIdRef.current = latestPlaybackStatusRef.current?.sessionId ?? null
     setTestStatus('sending')
     setTestError(null)
     const response = await requestReadText(text, 'options-test')
@@ -243,11 +274,13 @@ export default function Options() {
     if (!response.ok) {
       pendingTestRequestEpochRef.current = null
       testSessionIdRef.current = null
+      testRequestBaselineSessionIdRef.current = null
       setTestStatus('error')
       setTestError(response.error.message)
       return
     }
     testSessionIdRef.current = response.sessionId
+    testRequestBaselineSessionIdRef.current = null
     pendingTestRequestEpochRef.current = null
   }
 
