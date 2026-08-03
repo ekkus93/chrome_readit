@@ -12,8 +12,10 @@
     "dev": "vite",
     "prebuild": "npm run lint && npm run typecheck",
     "build": "vite build",
+    "build:e2e": "vite build --mode test",
     "preview": "vite build && vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:chromium": "node scripts/chromium-e2e.mjs"
   },
   "dependencies": {
     "react": "^19.1.1",
