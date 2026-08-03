@@ -16,7 +16,7 @@ import { isHostPlayTtsUrl } from '../lib/storage'
 import { normalizeSelectedText } from '../lib/text-normalization'
 import { fetchTtsAudio, TtsClientError, type TtsAudio } from '../lib/tts-client'
 
-type CoordinatorDependencies = {
+export type CoordinatorDependencies = {
   createAudio: () => HTMLAudioElement
   createObjectUrl: (blob: Blob) => string
   revokeObjectUrl: (url: string) => void
@@ -49,6 +49,10 @@ type ActivePlayback = {
   settled: boolean
 }
 
+type AudioFetchResult =
+  | { ok: true; audio: TtsAudio }
+  | { ok: false; error: unknown }
+
 class SessionInterruptedError extends Error {}
 
 function isTerminalState(state: PlaybackState): boolean {
@@ -67,11 +71,13 @@ function validNormalTtsUrl(value: string): boolean {
 export class PlaybackCoordinator {
   private readonly audio: HTMLAudioElement
   private readonly diagnostics: PlaybackEvent[] = []
+  private readonly dependencies: CoordinatorDependencies
   private session: Session | null = null
   private currentObjectUrl: string | null = null
   private activePlayback: ActivePlayback | null = null
 
-  constructor(private readonly dependencies: CoordinatorDependencies) {
+  constructor(dependencies: CoordinatorDependencies) {
+    this.dependencies = dependencies
     this.audio = dependencies.createAudio()
     this.audio.preload = 'auto'
   }
@@ -255,7 +261,7 @@ export class PlaybackCoordinator {
       this.audio.removeAttribute('src')
       this.audio.load()
     } catch {
-      // Cleanup must remain idempotent even in partial DOM mocks.
+      // Cleanup remains idempotent in partially implemented media environments.
     }
     if (this.currentObjectUrl) {
       this.dependencies.revokeObjectUrl(this.currentObjectUrl)
@@ -277,6 +283,13 @@ export class PlaybackCoordinator {
     } finally {
       session.fetchControllers.delete(controller)
     }
+  }
+
+  private fetchChunkSettled(session: Session, chunk: PlaybackChunk): Promise<AudioFetchResult> {
+    return this.fetchChunk(session, chunk).then(
+      (audio) => ({ ok: true, audio }),
+      (error: unknown) => ({ ok: false, error }),
+    )
   }
 
   private async playChunk(session: Session, chunk: PlaybackChunk, audioData: TtsAudio): Promise<void> {
@@ -350,22 +363,23 @@ export class PlaybackCoordinator {
   private async run(session: Session): Promise<void> {
     try {
       this.setState(session, 'synthesizing')
-      let currentAudioPromise = this.fetchChunk(session, session.chunks[0])
+      let currentAudioPromise = this.fetchChunkSettled(session, session.chunks[0])
 
       for (let index = 0; index < session.chunks.length; index += 1) {
         await this.waitWhilePaused(session)
         if (!this.isCurrent(session)) return
         session.currentIndex = index
         const chunk = session.chunks[index]
-        const audioData = await currentAudioPromise
+        const currentResult = await currentAudioPromise
+        if (!currentResult.ok) throw currentResult.error
         if (!this.isCurrent(session)) return
 
         const nextChunk = session.chunks[index + 1]
-        const nextAudioPromise = nextChunk ? this.fetchChunk(session, nextChunk) : null
+        const nextAudioPromise = nextChunk ? this.fetchChunkSettled(session, nextChunk) : null
 
         this.setState(session, 'playing')
         this.emit('chunk-started', chunk)
-        await this.playChunk(session, chunk, audioData)
+        await this.playChunk(session, chunk, currentResult.audio)
         if (!this.isCurrent(session)) return
         this.emit('chunk-ended', chunk)
 
