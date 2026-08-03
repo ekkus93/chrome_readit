@@ -26,7 +26,7 @@ jobs:
             -czf /tmp/chrome-readit-source-${GITHUB_SHA}.tar.gz .
 
       - name: Upload source artifact
-        id: upload
+        id: source
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: chrome-readit-source-${{ github.sha }}
@@ -34,10 +34,29 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Install exact Node dependencies
+        run: npm ci
+
+      - name: Package Node dependencies
+        run: |
+          set -euo pipefail
+          tar --zstd -cf /tmp/chrome-readit-node-modules-${GITHUB_SHA}.tar.zst node_modules
+
+      - name: Upload Node dependency artifact
+        id: modules
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: chrome-readit-node-modules-${{ github.sha }}
+          path: /tmp/chrome-readit-node-modules-${{ github.sha }}.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
       - name: Publish export coordinates
         env:
           GH_TOKEN: ${{ github.token }}
-          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          SOURCE_ARTIFACT_ID: ${{ steps.source.outputs.artifact-id }}
+          MODULES_ARTIFACT_ID: ${{ steps.modules.outputs.artifact-id }}
         run: |
           python - <<'PY'
           import json
@@ -47,8 +66,12 @@ jobs:
           repository = os.environ['GITHUB_REPOSITORY']
           run_id = os.environ['GITHUB_RUN_ID']
           sha = os.environ['GITHUB_SHA']
-          artifact_id = os.environ['ARTIFACT_ID']
-          body = f'CHROME_READIT_SOURCE_EXPORT sha={sha} run={run_id} artifact={artifact_id}'
+          source_artifact = os.environ['SOURCE_ARTIFACT_ID']
+          modules_artifact = os.environ['MODULES_ARTIFACT_ID']
+          body = (
+              f'CHROME_READIT_DEV_EXPORT sha={sha} run={run_id} '
+              f'source_artifact={source_artifact} modules_artifact={modules_artifact}'
+          )
           request = urllib.request.Request(
               f'https://api.github.com/repos/{repository}/issues/2/comments',
               data=json.dumps({'body': body}).encode(),
