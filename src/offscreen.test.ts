@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { PLAYBACK_STATUS } from './lib/playback-protocol'
 
 type Listener = (...args: unknown[]) => unknown
 
@@ -10,28 +11,16 @@ type ChromeMock = {
   }
 }
 
-type AudioMock = {
-  src: string
-  autoplay: boolean
-  preload: string
-  playbackRate: number
-  onended: (() => void) | null
-  onerror: (() => void) | null
-  play: ReturnType<typeof vi.fn>
-  pause: ReturnType<typeof vi.fn>
-}
-
-describe('offscreen playback', () => {
+describe('offscreen message routing', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.resetAllMocks()
 
     const globalState = globalThis as typeof globalThis & {
-      __readitOffscreenPlaybackState?: unknown
+      __readitOffscreenRuntimeState?: unknown
       chrome?: ChromeMock
-      Audio?: unknown
     }
-    delete globalState.__readitOffscreenPlaybackState
+    delete globalState.__readitOffscreenRuntimeState
 
     globalState.chrome = {
       runtime: {
@@ -41,13 +30,20 @@ describe('offscreen playback', () => {
       },
     }
 
-    vi.stubGlobal('URL', {
-      createObjectURL: vi.fn(() => 'blob:test-audio'),
-      revokeObjectURL: vi.fn(),
-    })
+    vi.stubGlobal('Audio', vi.fn(() => ({
+      src: '',
+      preload: '',
+      playbackRate: 1,
+      onended: null,
+      onerror: null,
+      play: vi.fn(() => Promise.resolve()),
+      pause: vi.fn(),
+      removeAttribute: vi.fn(),
+      load: vi.fn(),
+    })))
   })
 
-  it('registers the offscreen message listener only once across repeated imports', async () => {
+  it('registers the runtime listener only once across repeated imports', async () => {
     await import('./offscreen')
     vi.resetModules()
     await import('./offscreen')
@@ -56,52 +52,27 @@ describe('offscreen playback', () => {
     expect(chromeObj.runtime.onMessage.addListener).toHaveBeenCalledTimes(1)
   })
 
-  it('ignores duplicate playback for the same token', async () => {
-    const firstAudio = createAudioMock()
-    const audioCtor = vi.fn(() => firstAudio)
-    vi.stubGlobal('Audio', audioCtor)
-
+  it('returns the coordinator status through the shared protocol', async () => {
     await import('./offscreen')
     const chromeObj = (globalThis as typeof globalThis & { chrome: ChromeMock }).chrome
     const listener = chromeObj.runtime.onMessage.addListener.mock.calls[0]?.[0] as Listener
     const sendResponse = vi.fn()
 
-    listener({ action: 'OFFSCREEN_PLAY_AUDIO', audio: 'AQID', mime: 'audio/wav', playbackToken: '1:0' }, null, sendResponse)
-    listener({ action: 'OFFSCREEN_PLAY_AUDIO', audio: 'AQID', mime: 'audio/wav', playbackToken: '1:0' }, null, sendResponse)
+    const claimed = listener({ kind: PLAYBACK_STATUS }, null, sendResponse)
 
-    expect(audioCtor).toHaveBeenCalledTimes(1)
-    expect(sendResponse).toHaveBeenLastCalledWith({ ok: true, duplicate: true })
+    expect(claimed).toBe(true)
+    expect(sendResponse).toHaveBeenCalledWith(expect.objectContaining({
+      kind: PLAYBACK_STATUS,
+      state: 'idle',
+      sessionId: null,
+    }))
   })
 
-  it('stops the previous audio before starting a new token', async () => {
-    const firstAudio = createAudioMock()
-    const secondAudio = createAudioMock()
-    const audioCtor = vi.fn()
-      .mockImplementationOnce(() => firstAudio)
-      .mockImplementationOnce(() => secondAudio)
-    vi.stubGlobal('Audio', audioCtor)
-
+  it('does not claim unrelated runtime messages', async () => {
     await import('./offscreen')
     const chromeObj = (globalThis as typeof globalThis & { chrome: ChromeMock }).chrome
     const listener = chromeObj.runtime.onMessage.addListener.mock.calls[0]?.[0] as Listener
 
-    listener({ action: 'OFFSCREEN_PLAY_AUDIO', audio: 'AQID', mime: 'audio/wav', playbackToken: '1:0' }, null, vi.fn())
-    listener({ action: 'OFFSCREEN_PLAY_AUDIO', audio: 'BAUG', mime: 'audio/wav', playbackToken: '1:1' }, null, vi.fn())
-
-    expect(firstAudio.pause).toHaveBeenCalledTimes(1)
-    expect(secondAudio.play).toHaveBeenCalledTimes(1)
+    expect(listener({ kind: 'UNRELATED' }, null, vi.fn())).toBe(false)
   })
 })
-
-function createAudioMock(): AudioMock {
-  return {
-    src: '',
-    autoplay: false,
-    preload: '',
-    playbackRate: 1,
-    onended: null,
-    onerror: null,
-    play: vi.fn(() => Promise.resolve()),
-    pause: vi.fn(() => {}),
-  }
-}
