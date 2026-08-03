@@ -7,7 +7,7 @@ import {
 } from './lib/playback-protocol'
 import { createBrowserPlaybackCoordinator, type PlaybackCoordinator } from './offscreen/playback-coordinator'
 
-const DIAGNOSTICS_ENABLED = __READIT_E2E__
+const DIAGNOSTICS_ENABLED = typeof __READIT_E2E__ !== 'undefined' && __READIT_E2E__
 
 type OffscreenRuntimeState = {
   initialized: boolean
