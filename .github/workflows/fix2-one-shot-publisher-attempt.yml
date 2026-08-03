@@ -1,0 +1,68 @@
+name: FIX2 One-Shot Publisher Attempt Guard
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/fix2-one-shot-publisher-attempt.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout latest master
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Add run-attempt freshness check
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/publish-ci-status.yml')
+          lines = path.read_text().splitlines()
+          if any('current_attempt != run_attempt' in line for line in lines):
+              print('publisher attempt guard already present')
+          else:
+              start = next((index for index, line in enumerate(lines) if 'if latest_run_id != run_id:' in line), None)
+              if start is None:
+                  raise SystemExit('latest run ID guard was not found')
+              end = next((index for index in range(start + 1, len(lines)) if 'raise SystemExit(0)' in lines[index]), None)
+              if end is None:
+                  raise SystemExit('latest run ID guard terminator was not found')
+              indent = lines[start][:len(lines[start]) - len(lines[start].lstrip())]
+              inserted = [
+                  '',
+                  f"{indent}current_run = gh_json(f'repos/{{repo}}/actions/runs/{{run_id}}')",
+                  f"{indent}current_attempt = int(current_run.get('run_attempt') or 1)",
+                  f"{indent}if current_attempt != run_attempt:",
+                  f"{indent}    print(f'Ignoring stale attempt {{run_attempt}}; current attempt is {{current_attempt}}.')",
+                  f"{indent}    raise SystemExit(0)",
+              ]
+              lines[end + 1:end + 1] = inserted
+              path.write_text('\n'.join(lines) + '\n')
+          PY
+
+      - name: Validate publisher guard
+        run: |
+          set -euo pipefail
+          grep -q 'current_attempt != run_attempt' .github/workflows/publish-ci-status.yml
+          grep -q "actions/runs/{run_id}" .github/workflows/publish-ci-status.yml
+
+      - name: Remove temporary workflow
+        run: rm -f .github/workflows/fix2-one-shot-publisher-attempt.yml
+
+      - name: Commit and push safely
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/workflows/publish-ci-status.yml .github/workflows/fix2-one-shot-publisher-attempt.yml
+          git commit -m "Guard CI status publication by run attempt"
+          git pull --rebase origin master
+          git push origin HEAD:master
