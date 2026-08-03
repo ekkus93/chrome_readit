@@ -1,0 +1,60 @@
+name: Real Coqui Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      ready_timeout_seconds:
+        description: Maximum model startup wait
+        required: false
+        default: '1200'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  real-coqui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Record environment
+        run: |
+          set -euo pipefail
+          mkdir -p reports/real-coqui
+          {
+            echo "sha=${GITHUB_SHA}"
+            echo "runner_os=${RUNNER_OS}"
+            docker --version
+            docker compose version
+            df -h
+          } | tee reports/real-coqui/environment.txt
+
+      - name: Run real model validation
+        env:
+          REAL_COQUI_READY_TIMEOUT_SECONDS: ${{ inputs.ready_timeout_seconds }}
+          REAL_COQUI_ARTIFACT_DIR: ${{ github.workspace }}/reports/real-coqui
+        run: bash scripts/validate-real-coqui.sh
+
+      - name: Record image and volume metadata
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          mkdir -p reports/real-coqui
+          docker image inspect chrome_readit-coqui-local \
+            > reports/real-coqui/image-inspect.json 2>/dev/null || true
+          docker volume ls --format json \
+            > reports/real-coqui/volumes.json 2>/dev/null || true
+          docker compose -f docker/docker-compose.yml logs --no-color coqui-local \
+            > reports/real-coqui/final-container.log 2>&1 || true
+
+      - name: Upload real Coqui evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: real-coqui-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/real-coqui
+          if-no-files-found: error
+          retention-days: 14
