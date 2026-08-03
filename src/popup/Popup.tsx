@@ -15,10 +15,14 @@ import {
 import { DEFAULT_SETTINGS, getSettingsResult, saveSettings, type Settings } from '../lib/storage'
 import { fetchServerVoices, type VoiceOption } from '../lib/voices'
 
+function isTerminalStatus(status: PlaybackStatus): boolean {
+  return ['idle', 'completed', 'cancelled', 'failed'].includes(status.state)
+}
+
 function isCancellable(status: PlaybackStatus | null): boolean {
   return status !== null
     && status.sessionId !== null
-    && !['idle', 'completed', 'cancelled', 'failed'].includes(status.state)
+    && !isTerminalStatus(status)
 }
 
 function isPausable(status: PlaybackStatus | null): boolean {
@@ -45,6 +49,8 @@ export default function Popup() {
   const [loaded, setLoaded] = useState(false)
   const persistedSettingsRef = useRef<Settings>(DEFAULT_SETTINGS)
   const testSessionIdRef = useRef<string | null>(null)
+  const nextTestRequestEpochRef = useRef(0)
+  const pendingTestRequestEpochRef = useRef<number | null>(null)
   const completionTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -121,11 +127,21 @@ export default function Popup() {
         ? 'Playback is working, but restart-safe status persistence is unavailable.'
         : null)
 
-      const trackedSessionId = testSessionIdRef.current
+      let trackedSessionId = testSessionIdRef.current
+      if (!trackedSessionId
+        && pendingTestRequestEpochRef.current !== null
+        && status.source === 'popup-test'
+        && status.sessionId !== null
+        && !isTerminalStatus(status)) {
+        trackedSessionId = status.sessionId
+        testSessionIdRef.current = trackedSessionId
+      }
       if (!trackedSessionId) return
+
       if (status.sessionId !== trackedSessionId) {
-        if (!['idle', 'completed', 'cancelled', 'failed'].includes(status.state)) {
+        if (!isTerminalStatus(status)) {
           testSessionIdRef.current = null
+          pendingTestRequestEpochRef.current = null
           setTryStatus('error')
           setTryError('Test speech was superseded by another playback request.')
         }
@@ -138,6 +154,7 @@ export default function Popup() {
       }
       if (status.state === 'completed') {
         testSessionIdRef.current = null
+        pendingTestRequestEpochRef.current = null
         setTryStatus('ok')
         setTryError(null)
         completionTimerRef.current = window.setTimeout(() => {
@@ -146,6 +163,7 @@ export default function Popup() {
         }, 1200)
       } else if (status.state === 'failed' || status.state === 'cancelled') {
         testSessionIdRef.current = null
+        pendingTestRequestEpochRef.current = null
         setTryStatus('error')
         setTryError(status.error?.message ?? 'Test speech failed or was cancelled.')
       } else {
@@ -217,16 +235,22 @@ export default function Popup() {
   async function handleTrySpeech() {
     const text = tryText.trim()
     if (!text || tryStatus === 'sending') return
+    const requestEpoch = ++nextTestRequestEpochRef.current
+    pendingTestRequestEpochRef.current = requestEpoch
+    testSessionIdRef.current = null
     setTryStatus('sending')
     setTryError(null)
     const response = await requestReadText(text, 'popup-test')
+    if (pendingTestRequestEpochRef.current !== requestEpoch) return
     if (!response.ok) {
+      pendingTestRequestEpochRef.current = null
       testSessionIdRef.current = null
       setTryStatus('error')
       setTryError(response.error.message)
       return
     }
     testSessionIdRef.current = response.sessionId
+    pendingTestRequestEpochRef.current = null
   }
 
   async function handleControl(action: PlaybackControlAction) {
