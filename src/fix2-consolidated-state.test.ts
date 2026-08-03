@@ -45,15 +45,21 @@ describe('consolidated FIX2 source state', () => {
     expect(hygiene).toContain('chrome-readit-legacy-protocol.txt')
   })
 
-  it('uses the exact built image and configured VCTK voice for real-model evidence', () => {
+  it('uses structured loopback data, the exact image, and configured VCTK voice for real-model evidence', () => {
     const script = read('scripts/validate-real-coqui.sh')
+    const workflow = read('.github/workflows/real-coqui-validation.yml')
 
     expect(script).toContain('cd "${ROOT_DIR}"')
     expect(script).toContain('PREFERRED_VOICE="${REAL_COQUI_VOICE:-p225}"')
     expect(script).toContain('if preferred in voices:')
     expect(script).toContain('selected-voice.txt')
+    expect(script).toContain('records = [json.loads(line) for line in out.splitlines() if line.strip()]')
+    expect(script).toContain('publisher.get("URL") == "127.0.0.1"')
+    expect(script).toContain('publisher.get("PublishedPort") == port')
     expect(script).toContain('capture_runtime_evidence')
     expect(script).toContain('final-container.log')
+    expect(workflow).toContain('if [[ ! -s reports/real-coqui/final-container.log ]]')
+    expect(workflow).toContain('workflow-final-container.log')
     expect(script).toContain('images -q coqui-local')
     expect(script).toContain('docker run --rm -v "${model_volume}:/models:ro" "${image_id}"')
     expect(script).not.toContain('alpine:')
