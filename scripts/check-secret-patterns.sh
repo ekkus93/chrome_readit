@@ -14,7 +14,7 @@ failures=0
 check_pattern() {
   local name="$1"
   local pattern="$2"
-  if grep -Eaq "${pattern}" "${history_file}"; then
+  if grep -Eaq -- "${pattern}" "${history_file}"; then
     printf 'Secret scan failure: %s-like material exists in Git history.\n' "${name}" >&2
     failures=$((failures + 1))
   fi
