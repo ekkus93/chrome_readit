@@ -285,6 +285,20 @@ async function main() {
     })
     const extensionId = new URL(workerTarget.url).host
 
+    const workerAttached = await cdp.send('Target.attachToTarget', {
+      targetId: workerTarget.id,
+      flatten: true,
+    })
+    const workerSessionId = workerAttached.sessionId
+    await cdp.send('Runtime.enable', {}, workerSessionId)
+    const ttsUrl = `http://127.0.0.1:${fakeTts.port}/api/tts`
+    await evaluate(cdp, workerSessionId, `chrome.storage.sync.set(${JSON.stringify({
+      ttsUrl,
+      voice: 'p225',
+      rate: 10,
+    })})`)
+    await cdp.send('Target.detachFromTarget', { sessionId: workerSessionId })
+
     const created = await cdp.send('Target.createTarget', {
       url: `chrome-extension://${extensionId}/src/popup.html`,
     })
@@ -297,13 +311,6 @@ async function main() {
     await waitFor('extension test page', async () => (
       await evaluate(cdp, sessionId, 'document.readyState') === 'complete'
     ))
-
-    const ttsUrl = `http://127.0.0.1:${fakeTts.port}/api/tts`
-    await evaluate(cdp, sessionId, `chrome.storage.sync.set(${JSON.stringify({
-      ttsUrl,
-      voice: 'p225',
-      rate: 10,
-    })})`)
 
     const initialRequestCount = fakeTts.requests.length
     const packedStart = await sendExtensionMessage(cdp, sessionId, {
