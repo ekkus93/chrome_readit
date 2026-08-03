@@ -6,7 +6,10 @@ import manifest from './src/manifest'
 
 const projectRoot = fileURLToPath(new URL('.', import.meta.url))
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  define: {
+    __READIT_E2E__: JSON.stringify(mode === 'test'),
+  },
   plugins: [react(), crx({ manifest })],
   build: {
     target: 'es2022',
@@ -23,4 +26,4 @@ export default defineConfig({
   },
   cacheDir: fileURLToPath(new URL('./node_modules/.vite', import.meta.url)),
   root: projectRoot,
-})
+}))
