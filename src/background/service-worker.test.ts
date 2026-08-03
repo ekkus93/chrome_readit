@@ -136,6 +136,7 @@ describe('background playback router', () => {
     const module = await import('./service-worker')
     const first = module.__testing.ensureOffscreenPlaybackDocument()
     const second = module.__testing.ensureOffscreenPlaybackDocument()
+    await vi.waitFor(() => expect(resolveCreation).toBeTypeOf('function'))
     resolveCreation?.()
     await Promise.all([first, second])
 
