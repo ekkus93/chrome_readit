@@ -1,0 +1,90 @@
+name: FIX2 One-Shot Real Coqui Harness Cleanup
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/fix2-one-shot-real-coqui-harness.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout latest master
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Apply guarded harness cleanup
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          script_path = Path('scripts/validate-real-coqui.sh')
+          text = script_path.read_text()
+          root_line = 'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"\n'
+          if 'cd "${ROOT_DIR}"' not in text:
+              if root_line not in text:
+                  raise SystemExit('ROOT_DIR line not found')
+              text = text.replace(root_line, root_line + 'cd "${ROOT_DIR}"\n', 1)
+
+          old_volume = '''model_volume="$(docker volume ls --format '{{.Name}}' | grep -E '(^|_)coqui_models$' | head -n 1 || true)"
+          [[ -n "${model_volume}" ]] || fail "persistent Coqui model volume was not found"
+          docker run --rm -v "${model_volume}:/models:ro" alpine:3.20 \\
+            sh -c 'find /models -mindepth 1 -maxdepth 4 -type f -print -quit | grep -q .' \\
+            || fail "model cache volume is empty after recreation"
+          '''
+          new_volume = '''model_volume="$(docker volume ls --format '{{.Name}}' | grep -E '(^|_)coqui_models$' | head -n 1 || true)"
+          [[ -n "${model_volume}" ]] || fail "persistent Coqui model volume was not found"
+          image_id="$(docker compose -f "${COMPOSE_FILE}" images -q coqui-local)"
+          [[ -n "${image_id}" ]] || fail "built Coqui image ID was not found"
+          docker run --rm -v "${model_volume}:/models:ro" "${image_id}" \\
+            sh -c 'find /models -mindepth 1 -maxdepth 4 -type f -print -quit | grep -q .' \\
+            || fail "model cache volume is empty after recreation"
+          '''
+          if new_volume not in text:
+              if old_volume not in text:
+                  raise SystemExit('model-volume inspection block not found')
+              text = text.replace(old_volume, new_volume, 1)
+          script_path.write_text(text)
+
+          workflow_path = Path('.github/workflows/real-coqui-validation.yml')
+          workflow = workflow_path.read_text()
+          old_image = '''          docker image inspect chrome_readit-coqui-local \\
+            > reports/real-coqui/image-inspect.json 2>/dev/null || true
+          '''
+          new_image = '''          image_id="$(docker compose -f docker/docker-compose.yml images -q coqui-local)"
+          if [[ -n "${image_id}" ]]; then
+            docker image inspect "${image_id}" \\
+              > reports/real-coqui/image-inspect.json 2>/dev/null || true
+          fi
+          '''
+          if new_image not in workflow:
+              if old_image not in workflow:
+                  raise SystemExit('workflow image inspection block not found')
+              workflow = workflow.replace(old_image, new_image, 1)
+          workflow_path.write_text(workflow)
+          PY
+
+      - name: Validate shell and workflow text
+        run: |
+          bash -n scripts/validate-real-coqui.sh
+          grep -q 'cd "${ROOT_DIR}"' scripts/validate-real-coqui.sh
+          ! grep -q 'alpine:' scripts/validate-real-coqui.sh
+
+      - name: Remove temporary workflow
+        run: rm -f .github/workflows/fix2-one-shot-real-coqui-harness.yml
+
+      - name: Commit and push safely
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add scripts/validate-real-coqui.sh .github/workflows/real-coqui-validation.yml .github/workflows/fix2-one-shot-real-coqui-harness.yml
+          git commit -m "Make real Coqui evidence harness reproducible"
+          git pull --rebase origin master
+          git push origin HEAD:master
