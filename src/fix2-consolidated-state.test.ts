@@ -65,11 +65,13 @@ describe('consolidated FIX2 source state', () => {
     expect(script).not.toContain('alpine:')
   })
 
-  it('retains direct E2E player snapshots in the service worker', () => {
+  it('retains direct E2E player snapshots and initializes a zero-player baseline', () => {
     const worker = read('src/background/service-worker.ts')
     const offscreen = read('src/offscreen.ts')
 
     expect(offscreen).toContain('player: getRuntimeState().coordinator.getPlayerDiagnostics()')
+    expect(offscreen).toContain("event: 'state-changed'")
+    expect(offscreen).toContain('status: runtimeState.coordinator.getStatus()')
     expect(worker).toContain('const diagnosticEvents: PlaybackEvent[] = []')
     expect(worker).toContain('if (isPlayerDiagnostics(player)) latestPlayerDiagnostics = player')
     expect(worker).toContain('events: [...diagnosticEvents]')
