@@ -1,6 +1,4 @@
-import type { ManifestV3 } from 'chrome-webstore-types'
-
-const manifest: ManifestV3 = {
+const manifest = {
   manifest_version: 3,
   name: 'Read It – Reader',
   version: '0.0.1',
@@ -9,7 +7,6 @@ const manifest: ManifestV3 = {
   action: { default_popup: 'src/popup.html', default_title: 'Read It' },
   options_page: 'src/options.html',
 
-  // Point to SOURCE code; CRXJS will rewrite to a loader in dist
   background: {
     service_worker: 'src/background/service-worker.ts',
     type: 'module',
@@ -29,7 +26,6 @@ const manifest: ManifestV3 = {
       suggested_key: { default: 'Alt+Shift+R' },
       description: 'Read current selection',
     },
-    // Added pause/resume/cancel keyboard shortcuts for quick control
     'pause-speech': {
       suggested_key: { default: 'Alt+Shift+P' },
       description: 'Pause reading',
@@ -43,8 +39,6 @@ const manifest: ManifestV3 = {
       description: 'Cancel/stop reading',
     },
   },
-
-  // Remove web_accessible_resources unless you specifically need it
-}
+} as const
 
 export default manifest
