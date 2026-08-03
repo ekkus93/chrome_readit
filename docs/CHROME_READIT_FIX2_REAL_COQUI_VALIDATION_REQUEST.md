@@ -1,8 +1,8 @@
 # Chrome Read It FIX2 Real Coqui Validation Request
 
 **Requested:** 2026-08-03  
-**Request sequence:** 17  
-**Purpose:** Validate the reconciled Block 17 documentation and fail-closed Chromium profile-cleanup retry together with the complete Chromium Block 13 and real-Coqui evidence matrices on one exact final candidate.  
+**Request sequence:** 18  
+**Purpose:** Validate the comprehensive test-coverage hardening implementation, expanded TypeScript and Python branch-coverage gates, permanent attempt-specific evidence artifacts, complete Chromium Block 13 matrix, and real-Coqui runtime matrix together on one exact final candidate.  
 **Ordinary CI:** The same commit must also pass `.github/workflows/ci.yml`.  
 **Runtime status:** GitHub issue `#3` is overwritten at workflow start and completion.
 
@@ -24,6 +24,11 @@ The runtime workflow must retain evidence for:
 
 The same exact candidate must validate:
 
+- the complete intended TypeScript production coverage surface and exact approved exclusions;
+- global TypeScript statement, line, function, and branch thresholds;
+- critical-file TypeScript line and branch floors;
+- Python statement and branch thresholds for the Coqui service and healthcheck;
+- attempt-specific TypeScript, Python, JUnit, and Chromium evidence artifacts;
 - direct active-player instrumentation with a maximum count of one;
 - canonical fixture and rate-matrix playback;
 - rejected and synchronously thrown `audio.play()` calls;
@@ -46,4 +51,4 @@ The same exact candidate must validate:
 - one bounded retry when a Chrome profile cleanup race masks the harness verdict, with no conversion of an unverified run into success;
 - retained, fail-closed Chromium and JUnit artifacts.
 
-This request file is a durable validation entry point, not proof that the workflow passed. Record the resulting exact SHA, run IDs, attempts, job IDs, artifact IDs/digests, configured image reference, immutable image ID, browser result, and runtime result in the FIX2 evidence addendum before changing the overall disposition.
+This request file is a durable validation entry point, not proof that the workflow passed. Record the resulting exact SHA, run IDs, attempts, job IDs, artifact IDs/digests, configured image reference, immutable image ID, browser result, coverage results, and runtime result in the coverage-hardening implementation report and the authoritative status issues before changing the overall disposition.
