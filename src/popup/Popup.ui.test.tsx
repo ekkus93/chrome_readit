@@ -28,8 +28,9 @@ function status(state: PlaybackStatus['state'], sessionId: string | null = null)
 
 function installChrome() {
   let listener: RuntimeListener | undefined
+  let queriedStatus = status('idle')
   const sendMessage = vi.fn(async (message: Record<string, unknown>): Promise<unknown> => {
-    if (message.kind === PLAYBACK_STATUS) return status('idle')
+    if (message.kind === PLAYBACK_STATUS) return queriedStatus
     if (message.kind === PLAYBACK_CONTROL) {
       return {
         ok: true,
@@ -58,7 +59,11 @@ function installChrome() {
       },
     },
   }
-  return { sendMessage, getListener: () => listener }
+  return {
+    sendMessage,
+    getListener: () => listener,
+    setQueriedStatus: (next: PlaybackStatus) => { queriedStatus = next },
+  }
 }
 
 describe('Popup playback control buttons', () => {
@@ -78,7 +83,7 @@ describe('Popup playback control buttons', () => {
   })
 
   it('gates controls by state and sends shared expected-session messages', async () => {
-    const { sendMessage, getListener } = installChrome()
+    const { sendMessage, getListener, setQueriedStatus } = installChrome()
     render(<Popup />)
 
     expect((await screen.findByRole('button', { name: /^Pause$/i }) as HTMLButtonElement).disabled).toBe(true)
@@ -93,6 +98,7 @@ describe('Popup playback control buttons', () => {
         status: status('playing', 'session-active'),
       })
     })
+    setQueriedStatus(status('playing', 'session-active'))
 
     await userEvent.click(screen.getByRole('button', { name: /^Pause$/i }))
     expect(sendMessage.mock.calls.some(([message]) => (
@@ -109,6 +115,7 @@ describe('Popup playback control buttons', () => {
         status: status('paused', 'session-active'),
       })
     })
+    setQueriedStatus(status('paused', 'session-active'))
     await userEvent.click(screen.getByRole('button', { name: /^Resume$/i }))
     expect(sendMessage.mock.calls.some(([message]) => (
       message.kind === PLAYBACK_CONTROL
@@ -116,12 +123,36 @@ describe('Popup playback control buttons', () => {
       && message.expectedSessionId === 'session-active'
     ))).toBe(true)
 
+    setQueriedStatus(status('playing', 'session-active'))
     await userEvent.click(screen.getByRole('button', { name: /^Cancel$/i }))
     expect(sendMessage.mock.calls.some(([message]) => (
       message.kind === PLAYBACK_CONTROL
       && message.action === 'cancel'
       && message.expectedSessionId === 'session-active'
     ))).toBe(true)
+  })
+
+  it('refreshes the active session before sending a control', async () => {
+    const { sendMessage, getListener, setQueriedStatus } = installChrome()
+    render(<Popup />)
+    await screen.findByRole('button', { name: /^Pause$/i })
+
+    act(() => {
+      getListener()?.({
+        kind: PLAYBACK_EVENT,
+        event: 'state-changed',
+        atMs: 1,
+        status: status('playing', 'session-stale'),
+      })
+    })
+    setQueriedStatus(status('playing', 'session-current'))
+
+    await userEvent.click(screen.getByRole('button', { name: /^Pause$/i }))
+    await waitFor(() => expect(sendMessage.mock.calls.some(([message]) => (
+      message.kind === PLAYBACK_CONTROL
+      && message.action === 'pause'
+      && message.expectedSessionId === 'session-current'
+    ))).toBe(true))
   })
 
   it('updates and persists speech rate changes', async () => {
