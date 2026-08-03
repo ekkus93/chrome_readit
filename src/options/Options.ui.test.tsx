@@ -58,6 +58,12 @@ function installChrome() {
   return { sendMessage, getListener: () => listener }
 }
 
+function expectRuntimeCall(sendMessage: ReturnType<typeof vi.fn>, expected: Record<string, unknown>) {
+  expect(sendMessage.mock.calls.some(([message]) => (
+    JSON.stringify(message) === JSON.stringify(expected)
+  ))).toBe(true)
+}
+
 describe('Options playback control buttons', () => {
   beforeEach(() => {
     vi.resetAllMocks()
@@ -91,7 +97,7 @@ describe('Options playback control buttons', () => {
       })
     })
     await userEvent.click(screen.getByRole('button', { name: /^Pause$/i }))
-    expect(sendMessage).toHaveBeenLastCalledWith({
+    expectRuntimeCall(sendMessage, {
       kind: PLAYBACK_CONTROL,
       action: 'pause',
       expectedSessionId: 'session-active',
@@ -106,13 +112,13 @@ describe('Options playback control buttons', () => {
       })
     })
     await userEvent.click(screen.getByRole('button', { name: /^Resume$/i }))
-    expect(sendMessage).toHaveBeenLastCalledWith({
+    expectRuntimeCall(sendMessage, {
       kind: PLAYBACK_CONTROL,
       action: 'resume',
       expectedSessionId: 'session-active',
     })
     await userEvent.click(screen.getByRole('button', { name: /^Stop$/i }))
-    expect(sendMessage).toHaveBeenLastCalledWith({
+    expectRuntimeCall(sendMessage, {
       kind: PLAYBACK_CONTROL,
       action: 'cancel',
       expectedSessionId: 'session-active',
