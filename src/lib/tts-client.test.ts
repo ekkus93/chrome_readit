@@ -7,6 +7,7 @@ function streamedResponse(options: {
   chunks?: Uint8Array[]
   contentLength?: string | null
   neverComplete?: boolean
+  leaveOpen?: boolean
 } = {}) {
   const cancel = vi.fn()
   const chunks = options.chunks ?? [new Uint8Array([1, 2, 3])]
@@ -14,7 +15,7 @@ function streamedResponse(options: {
     start(controller) {
       if (options.neverComplete) return
       chunks.forEach((chunk) => controller.enqueue(chunk))
-      controller.close()
+      if (!options.leaveOpen) controller.close()
     },
     cancel,
   })
@@ -90,7 +91,7 @@ describe('fetchTtsAudio', () => {
   })
 
   it('rejects declared oversize immediately and cancels the body', async () => {
-    const { response, cancel } = streamedResponse({ contentLength: '11' })
+    const { response, cancel } = streamedResponse({ contentLength: '11', leaveOpen: true })
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
 
     await expectCode(fetchTtsAudio({
@@ -102,9 +103,10 @@ describe('fetchTtsAudio', () => {
     expect(cancel).toHaveBeenCalledTimes(1)
   })
 
-  it('rejects a chunked stream over the cap without Content-Length', async () => {
+  it('rejects a chunked stream over the cap without Content-Length and cancels its reader', async () => {
     const { response, cancel } = streamedResponse({
       chunks: [new Uint8Array(6), new Uint8Array(5)],
+      leaveOpen: true,
     })
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
 
