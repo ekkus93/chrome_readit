@@ -1,4 +1,6 @@
-export type PlaybackControlRequest =
+import { isPlaybackSource, type PlaybackSource } from './playback-protocol'
+
+export type LegacyPlaybackControlRequest =
   | { kind: 'SPEECH_STATUS' }
   | { kind: 'PAUSE_SPEECH' }
   | { kind: 'RESUME_SPEECH' }
@@ -6,24 +8,29 @@ export type PlaybackControlRequest =
 
 export type Msg =
   | { kind: 'READ_SELECTION' }
-  | { kind: 'READ_TEXT'; text: string }
+  | { kind: 'READ_TEXT'; text: string; source?: PlaybackSource }
 
-// Type guards for runtime validation of messages coming from other contexts
-export function isReadSelection(m: unknown): m is { kind: 'READ_SELECTION' } {
-  return typeof m === 'object' && m !== null && 'kind' in (m as Record<string, unknown>) && (m as Record<string, unknown>).kind === 'READ_SELECTION'
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
-export function isReadText(m: unknown): m is { kind: 'READ_TEXT'; text: string } {
-  return (
-    typeof m === 'object' &&
-    m !== null &&
-    'kind' in (m as Record<string, unknown>) &&
-    (m as Record<string, unknown>).kind === 'READ_TEXT' &&
-    'text' in (m as Record<string, unknown>) &&
-    typeof (m as Record<string, unknown>).text === 'string'
-  )
+export function isReadSelection(value: unknown): value is { kind: 'READ_SELECTION' } {
+  return isRecord(value) && value.kind === 'READ_SELECTION'
 }
 
-export function isMsg(m: unknown): m is Msg {
-  return isReadSelection(m) || isReadText(m)
+export function isReadText(value: unknown): value is { kind: 'READ_TEXT'; text: string; source?: PlaybackSource } {
+  if (!isRecord(value) || value.kind !== 'READ_TEXT' || typeof value.text !== 'string') return false
+  return value.source === undefined || isPlaybackSource(value.source)
+}
+
+export function isMsg(value: unknown): value is Msg {
+  return isReadSelection(value) || isReadText(value)
+}
+
+export function isLegacyPlaybackControlRequest(value: unknown): value is LegacyPlaybackControlRequest {
+  if (!isRecord(value) || typeof value.kind !== 'string') return false
+  return value.kind === 'SPEECH_STATUS'
+    || value.kind === 'PAUSE_SPEECH'
+    || value.kind === 'RESUME_SPEECH'
+    || value.kind === 'CANCEL_SPEECH'
 }
