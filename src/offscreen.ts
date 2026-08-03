@@ -18,19 +18,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-function emitPlaybackEvent(event: PlaybackEvent): void {
-  try {
-    chrome.runtime.sendMessage(event, () => {
-      // No UI listener is a normal condition. Reading lastError here prevents
-      // Chrome from reporting an unhandled callback error without changing
-      // playback behavior or hiding a user-initiated operation failure.
-      void chrome.runtime.lastError
-    })
-  } catch {
-    console.warn('[readit] playback event publication failed')
-  }
-}
-
 function getRuntimeState(): OffscreenRuntimeState {
   const globalState = globalThis as typeof globalThis & {
     __readitOffscreenRuntimeState?: OffscreenRuntimeState
@@ -42,6 +29,19 @@ function getRuntimeState(): OffscreenRuntimeState {
     }
   }
   return globalState.__readitOffscreenRuntimeState
+}
+
+function emitPlaybackEvent(event: PlaybackEvent): void {
+  try {
+    const message = DIAGNOSTICS_ENABLED
+      ? { ...event, player: getRuntimeState().coordinator.getPlayerDiagnostics() }
+      : event
+    chrome.runtime.sendMessage(message, () => {
+      void chrome.runtime.lastError
+    })
+  } catch {
+    console.warn('[readit] playback event publication failed')
+  }
 }
 
 function internalStartFailure(requestId: string) {
