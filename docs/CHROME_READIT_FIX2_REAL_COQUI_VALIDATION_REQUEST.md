@@ -1,8 +1,8 @@
 # Chrome Read It FIX2 Real Coqui Validation Request
 
 **Requested:** 2026-08-03  
-**Request sequence:** 14  
-**Purpose:** Validate the complete Chromium Block 13 fault, restart, pacing, command-registration, global-control, and offscreen-recovery matrix together with the real-Coqui evidence matrix on one exact final candidate.  
+**Request sequence:** 15  
+**Purpose:** Validate the complete Chromium Block 13 fault, restart, pacing, command-registration, session-global control, direct-player precondition, and offscreen-recovery matrix together with the real-Coqui evidence matrix on one exact final candidate.  
 **Ordinary CI:** The same commit must also pass `.github/workflows/ci.yml`.  
 **Runtime status:** GitHub issue `#3` is overwritten at workflow start and completion.
 
@@ -35,6 +35,7 @@ The same exact candidate must validate:
 - pause/resume preservation of the remaining transition delay;
 - Chrome registration of the playback command names and exact manifest shortcut suggestions;
 - recording of active runtime shortcut assignment, including a valid unassigned result caused by collision or environment state;
+- direct `activePlayerCount === 1` evidence before session-global control and offscreen-destruction operations;
 - session-global pause, resume, and cancel routing without an expected session ID;
 - offscreen destruction, interruption classification, and unique-session recovery;
 - real foreground popup and Options interactions;
