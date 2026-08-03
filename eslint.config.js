@@ -12,7 +12,11 @@ export default defineConfig([
     extends: [js.configs.recommended],
     languageOptions: {
       ecmaVersion: 2023,
-      globals: globals.node,
+      globals: {
+        ...globals.node,
+        fetch: 'readonly',
+        WebSocket: 'readonly',
+      },
     },
   },
   {
