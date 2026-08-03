@@ -1,33 +1,43 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { DEBUG_PARAGRAPH_FIXTURE } from '../lib/debug-fixtures'
+import { isPlaybackEvent } from '../lib/playback-protocol'
 import { DEFAULT_SETTINGS, DEFAULT_TTS_URL, getSettings, saveSettings, type Settings } from '../lib/storage'
 import { fetchServerVoices, type VoiceOption } from '../lib/voices'
 
+function responseError(response: unknown, fallback: string): string {
+  if (!response || typeof response !== 'object') return fallback
+  const error = (response as { error?: unknown }).error
+  if (typeof error === 'string') return error
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') return error.message
+  return fallback
+}
+
 export default function Options() {
   const showDebugFixture = import.meta.env.DEV
-  const [voice, setVoice] = useState<string | ''>(DEFAULT_SETTINGS.voice)
-  const [rate, setRate] = useState<number>(DEFAULT_SETTINGS.rate)
-  const [loaded, setLoaded] = useState<boolean>(false)
-  const [testText, setTestText] = useState<string>('Hello — this is a quick test of Read It.')
+  const [voice, setVoice] = useState(DEFAULT_SETTINGS.voice)
+  const [rate, setRate] = useState(DEFAULT_SETTINGS.rate)
+  const [loaded, setLoaded] = useState(false)
+  const [testText, setTestText] = useState('Hello — this is a quick test of Read It.')
   const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
   const [testError, setTestError] = useState<string | null>(null)
-  const [ttsUrl, setTtsUrl] = useState<string>(DEFAULT_SETTINGS.ttsUrl)
+  const [ttsUrl, setTtsUrl] = useState(DEFAULT_SETTINGS.ttsUrl)
   const [voicesList, setVoicesList] = useState<VoiceOption[]>([])
-  const testAudioRef = useRef<HTMLAudioElement | null>(null)
+  const [serverHealth, setServerHealth] = useState<'unknown' | 'ok' | 'error'>('unknown')
+  const [serverTesting, setServerTesting] = useState(false)
+  const [serverTestError, setServerTestError] = useState<string | null>(null)
   const persistedSettingsRef = useRef<Settings>(DEFAULT_SETTINGS)
-  
-
-  // NOTE: we no longer use the browser SpeechSynthesis fallback. Keep
-  // voice selection as a stored preference only.
 
   useEffect(() => {
-    getSettings().then(s => {
-      persistedSettingsRef.current = s
-      setRate(s.rate)
-      setVoice(s.voice)
-      setTtsUrl(s.ttsUrl)
+    let mounted = true
+    void getSettings().then((settings) => {
+      if (!mounted) return
+      persistedSettingsRef.current = settings
+      setRate(settings.rate)
+      setVoice(settings.voice)
+      setTtsUrl(settings.ttsUrl)
       setLoaded(true)
     })
+    return () => { mounted = false }
   }, [])
 
   useEffect(() => {
@@ -41,10 +51,9 @@ export default function Options() {
   }, [rate, loaded])
 
   useEffect(() => {
-    const nextVoice = voice || DEFAULT_SETTINGS.voice
-    if (!loaded || nextVoice === persistedSettingsRef.current.voice) return
-    persistedSettingsRef.current = { ...persistedSettingsRef.current, voice: nextVoice }
-    void saveSettings({ voice: nextVoice })
+    if (!loaded || voice === persistedSettingsRef.current.voice) return
+    persistedSettingsRef.current = { ...persistedSettingsRef.current, voice }
+    void saveSettings({ voice })
   }, [voice, loaded])
 
   useEffect(() => {
@@ -54,188 +63,80 @@ export default function Options() {
     void saveSettings({ ttsUrl: nextTtsUrl })
   }, [ttsUrl, loaded])
 
+  useEffect(() => {
+    if (!ttsUrl) return
+    let mounted = true
+    void fetchServerVoices(ttsUrl).then((voices) => {
+      if (mounted) setVoicesList(voices)
+    })
+    return () => { mounted = false }
+  }, [ttsUrl])
+
+  useEffect(() => {
+    const listener = (message: unknown) => {
+      if (!isPlaybackEvent(message) || message.status.source !== 'options-test') return false
+      if (message.event === 'completed') {
+        setTestStatus('ok')
+        setTestError(null)
+      } else if (message.event === 'failed' || message.event === 'cancelled') {
+        setTestStatus('error')
+        setTestError(message.status.error?.message ?? 'Test speech failed or was cancelled.')
+      } else {
+        setTestStatus('sending')
+      }
+      return false
+    }
+    chrome.runtime.onMessage.addListener(listener)
+    return () => chrome.runtime.onMessage.removeListener?.(listener)
+  }, [])
+
   const voiceOptions = useMemo(() => {
     if (voicesList.some((option) => option.name === voice)) return voicesList
     return [{ name: voice, label: voice }, ...voicesList]
   }, [voice, voicesList])
 
-  useEffect(() => {
-    if (!ttsUrl) return
-    let mounted = true
-    async function fetchVoices() {
-      try {
-        const voices = await fetchServerVoices(ttsUrl)
-        if (!mounted) return
-        setVoicesList(voices)
-      } catch (e) { void e }
-    }
-    fetchVoices()
-    return () => { mounted = false }
-  }, [ttsUrl])
-
-  // UI controls to pause/resume/cancel in-page playback (sends messages
-  // to the background which will notify the active tab/content script).
-  async function handlePause() {
-    try { chrome.runtime.sendMessage({ kind: 'PAUSE_SPEECH' }, () => {}) } catch (e) { console.warn('readit: pause failed', e); void e }
-  }
-  async function handleResume() {
-    try { chrome.runtime.sendMessage({ kind: 'RESUME_SPEECH' }, () => {}) } catch (e) { console.warn('readit: resume failed', e); void e }
-  }
-  async function handleCancel() {
-    try { chrome.runtime.sendMessage({ kind: 'CANCEL_SPEECH' }, () => {}) } catch (e) { console.warn('readit: cancel failed', e); void e }
+  async function sendControl(kind: 'PAUSE_SPEECH' | 'RESUME_SPEECH' | 'CANCEL_SPEECH') {
+    try { await chrome.runtime.sendMessage({ kind }) } catch (error) { console.warn(`readit: ${kind} failed`, error) }
   }
 
   async function handleDebugFixture() {
     try {
-      await chrome.runtime.sendMessage({ kind: 'READ_TEXT', text: DEBUG_PARAGRAPH_FIXTURE })
-    } catch (err) {
-      console.warn('readit: debug fixture failed', err)
+      await chrome.runtime.sendMessage({ kind: 'READ_TEXT', text: DEBUG_PARAGRAPH_FIXTURE, source: 'debug-fixture' })
+    } catch (error) {
+      console.warn('readit: debug fixture failed', error)
     }
   }
 
-  // Browser speechSynthesis fallback removed — extension now requires the
-  // configured server to perform playback. Errors are surfaced to the user.
-
-  function isProbablyAudio(buf: ArrayBuffer | Uint8Array, mime?: string) {
-    try {
-      if (mime && mime.startsWith('audio/')) return true
-      const view = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf
-      if (view.length >= 4) {
-        // WAV -> "RIFF"
-        if (view[0] === 0x52 && view[1] === 0x49 && view[2] === 0x46 && view[3] === 0x46) return true
-        // Ogg -> "OggS"
-        if (view[0] === 0x4F && view[1] === 0x67 && view[2] === 0x67 && view[3] === 0x53) return true
-        // FLAC -> "fLaC"
-        if (view[0] === 0x66 && view[1] === 0x4C && view[2] === 0x61 && view[3] === 0x43) return true
-        // ID3 (MP3 tag) -> "ID3"
-        if (view[0] === 0x49 && view[1] === 0x44 && view[2] === 0x33) return true
-      }
-    } catch {
-      // ignore
-    }
-    return false
-  }
-
-  function handleTestSpeech() {
-    const text = (testText || '').trim()
-    if (!text) return
+  async function handleTestSpeech() {
+    const text = testText.trim()
+    if (!text || testStatus === 'sending') return
     setTestStatus('sending')
     setTestError(null)
-
-    chrome.runtime.sendMessage({ action: 'request-tts', text }, (resp) => {
-      if (chrome.runtime.lastError) {
-        const errMsg = chrome.runtime.lastError?.message ?? 'unknown runtime error'
-        console.warn('[readit] request-tts sendMessage failed', errMsg)
+    try {
+      const response = await chrome.runtime.sendMessage({ kind: 'READ_TEXT', text, source: 'options-test' })
+      if (!response?.ok) {
         setTestStatus('error')
-        setTestError(errMsg)
-        return
+        setTestError(responseError(response, 'Unable to start test speech.'))
       }
-      if (!resp) { setTestStatus('error'); setTestError('no response from background'); return }
-  if (resp.ok && resp.audio) {
-        try {
-          const mime = resp.mime || 'audio/wav'
-          
-          // Decode base64 audio back to ArrayBuffer
-          let buf: ArrayBuffer
-          if (typeof resp.audio === 'string') {
-            // Base64 encoded audio from service worker
-            try {
-              const binary = atob(resp.audio)
-              const len = binary.length
-              const u8 = new Uint8Array(len)
-              for (let i = 0; i < len; i++) u8[i] = binary.charCodeAt(i)
-              buf = u8.buffer
-            } catch (err) {
-              console.warn('[readit] failed to decode base64 audio', err)
-              setTestStatus('error')
-              setTestError('Failed to decode audio data')
-              return
-            }
-          } else {
-            // Direct ArrayBuffer (fallback)
-            buf = resp.audio as ArrayBuffer
-          }
-
-          // Check that the returned buffer actually looks like audio before
-          // creating the Blob so non-audio payloads fail clearly.
-          let prefixHex = ''
-          try {
-            const v = new Uint8Array(buf)
-            const len = Math.min(16, v.length)
-            const parts: string[] = []
-            for (let i = 0; i < len; i++) parts.push(v[i].toString(16).padStart(2, '0'))
-            prefixHex = parts.join(' ')
-          } catch (e) { void e; prefixHex = '<unavailable>' }
-
-          // If the buffer is empty, avoid attempting to play it and report
-          // a clear error — empty payloads commonly cause NotSupportedError.
-          try {
-            const v = new Uint8Array(buf)
-            if (v.length === 0) {
-              console.warn('[readit] options: returned audio buffer is empty', { mime, prefixHex })
-              setTestStatus('error')
-              setTestError(`TTS service returned an empty payload (${mime})`)
-              return
-            }
-          } catch (e) { void e }
-
-          if (!isProbablyAudio(buf, mime)) {
-            console.warn('[readit] options: returned payload does not appear to be audio', { mime, prefixHex })
-            setTestStatus('error')
-            setTestError(`TTS service returned non-audio payload (${mime})`)
-            return
-          }
-
-          const blob = new Blob([buf], { type: mime })
-          const url = URL.createObjectURL(blob)
-          const a = new Audio(url)
-          a.playbackRate = rate
-          // Keep a reference so the element is retained until playback finishes.
-          testAudioRef.current = a
-          a.autoplay = true
-          a.play().catch((e) => {
-            console.warn('[readit] options player failed to play', { mime, prefixHex, error: e })
-            setTestStatus('error')
-            setTestError(String(e))
-            testAudioRef.current = null
-          })
-          a.onended = () => {
-            setTestStatus('ok')
-            testAudioRef.current = null
-          }
-          setTimeout(() => { try { URL.revokeObjectURL(url) } catch (e) { void e } }, 60_000)
-          setTestStatus('sending')
-          setTestError(null)
-          return
-        } catch (err) {
-          console.warn('[readit] failed to play returned audio', err)
-          setTestStatus('error')
-          setTestError(String(err))
-          return
-        }
-      }
-      if (!resp.ok) { setTestStatus('error'); setTestError(resp.error ?? 'background tts failed'); return }
-    })
+    } catch (error) {
+      setTestStatus('error')
+      setTestError(String(error))
+    }
   }
-
-  const [serverHealth, setServerHealth] = useState<'unknown' | 'ok' | 'error'>('unknown')
-  const [serverTesting, setServerTesting] = useState(false)
-  const [serverTestError, setServerTestError] = useState<string | null>(null)
 
   async function testServer() {
     setServerTesting(true)
     setServerTestError(null)
     try {
-      const res = await fetch(ttsUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'health-check' }) })
-      if (!res.ok) {
+      const response = await chrome.runtime.sendMessage({ action: 'probe-tts' })
+      if (response?.ok) setServerHealth('ok')
+      else {
         setServerHealth('error')
-        setServerTestError(`HTTP ${res.status} ${res.statusText}`)
-      } else {
-        setServerHealth('ok')
+        setServerTestError(responseError(response, 'Server unavailable.'))
       }
-    } catch (err) {
+    } catch (error) {
       setServerHealth('error')
-      setServerTestError(String(err))
+      setServerTestError(String(error))
     } finally {
       setServerTesting(false)
     }
@@ -246,45 +147,51 @@ export default function Options() {
       <h1 style={{ marginTop: 0 }}>Read It – Options</h1>
       <section style={{ marginBottom: 24 }}>
         <label htmlFor="voice" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>Voice</label>
-        <select id="voice" value={voice} onChange={(e) => setVoice(e.target.value)} style={{ width: 360, padding: 8 }}>
-          {voiceOptions.map(v => (<option key={v.name || 'default'} value={v.name}>{v.label}</option>))}
+        <select id="voice" value={voice} onChange={(event) => setVoice(event.target.value)} style={{ width: 360, padding: 8 }}>
+          {voiceOptions.map((option) => <option key={option.name || 'default'} value={option.name}>{option.label}</option>)}
         </select>
         <p style={{ color: 'GrayText' }}>Choose a voice exposed by the configured TTS server/model.</p>
       </section>
+
       <section style={{ marginTop: 24 }}>
-        <label htmlFor="ttsUrl" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>TTS service URL (optional, opt‑in)</label>
+        <label htmlFor="ttsUrl" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>TTS service URL (optional, opt-in)</label>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <input id="ttsUrl" type="text" value={ttsUrl} onChange={e => setTtsUrl(e.target.value)} style={{ width: 440, padding: 8 }} placeholder={DEFAULT_TTS_URL} />
+          <input id="ttsUrl" type="text" value={ttsUrl} onChange={(event) => setTtsUrl(event.target.value)} style={{ width: 440, padding: 8 }} placeholder={DEFAULT_TTS_URL} />
           <button onClick={() => setTtsUrl(DEFAULT_TTS_URL)} style={{ padding: '8px 10px' }}>Use local default</button>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
-          <div style={{ marginLeft: 8 }}>
-            <button onClick={testServer} disabled={serverTesting} style={{ padding: '6px 10px' }}>{serverTesting ? 'Testing…' : 'Test server'}</button>
-          </div>
-          <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+          <button onClick={testServer} disabled={serverTesting} style={{ padding: '6px 10px' }}>{serverTesting ? 'Testing…' : 'Test server'}</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ width: 12, height: 12, borderRadius: 12, background: serverHealth === 'ok' ? '#00c853' : serverHealth === 'error' ? '#d50000' : '#bdbdbd' }} />
-            <div style={{ color: serverHealth === 'ok' ? '#006400' : serverHealth === 'error' ? '#8b0000' : 'GrayText' }}>{serverHealth === 'ok' ? 'Server reachable' : serverHealth === 'error' ? `Server error${serverTestError ? `: ${serverTestError}` : ''}` : 'Server status unknown'}</div>
+            <div style={{ color: serverHealth === 'ok' ? '#006400' : serverHealth === 'error' ? '#8b0000' : 'GrayText' }}>
+              {serverHealth === 'ok' ? 'Server reachable' : serverHealth === 'error' ? `Server error${serverTestError ? `: ${serverTestError}` : ''}` : 'Server status unknown'}
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, marginLeft: 12 }}>
-            <button onClick={handlePause} style={{ padding: '6px 10px' }}>Pause</button>
-            <button onClick={handleResume} style={{ padding: '6px 10px' }}>Resume</button>
-            <button onClick={handleCancel} style={{ padding: '6px 10px' }}>Stop</button>
-            {showDebugFixture && <button onClick={handleDebugFixture} style={{ padding: '6px 10px' }}>Debug paragraph transitions</button>}
-          </div>
+          <button onClick={() => sendControl('PAUSE_SPEECH')} style={{ padding: '6px 10px' }}>Pause</button>
+          <button onClick={() => sendControl('RESUME_SPEECH')} style={{ padding: '6px 10px' }}>Resume</button>
+          <button onClick={() => sendControl('CANCEL_SPEECH')} style={{ padding: '6px 10px' }}>Stop</button>
+          {showDebugFixture && <button onClick={handleDebugFixture} style={{ padding: '6px 10px' }}>Debug paragraph transitions</button>}
         </div>
-        <div style={{ color: 'GrayText', marginTop: 6 }}>If set, Read It will POST text to this URL and play returned audio. The default points to a local Coqui helper ({DEFAULT_TTS_URL}).</div>
+        <div style={{ color: 'GrayText', marginTop: 6 }}>Read It posts text to the configured synthesis endpoint. The default is {DEFAULT_TTS_URL}.</div>
       </section>
+
       <section>
         <label htmlFor="rate" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>Speech rate: {rate.toFixed(2)}</label>
-        <input id="rate" type="range" min={0.5} max={10} step={0.05} value={rate} onChange={(e) => setRate(Number(e.target.value))} style={{ width: 360 }} />
+        <input id="rate" type="range" min={0.5} max={10} step={0.05} value={rate} onChange={(event) => setRate(Number(event.target.value))} style={{ width: 360 }} />
         <div style={{ color: 'GrayText' }}>0.5 (slow) … 10.0 (max)</div>
       </section>
+
       <section style={{ marginTop: 24 }}>
         <label htmlFor="test" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>Test speech</label>
-        <textarea id="test" rows={3} value={testText} onChange={e => setTestText(e.target.value)} style={{ width: 520, padding: 8 }} />
+        <textarea id="test" rows={3} value={testText} onChange={(event) => setTestText(event.target.value)} style={{ width: 520, padding: 8 }} />
         <div style={{ marginTop: 8 }}>
-          <button onClick={handleTestSpeech} style={{ padding: '8px 12px' }}>Test speech</button>
-          <span style={{ marginLeft: 12 }}>{testStatus === 'sending' && 'Sending…'}{testStatus === 'ok' && <span style={{ color: '#006400' }}> Played in the browser</span>}{testStatus === 'error' && <span style={{ color: '#8b0000' }}> Error: {testError}</span>}</span>
+          <button onClick={handleTestSpeech} disabled={testStatus === 'sending'} style={{ padding: '8px 12px' }}>
+            {testStatus === 'sending' ? 'Playing…' : 'Test speech'}
+          </button>
+          <span style={{ marginLeft: 12 }}>
+            {testStatus === 'ok' && <span style={{ color: '#006400' }}> Completed</span>}
+            {testStatus === 'error' && <span style={{ color: '#8b0000' }}> Error: {testError}</span>}
+          </span>
         </div>
       </section>
     </main>
