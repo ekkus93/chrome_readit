@@ -88,7 +88,19 @@ jobs:
       - name: Run real Chromium extension tests
         env:
           CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
-        run: xvfb-run -a npm run test:chromium
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          xvfb-run -a npm run test:chromium 2>&1 | tee reports/chromium-e2e.log
+
+      - name: Upload Chromium diagnostic log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromium-e2e-${{ github.run_id }}
+          path: reports/chromium-e2e.log
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Setup Python
         uses: actions/setup-python@v5
