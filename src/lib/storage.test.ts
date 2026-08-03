@@ -17,7 +17,6 @@ describe('storage.getSettings / saveSettings', () => {
   })
 
   it('returns defaults when storage empty', async () => {
-    ;(globalThis as unknown as { chrome: { storage: { sync: { get: (...a: unknown[]) => unknown } } } }).chrome.storage.sync.get = vi.fn(() => Promise.resolve({}))
     const s = await storage.getSettings()
     expect(s).toEqual(DEFAULTS)
     expect(storage.DEFAULT_TTS_URL).toBe('http://localhost:5002/api/tts')
@@ -44,6 +43,30 @@ describe('storage.getSettings / saveSettings', () => {
     })
   })
 
+  it.each([
+    ['http://localhost:5002/api/tts/play', 'http://localhost:5002/api/tts'],
+    ['http://localhost:5002/api/tts/play/', 'http://localhost:5002/api/tts'],
+    ['https://example.com/local/tts/api/tts/play?voice=p225', 'https://example.com/local/tts/api/tts?voice=p225'],
+  ])('migrates a legacy host-play URL once: %s', async (legacyUrl, expectedUrl) => {
+    const setMock = vi.fn(() => Promise.resolve())
+    ;(globalThis as unknown as { chrome: { storage: { sync: { get: (...a: unknown[]) => unknown; set: (...a: unknown[]) => unknown } } } }).chrome.storage.sync.get = vi.fn(() => Promise.resolve({ ttsUrl: legacyUrl }))
+    ;(globalThis as unknown as { chrome: { storage: { sync: { set: (...a: unknown[]) => unknown } } } }).chrome.storage.sync.set = setMock
+
+    await expect(storage.getSettings()).resolves.toMatchObject({ ttsUrl: expectedUrl })
+    expect(setMock).toHaveBeenCalledTimes(1)
+    expect(setMock).toHaveBeenCalledWith({ ttsUrl: expectedUrl })
+  })
+
+  it('leaves malformed URLs unchanged so validation can report them', () => {
+    expect(storage.migrateLegacyTtsUrl('not a url')).toBe('not a url')
+    expect(storage.isHostPlayTtsUrl('not a url')).toBe(false)
+  })
+
+  it('identifies host-play endpoints without matching the normal endpoint', () => {
+    expect(storage.isHostPlayTtsUrl('http://localhost:5002/api/tts/play?x=1')).toBe(true)
+    expect(storage.isHostPlayTtsUrl('http://localhost:5002/api/tts')).toBe(false)
+  })
+
   it('saveSettings writes only the changed keys', async () => {
     const setMock = vi.fn(() => Promise.resolve())
     ;(globalThis as unknown as { chrome: { storage: { sync: { set: (...a: unknown[]) => unknown } } } }).chrome.storage.sync.set = setMock
@@ -51,6 +74,15 @@ describe('storage.getSettings / saveSettings', () => {
     await storage.saveSettings({ voice: 'Bob' })
 
     expect(setMock).toHaveBeenCalledWith({ voice: 'Bob' })
+  })
+
+  it('saveSettings repairs a legacy URL before persisting it', async () => {
+    const setMock = vi.fn(() => Promise.resolve())
+    ;(globalThis as unknown as { chrome: { storage: { sync: { set: (...a: unknown[]) => unknown } } } }).chrome.storage.sync.set = setMock
+
+    await storage.saveSettings({ ttsUrl: 'http://localhost:5002/api/tts/play' })
+
+    expect(setMock).toHaveBeenCalledWith({ ttsUrl: 'http://localhost:5002/api/tts' })
   })
 
   it('concurrent partial saves do not overwrite one another', async () => {
