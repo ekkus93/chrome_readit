@@ -89,13 +89,17 @@ describe('consolidated FIX2 source state', () => {
     expect(worker).toContain('player: { ...latestPlayerDiagnostics }')
   })
 
-  it('runs real popup and Options workflows and keeps cleanup recovery fail-closed', () => {
+  it('runs real popup and Options workflows and keeps UI recovery fail-closed', () => {
     const ci = read('.github/workflows/ci.yml')
     const packageJson = read('package.json')
     const uiHarness = read('scripts/chromium-ui-e2e.mjs')
     const cleanupWrapper = read('scripts/run-chromium-e2e.mjs')
+    const popup = read('src/popup/Popup.tsx')
+    const options = read('src/options/Options.tsx')
     const popupRace = read('src/popup/Popup.start-response-race.test.tsx')
     const optionsRace = read('src/options/Options.start-response-race.test.tsx')
+    const popupMissed = read('src/popup/Popup.missed-event-recovery.test.tsx')
+    const optionsMissed = read('src/options/Options.missed-event-recovery.test.tsx')
 
     expect(ci).toContain('npm run test:chromium 2>&1 | tee reports/chromium-e2e.log')
     expect(ci).toContain('npm run test:chromium-ui 2>&1 | tee -a reports/chromium-e2e.log')
@@ -106,8 +110,16 @@ describe('consolidated FIX2 source state', () => {
     expect(cleanupWrapper).toContain('const completedAssertions = /"ok"\\s*:\\s*true/')
     expect(cleanupWrapper).toContain('/tmp\\/chrome-readit-e2e-')
     expect(cleanupWrapper).toContain('maxRetries: 10')
+    expect(popup).toContain('ACTIVE_TEST_STATUS_POLL_MS = 100')
+    expect(options).toContain('ACTIVE_TEST_STATUS_POLL_MS = 100')
+    expect(popup).toContain('testRequestBaselineSessionIdRef')
+    expect(options).toContain('testRequestBaselineSessionIdRef')
+    expect(popup).toContain('if (!mounted || pollInFlight) return')
+    expect(options).toContain('if (!mounted || pollInFlight) return')
     expect(popupRace).toContain('late accepted response resurrect a superseded test session')
     expect(optionsRace).toContain('late accepted response resurrect a superseded test session')
+    expect(popupMissed).toContain('authoritative polling when supersession broadcast is missed')
+    expect(optionsMissed).toContain('authoritative polling when supersession broadcast is missed')
   })
 
   it('prevents stale workflow attempts from publishing either status issue', () => {
