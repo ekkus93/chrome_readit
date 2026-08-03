@@ -61,9 +61,8 @@ function shouldContinueAfterSt(candidate: string, nextCharacter: string | undefi
   const withoutClosers = candidate.trim().replace(/[)\]}'"”’]+$/, '')
   const prefix = withoutClosers.slice(0, -3).trim()
   if (!prefix) return true
-  if (/(?:^|\s)(?:to|in|at|from|near|toward|towards|visit|visited)$/i.test(prefix)) return true
-  return isLowercaseLetter(nextCharacter)
-    && /(?:^|\s)\d+[\p{L}\d.'’-]*(?:\s+[\p{L}\d.'’-]+)*$/u.test(prefix)
+  if (isLowercaseLetter(nextCharacter)) return true
+  return /(?:^|\s)(?:to|in|at|from|near|toward|towards|visit|visited)$/i.test(prefix)
 }
 
 function shouldContinueUppercaseAbbreviation(
@@ -148,62 +147,6 @@ function fallbackSegment(text: string): string[] {
   return output
 }
 
-function shouldMergeUrlQueryBoundary(previous: string, next: string, boundaryHadWhitespace: boolean): boolean {
-  return !boundaryHadWhitespace
-    && /\bhttps?:\/\/\S+\?$/i.test(previous.trim())
-    && /^[A-Za-z0-9._~%+-]+=[^\s]/.test(next.trim())
-}
-
-function shouldMergeIntlBoundary(previous: string, next: string): boolean {
-  const nextCharacter = nextMeaningfulCharacter(next, 0)
-  const token = trailingDottedToken(previous)
-  if (token && ALWAYS_CONTINUE_ABBREVIATIONS.has(token) && isLetter(nextCharacter)) return true
-  if (token && LOWERCASE_CONTINUE_ABBREVIATIONS.has(token) && isLowercaseLetter(nextCharacter)) return true
-  if (token && LOWERCASE_CONTINUE_ABBREVIATIONS.has(token)
-    && isUppercaseLetter(nextCharacter)
-    && shouldContinueUppercaseAbbreviation(token, next, 0)) return true
-  if (token && SUFFIX_ABBREVIATIONS.has(token) && isLowercaseLetter(nextCharacter)) return true
-  if (token === 'st.' && shouldContinueAfterSt(previous, nextCharacter)) return true
-  if (/\.\.\.[)\]}'"”’]*$/.test(previous.trim()) && isLowercaseLetter(nextCharacter)) return true
-  return false
-}
-
-type SegmenterLike = {
-  segment(input: string): Iterable<{ segment: string }>
-}
-
-type SegmenterConstructor = new (
-  locales?: string | string[],
-  options?: { granularity: 'sentence' },
-) => SegmenterLike
-
-function getIntlCandidates(text: string): string[] {
-  const Segmenter = (Intl as unknown as { Segmenter?: SegmenterConstructor }).Segmenter
-  if (!Segmenter) return [text]
-  return Array.from(new Segmenter(undefined, { granularity: 'sentence' }).segment(text), (entry) => entry.segment)
-    .filter((entry) => entry.trim().length > 0)
-}
-
 export function segmentSentences(text: string): string[] {
-  const candidates = getIntlCandidates(text).flatMap((rawCandidate) => {
-    const parts = fallbackSegment(rawCandidate)
-    return parts.map((segment, index) => ({
-      segment,
-      boundaryHadWhitespace: index === 0 && /^\s/.test(rawCandidate),
-    }))
-  })
-  const output: string[] = []
-
-  for (const candidate of candidates) {
-    const previous = output.at(-1)
-    if (previous && shouldMergeUrlQueryBoundary(previous, candidate.segment, candidate.boundaryHadWhitespace)) {
-      output[output.length - 1] = `${previous}${candidate.segment}`
-    } else if (previous && shouldMergeIntlBoundary(previous, candidate.segment)) {
-      output[output.length - 1] = `${previous} ${candidate.segment}`
-    } else {
-      output.push(candidate.segment)
-    }
-  }
-
-  return output
+  return fallbackSegment(text)
 }
