@@ -197,6 +197,7 @@ describe('Options coordinator test speech', () => {
     })
 
     render(<Options />)
+    await screen.findByText(/Playback: idle/i)
     act(() => {
       getListener()?.({
         kind: PLAYBACK_EVENT,
@@ -216,7 +217,9 @@ describe('Options coordinator test speech', () => {
       })
     })
 
-    await userEvent.click(await screen.findByRole('button', { name: /^Pause$/i }))
+    const pauseButton = screen.getByRole('button', { name: /^Pause$/i }) as HTMLButtonElement
+    await waitFor(() => expect(pauseButton.disabled).toBe(false))
+    await userEvent.click(pauseButton)
 
     expect(sendMessage.mock.calls.some(([message]) => (
       message.kind === PLAYBACK_CONTROL
