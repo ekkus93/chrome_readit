@@ -229,7 +229,7 @@ export class PlaybackCoordinator {
     if (this.activePlayback?.sessionId === session.id) {
       try {
         await this.audio.play()
-      } catch (error) {
+      } catch {
         this.stopAudio()
         session.error = createPlaybackError('AUDIO_PLAYBACK_FAILED', 'Audio playback could not resume.')
         session.state = 'failed'
