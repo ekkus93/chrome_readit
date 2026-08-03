@@ -106,6 +106,11 @@ function fallbackSegment(text: string): string[] {
   return output
 }
 
+function shouldMergeUrlQueryBoundary(previous: string, next: string): boolean {
+  return /\bhttps?:\/\/\S+\?$/i.test(previous.trim())
+    && /^[A-Za-z0-9._~%+-]+=[^\s]/.test(next.trim())
+}
+
 function shouldMergeIntlBoundary(previous: string, next: string): boolean {
   const nextCharacter = nextMeaningfulCharacter(next, 0)
   const token = trailingDottedToken(previous)
@@ -139,7 +144,9 @@ export function segmentSentences(text: string): string[] {
 
   for (const candidate of candidates) {
     const previous = output.at(-1)
-    if (previous && shouldMergeIntlBoundary(previous, candidate)) {
+    if (previous && shouldMergeUrlQueryBoundary(previous, candidate)) {
+      output[output.length - 1] = `${previous}${candidate}`
+    } else if (previous && shouldMergeIntlBoundary(previous, candidate)) {
       output[output.length - 1] = `${previous} ${candidate}`
     } else {
       output.push(candidate)
