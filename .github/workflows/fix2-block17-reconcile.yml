@@ -34,6 +34,8 @@ jobs:
           {
             set -euo pipefail
             python .github/fix2-block17-reconcile.py
+            sed -i -E '/^\*\*(Status|Verified implementation\/runtime candidate|Final release SHA|Final verified CI candidate|Real Coqui evidence):/s/[[:space:]]+$//' docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_IMPLEMENTATION_REPORT_2026-08-02.md
+            sed -i -E '/^\*\*Status:\*\* PARTIAL/s/[[:space:]]+$//' docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_TODO_2026-08-02.md
             git diff --check
             grep -F '**Status:** `PARTIAL' docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_IMPLEMENTATION_REPORT_2026-08-02.md
             grep -F '**Status:** Not yet executed' docs/CHROME_READIT_FIX2_LISTENING_EVIDENCE_TEMPLATE_2026-08-02.md
