@@ -3,10 +3,14 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "lint": "eslint .",
+    "typecheck": "tsc -b",
     "dev": "vite",
-    "prebuild": "npm run lint",
+    "prebuild": "npm run lint && npm run typecheck",
     "build": "vite build",
     "preview": "vite build && vite preview",
     "test": "vitest run"
