@@ -22,7 +22,7 @@ Process liveness. This endpoint can respond while the model is still loading.
 
 ### `GET /api/ready`
 
-Returns HTTP 200 only after the model and synthesis executor are ready.
+Returns HTTP 200 only when the model/executor are ready and another bounded request can be accepted. It returns HTTP 503 while loading or saturated and reports queue state.
 
 ### `GET /api/voices`
 
@@ -58,9 +58,9 @@ The service does not provide `/api/tts/play`, `/api/playing`, `/api/tts/cancel`,
 - One executor worker accesses the shared Coqui model.
 - A bounded semaphore limits active plus queued work.
 - Queue overflow returns HTTP 429.
-- Synthesis timeout returns HTTP 504.
-- Invalid voices return HTTP 400.
-- Temporary WAV files are removed after successful delivery, errors, timeouts, and shutdown.
+- Synthesis timeout returns HTTP 504; the queue slot remains occupied until in-process inference actually finishes.
+- Invalid voices return HTTP 400 before queue/tempfile allocation.
+- WAV paths remain tracked until deletion succeeds; timed-out work is cleaned after completion and failed deletion is retried at shutdown.
 - The API does not return backend stack traces.
 
 ## Configuration
@@ -90,6 +90,10 @@ docker run --rm \
 ```
 
 Do not replace the loopback binding with an all-interface binding unless the service is placed behind appropriate authentication, transport security, and firewall rules.
+
+## Verified real-model evidence
+
+Run `30854518366` passed on `31702133a5afd326902aa8f5bdfb6e2afe5dfe28` with artifact `8872045367` and verified VCTK `p225`, valid WAV, saturation-aware readiness, loopback-only/non-root/single-worker operation, timeout accounting, tempfile cleanup, bounded shutdown, and cache reuse.
 
 ## Tests
 

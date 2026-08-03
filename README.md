@@ -161,6 +161,10 @@ Voice discovery returns structured errors. An empty voice list from a valid sing
 
 ## Validation
 
+### Current FIX2 evidence status
+
+Candidate `31702133a5afd326902aa8f5bdfb6e2afe5dfe28` passed CI `30854518356` and real Coqui `30854518366`. JUnit reports 213 clean tests, Chromium proves maximum one player, and the runtime artifact proves real VCTK synthesis/cache/tempfile behavior. Human listening remains `NOT RUN`, so FIX2 is `PARTIAL`.
+
 ### Extension gates
 
 ```bash
@@ -211,7 +215,7 @@ bash scripts/validate-real-coqui.sh
 
 Evidence is written under `reports/real-coqui/` by default. This is intentionally separate from fake-backend CI because it downloads and initializes the real model, synthesizes WAV audio, inspects loopback publication and temporary files, recreates the service, and verifies that the persistent model volume remains populated.
 
-Real-model validation is not proven merely by the existence of the script. Record the exact implementation SHA, image ID, output directory, and result in the FIX2 implementation report.
+Current real-model evidence is run `30854518366` on `31702133a5afd326902aa8f5bdfb6e2afe5dfe28`, artifact `8872045367`, image `sha256:c09634d6df082265846c9cd8ba7a326ea3303915981e0f91854e818e07bc38f5`. Script existence alone is never evidence; later candidates require their own exact-SHA record.
 
 ### Structured listening validation
 
@@ -275,3 +279,5 @@ The extension currently declares `<all_urls>` because users may configure arbitr
 - `docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_SPEC_2026-08-02.md`
 - `docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_TODO_2026-08-02.md`
 - `docs/CHROME_READIT_FIX2_LISTENING_EVIDENCE_TEMPLATE_2026-08-02.md`
+- `docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_BLOCK17_RECONCILIATION_2026-08-03.md`
+- `docs/CHROME_READIT_FIX2_EVIDENCE_INDEX_2026-08-02.md`

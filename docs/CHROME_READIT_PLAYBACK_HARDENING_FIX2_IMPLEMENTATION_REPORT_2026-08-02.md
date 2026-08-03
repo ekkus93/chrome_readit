@@ -1,15 +1,24 @@
 # Chrome Read It Playback Hardening FIX2 Implementation Report
 
-**Status:** Implementation and validation in progress  
+**Status:** `PARTIAL — automated and real-model validation passed; human listening remains release-blocking`
 **Governing specification:** `docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_SPEC_2026-08-02.md`  
 **Governing TODO:** `docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_TODO_2026-08-02.md`  
 **Reviewed baseline:** `032265d9f10d87012e13057177f0463dc96ec211`  
-**FIX2 final implementation SHA:** _pending_  
-**Final CI run:** _pending_  
-**Real Coqui evidence:** _pending_  
-**Listening evidence:** _pending_
+**Verified implementation/runtime candidate:** `31702133a5afd326902aa8f5bdfb6e2afe5dfe28`
+**Final release SHA:** _pending Block 16 and final exact-SHA rerun_
+**Final verified CI candidate:** run `30854518356`, attempt `1`, job `91822266603`, `success`
+**Real Coqui evidence:** run `30854518366`, attempt `1`, artifact `8872045367`, `success`
+**Listening evidence:** `NOT RUN`
 
 ---
+
+## Authoritative Block 17 reconciliation — 2026-08-03
+
+Candidate `31702133a5afd326902aa8f5bdfb6e2afe5dfe28` passed hosted CI `30854518356` and real Coqui `30854518366` on the same exact SHA. JUnit artifact `8871921734` reports 213 tests with no failures/errors. Chromium artifact `8871945713` directly recorded maximum one active player and no invariant violation. Runtime artifact `8872045367` (`sha256:48022304418b783e7d553c70bbce42fd487554718835a41d0c5df1d546824279`) proved VCTK `p225` synthesis, loopback-only publication, non-root single-worker execution, truthful queue/timeout behavior, eventual tempfile cleanup, bounded shutdown, and cache reuse.
+
+Historical FIX1 evidence remains baseline SHA `032265d9f10d87012e13057177f0463dc96ec211`, CI run `30785364984`, job `91597786574`, success. Missing pre-hardening local outputs remain unavailable rather than reconstructed.
+
+**Remaining release work:** execute/sign Block 16, commit any retest evidence, rerun CI and real Coqui on the final exact SHA, then record the final release SHA.
 
 ## 1. Completion rule
 
@@ -212,7 +221,7 @@ Implemented in `scripts/chromium-e2e.mjs`:
 - reopened popup status recovery;
 - Pause, Resume, and Cancel through a restarted worker.
 
-Hosted execution result: _pending_.
+Hosted execution result: **passed in CI run `30854518356` on `31702133a5afd326902aa8f5bdfb6e2afe5dfe28`**.
 
 ### 2.10 CI hardening
 
@@ -225,7 +234,7 @@ Implemented in `.github/workflows/ci.yml`:
 - minimum Chrome version manifest validation;
 - existing lint, strict typecheck, builds, real Chromium, fake Coqui, Compose, and Codecov gates retained.
 
-Hosted execution result: _pending_.
+Hosted execution result: **passed in CI run `30854518356` on `31702133a5afd326902aa8f5bdfb6e2afe5dfe28`**.
 
 ---
 
@@ -251,7 +260,7 @@ It is designed to record:
 - service recreation;
 - persistent model-volume population.
 
-Execution result: **pending**. Script existence is not runtime evidence.
+Execution result: **passed in real-Coqui run `30854518366`, artifact `8872045367`, on `31702133a5afd326902aa8f5bdfb6e2afe5dfe28`**.
 
 ### 3.2 Listening evidence
 
@@ -267,36 +276,20 @@ Execution result: **pending**.
 
 ## 4. Automated evidence ledger
 
-| Gate | Exact SHA | Run / job / artifact | Result |
-| --- | --- | --- | --- |
-| npm install | pending | pending | pending |
-| lint | pending | pending | pending |
-| strict TypeScript | pending | pending | pending |
-| extension unit/integration tests | pending | pending | pending |
-| coverage thresholds | pending | pending | pending |
-| production extension build | pending | pending | pending |
-| diagnostic extension build | pending | pending | pending |
-| real Chromium matrix | pending | pending | pending |
-| fake Coqui service tests | pending | pending | pending |
-| Compose security assertions | pending | pending | pending |
-| Codecov upload | pending | pending | pending |
-
-Do not replace `pending` with a result from an older SHA.
+| Gate | Evidence | Result |
+| --- | --- | --- |
+| Install/lint/type/build/coverage/hygiene/secret scan | CI `30854518356` | Passed |
+| Unit/integration | JUnit `8871921734` | 213 tests; 0 failures/errors |
+| Chromium | artifact `8871945713` | Passed; maximum one player |
+| Real model/cache/runtime | run `30854518366`, artifact `8872045367` | Passed |
 
 ---
 
 ## 5. Pending corrective work
 
-The following items must remain open until verified or implemented:
-
-- final current-SHA CI convergence;
-- removal or explicit final disposition of any remaining legacy playback-message adapter;
-- CI status publisher rerun-attempt freshness validation;
-- dependency graph confirmation without `--legacy-peer-deps`;
-- final repository search and credential/history scan;
-- real Coqui container/model/cache execution;
-- structured human listening matrix;
-- exact final SHA and artifact reconciliation in the FIX2 TODO.
+- Block 16 structured human listening and signature.
+- Final post-listening exact-SHA CI and real-Coqui rerun.
+- Final release SHA and COMPLETE disposition only after those gates pass.
 
 ---
 
@@ -318,4 +311,4 @@ The exact pre-first-hardening local tool versions and baseline command outputs w
 - [ ] FIX2 TODO reconciled task by task.
 - [ ] Repository and history hygiene evidence recorded.
 
-**Release conclusion:** `NOT READY — validation in progress`
+**Release conclusion:** `PARTIAL — Block 17 complete; Block 16 and final exact-SHA sign-off remain.`

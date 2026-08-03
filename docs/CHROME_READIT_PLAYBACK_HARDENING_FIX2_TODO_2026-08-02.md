@@ -1,13 +1,20 @@
 # Chrome Read It Playback Hardening FIX2 TODO
 
 **Document:** `docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_TODO_2026-08-02.md`  
-**Status:** Ready for implementation  
+**Status:** PARTIAL — automated and real-model validation passed; Block 16 listening and final exact-SHA sign-off remain
 **Date:** 2026-08-02  
 **Repository:** `ekkus93/chrome_readit`  
 **Reviewed baseline:** `032265d9f10d87012e13057177f0463dc96ec211` (`master`)  
 **Baseline CI:** workflow `CI`, run `30785364984`, job `91597786574`, conclusion `success`  
 **Governing specification:** `docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_SPEC_2026-08-02.md`  
 **Predecessor TODO:** `docs/CHROME_READIT_PLAYBACK_HARDENING_TODO_2026-08-02.md`
+
+## Reconciled evidence status — 2026-08-03
+
+- Candidate `31702133a5afd326902aa8f5bdfb6e2afe5dfe28` passed CI `30854518356` (attempt 1, job `91822266603`) and real Coqui `30854518366` (attempt 1, artifact `8872045367`).
+- CI artifacts: JUnit `8871921734` (213 tests, 0 failures/errors) and Chromium `8871945713` (`maxActivePlayerCount=1`, no invariant violation).
+- Human listening remains **NOT RUN**. Current disposition: **PARTIAL**.
+- Block 17 record: `docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_BLOCK17_RECONCILIATION_2026-08-03.md`.
 
 ---
 
@@ -993,30 +1000,32 @@ For each rate record:
 
 ## 17. Documentation reconciliation and repository hygiene — P1
 
+**Block status:** `COMPLETE`; Block 16 and final release sign-off remain open.
+
 ### 17.1 Update governing documents
 
-- [ ] Update this FIX2 TODO as work is completed.
-- [ ] Add accurate cross-reference/status to the original playback-hardening TODO.
-- [ ] Update the implementation report with the previously successful FIX1 CI evidence.
-- [ ] Add a FIX2 implementation report or addendum.
-- [ ] Update README architecture and validation sections.
-- [ ] Update Docker README readiness/timeout/cache semantics.
-- [ ] Update docs index.
-- [ ] Document minimum Chrome version.
-- [ ] Document host-permission rationale.
-- [ ] Document any accepted inability to hard-cancel in-process Coqui inference.
+- [x] Update this FIX2 TODO as work is completed.
+- [x] Add accurate cross-reference/status to the original playback-hardening TODO.
+- [x] Update the implementation report with the previously successful FIX1 CI evidence.
+- [x] Add a FIX2 implementation report or addendum.
+- [x] Update README architecture and validation sections.
+- [x] Update Docker README readiness/timeout/cache semantics.
+- [x] Update docs index.
+- [x] Document minimum Chrome version.
+- [x] Document host-permission rationale.
+- [x] Document any accepted inability to hard-cancel in-process Coqui inference.
 
 ### 17.2 Remove misleading claims
 
 Search and correct claims that:
 
-- [ ] current Chromium testing fully proves actual single-player ownership;
-- [ ] `/api/ready` includes queue availability if it does not;
-- [ ] `<all_urls>` is required solely for selection capture;
-- [ ] response post-checking is a hard streaming size limit;
-- [ ] timed-out Coqui threads are cancelled;
-- [ ] mocked service tests are real Docker/model evidence;
-- [ ] the original TODO is complete before manual sign-off.
+- [x] current Chromium testing fully proves actual single-player ownership;
+- [x] `/api/ready` includes queue availability if it does not;
+- [x] `<all_urls>` is required solely for selection capture;
+- [x] response post-checking is a hard streaming size limit;
+- [x] timed-out Coqui threads are cancelled;
+- [x] mocked service tests are real Docker/model evidence;
+- [x] the original TODO is complete before manual sign-off.
 
 ### 17.3 Obsolete-path search
 
@@ -1036,32 +1045,32 @@ base64
 host play
 ```
 
-- [ ] Classify every result.
-- [ ] Confirm only the coordinator creates production audio.
-- [ ] Confirm removed host/debug endpoints have no active caller.
-- [ ] Confirm historical docs are labeled historical.
+- [x] Classify every result.
+- [x] Confirm only the coordinator creates production audio.
+- [x] Confirm removed host/debug endpoints have no active caller.
+- [x] Confirm historical docs are labeled historical.
 
 ### 17.4 Silent-failure final search
 
-- [ ] Search all active source files for empty catches.
-- [ ] Search for ignored async promises.
-- [ ] Search for ignored runtime callbacks.
-- [ ] Search for `return []`, `return null`, or default values in error paths.
-- [ ] Review every result and document justification.
-- [ ] Add tests for retained best-effort paths.
+- [x] Search all active source files for empty catches.
+- [x] Search for ignored async promises.
+- [x] Search for ignored runtime callbacks.
+- [x] Search for `return []`, `return null`, or default values in error paths.
+- [x] Review every result and document justification.
+- [x] Add tests for retained best-effort paths.
 
 ### 17.5 Secret scan
 
-- [ ] Search current tree for API keys, bearer tokens, passwords, private keys, and credentials in URLs.
-- [ ] Run available repository/history secret scanning.
-- [ ] Record commands and results.
-- [ ] Remove or rotate any discovered secret before proceeding.
+- [x] Search current tree for API keys, bearer tokens, passwords, private keys, and credentials in URLs.
+- [x] Run available repository/history secret scanning.
+- [x] Record commands and results.
+- [x] Remove or rotate any discovered secret before proceeding.
 
 ### 17.6 Clean tree
 
-- [ ] Remove generated files not intended for source control.
-- [ ] Remove temporary workflows and diagnostics.
-- [ ] Confirm `git status --short` is empty at final SHA.
+- [x] Remove generated files not intended for source control.
+- [x] Remove temporary workflows and diagnostics.
+- [x] Confirm `git status --short` is empty at final SHA.
 
 ---
 
@@ -1104,7 +1113,7 @@ docker compose -f docker/docker-compose.yml config
 
 ### 18.3 Runtime gates
 
-- [ ] Complete Block 15 real Docker/model validation.
+- [x] Complete Block 15 real Docker/model validation.
 - [ ] Complete Block 16 structured listening validation.
 
 ### 18.4 Final decision
@@ -1132,6 +1141,8 @@ BLOCKED — a named defect or environment limitation prevents safe completion.
 ```
 
 Never use “complete” as a synonym for “code was written” or “ordinary CI is green.”
+
+**Current reconciled decision (2026-08-03):** `PARTIAL` — CI and real Coqui passed on `31702133a5afd326902aa8f5bdfb6e2afe5dfe28`; listening and final reruns remain.
 
 ---
 

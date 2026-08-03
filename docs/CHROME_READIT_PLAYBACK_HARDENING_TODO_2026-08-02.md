@@ -7,6 +7,8 @@
 **Baseline reviewed:** `564de25e3eb885000bb9fd9fd870d8e54d3854e8` (`master`)  
 **Governing specification:** `docs/CHROME_READIT_PLAYBACK_HARDENING_SPEC_2026-08-02.md`
 
+> **Historical status — 2026-08-03:** Superseded by the FIX2 TODO. Candidate `31702133a5afd326902aa8f5bdfb6e2afe5dfe28` passed automated and real-Coqui validation, but human listening is `NOT RUN`; this predecessor is not a completion claim.
+
 ---
 
 ## 1. Goal
