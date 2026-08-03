@@ -1,245 +1,282 @@
-import tempfile
-import os
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from fastapi.responses import FileResponse, JSONResponse
-import threading
+from __future__ import annotations
 
-app = FastAPI(title="Coqui-local TTS")
+import os
+import tempfile
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Iterable, Protocol
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
+from starlette.background import BackgroundTask
+
+
+class TTSBackend(Protocol):
+    def tts_to_file(self, *, text: str, file_path: str, speaker: str | None = None) -> None: ...
+
+
+@dataclass(frozen=True)
+class ServiceConfig:
+    model_name: str
+    max_text_chars: int
+    queue_capacity: int
+    synthesis_timeout_seconds: float
+    forced_voices: tuple[str, ...]
+
+    @classmethod
+    def from_environment(cls) -> "ServiceConfig":
+        forced_voices = tuple(
+            voice.strip()
+            for voice in os.environ.get("COQUI_VOICES", "").split(",")
+            if voice.strip()
+        )
+        return cls(
+            model_name=os.environ.get("COQUI_MODEL", "tts_models/en/vctk/vits"),
+            max_text_chars=max(1, int(os.environ.get("MAX_TEXT_CHARS", "500"))),
+            queue_capacity=max(1, int(os.environ.get("SYNTH_QUEUE_CAPACITY", "4"))),
+            synthesis_timeout_seconds=max(1.0, float(os.environ.get("SYNTH_TIMEOUT_SECONDS", "120"))),
+            forced_voices=forced_voices,
+        )
 
 
 class TTSRequest(BaseModel):
     text: str
     voice: str | None = None
-    # optional fields left for future: voice, speaker, format
 
 
-@app.on_event("startup")
-def startup_event():
-    # Lazy import / initialization — TTS may download models on first run
-    global tts
+class InvalidVoiceError(ValueError):
+    pass
+
+
+ModelLoader = Callable[[ServiceConfig], TTSBackend]
+
+
+def load_coqui_model(config: ServiceConfig) -> TTSBackend:
     try:
         from TTS.api import TTS
-    except Exception as e:
-        raise RuntimeError("Failed to import TTS library: %s" % e)
+    except Exception as error:  # pragma: no cover - exercised by real container smoke tests
+        raise RuntimeError(f"Failed to import Coqui TTS: {error}") from error
 
-    # Choose a compact CPU-friendly model by default; model will be downloaded on first run
-    model_name = os.environ.get("COQUI_MODEL", "tts_models/en/ljspeech/tacotron2-DDC")
-    tts = TTS(model_name)
-    app.state.tts = tts
-    # track background playback processes (list of subprocess.Popen)
-    app.state._play_procs = []
-    app.state._play_lock = threading.Lock()
+    return TTS(model_name=config.model_name, progress_bar=False, gpu=False)
 
 
-@app.post("/api/tts")
-def synth(req: TTSRequest):
-    tts = getattr(app.state, "tts", None)
-    if tts is None:
-        raise HTTPException(status_code=503, detail="TTS backend not initialized")
+def _deduplicate_strings(values: Iterable[object]) -> list[str]:
+    output: list[str] = []
+    for value in values:
+        candidate = str(value).strip()
+        if candidate and candidate not in output:
+            output.append(candidate)
+    return output
 
-    # Create a temp file for output
-    fd, out_path = tempfile.mkstemp(suffix=".wav")
-    os.close(fd)
-    try:
-        # TTS.api.TTS provides tts_to_file that writes audio to disk
-        # Support optional voice/speaker selection if backend supports it.
+
+def discover_voices(backend: object, forced_voices: tuple[str, ...] = ()) -> list[str]:
+    if forced_voices:
+        return list(forced_voices)
+
+    for attribute in ("speakers", "available_speakers", "voices", "available_voices"):
+        value = getattr(backend, attribute, None)
+        if isinstance(value, dict) and value:
+            return _deduplicate_strings(value.keys())
+        if isinstance(value, (list, tuple, set)) and value:
+            return _deduplicate_strings(value)
+    return []
+
+
+class SynthesisRuntime:
+    def __init__(self, config: ServiceConfig, model_loader: ModelLoader) -> None:
+        self.config = config
+        self._model_loader = model_loader
+        self._backend: TTSBackend | None = None
+        self._executor: ThreadPoolExecutor | None = None
+        self._slots = threading.BoundedSemaphore(config.queue_capacity)
+        self._temp_paths: set[str] = set()
+        self._temp_paths_lock = threading.Lock()
+        self.ready = False
+
+    def start(self) -> None:
+        self._backend = self._model_loader(self.config)
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="coqui-synthesis")
+        self.ready = True
+
+    def shutdown(self) -> None:
+        self.ready = False
+        executor = self._executor
+        self._executor = None
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
+        with self._temp_paths_lock:
+            paths = list(self._temp_paths)
+        for path in paths:
+            self.cleanup_path(path)
+        self._backend = None
+
+    def voices(self) -> list[str]:
+        backend = self._backend
+        if backend is None:
+            return []
+        return discover_voices(backend, self.config.forced_voices)
+
+    def tracked_temp_paths(self) -> tuple[str, ...]:
+        with self._temp_paths_lock:
+            return tuple(sorted(self._temp_paths))
+
+    def cleanup_path(self, path: str) -> None:
         try:
-            # Check if speakers are available (indicates multi-speaker model)
-            speakers = getattr(tts, 'speakers', None) or getattr(tts, 'available_speakers', None)
-            if speakers:
-                # Multi-speaker model - always provide a speaker
-                speaker = req.voice or 'p225'  # Default to p225 if no voice specified
-                try:
-                    tts.tts_to_file(text=req.text, file_path=out_path, speaker=speaker)
-                except TypeError:
-                    try:
-                        tts.tts_to_file(text=req.text, file_path=out_path, voice=speaker)
-                    except TypeError:
-                        raise HTTPException(status_code=400, detail=f"voice '{speaker}' not supported by backend")
-            else:
-                # Single-speaker model
-                tts.tts_to_file(text=req.text, file_path=out_path)
-        except HTTPException:
-            raise
-        except Exception as e:
-            # Re-raise as generic error handled below
-            raise
-        return FileResponse(out_path, media_type="audio/wav", filename="speech.wav")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        # Caller will have received the file response; remove file asynchronously later if needed
-        pass
+            Path(path).unlink(missing_ok=True)
+        finally:
+            with self._temp_paths_lock:
+                self._temp_paths.discard(path)
 
+    def submit(self, text: str, voice: str | None) -> tuple[Future[str], str]:
+        backend = self._backend
+        executor = self._executor
+        if not self.ready or backend is None or executor is None:
+            raise RuntimeError("TTS backend is not ready")
+        if not self._slots.acquire(blocking=False):
+            raise OverflowError("Synthesis queue is full")
 
-@app.post("/api/tts/play")
-def synth_play(req: TTSRequest):
-    """Generate the WAV for the provided text and spawn playback on the
-    server in the background (non-blocking). Returns JSON status immediately.
-    This endpoint is explicitly for server-side playback; it does not return
-    the audio file.
-    """
-    tts = getattr(app.state, "tts", None)
-    if tts is None:
-        raise HTTPException(status_code=503, detail="TTS backend not initialized")
+        descriptor, output_path = tempfile.mkstemp(suffix=".wav", prefix="chrome-readit-")
+        os.close(descriptor)
+        with self._temp_paths_lock:
+            self._temp_paths.add(output_path)
 
-    # Create a temp file for output
-    fd, out_path = tempfile.mkstemp(suffix=".wav")
-    os.close(fd)
-    try:
-        # support optional voice selection
         try:
-            if req.voice:
-                try:
-                    tts.tts_to_file(text=req.text, file_path=out_path, speaker=req.voice)
-                except TypeError:
-                    try:
-                        tts.tts_to_file(text=req.text, file_path=out_path, voice=req.voice)
-                    except TypeError:
-                        raise HTTPException(status_code=400, detail=f"voice '{req.voice}' not supported by backend")
-            else:
-                tts.tts_to_file(text=req.text, file_path=out_path)
-        except HTTPException:
-            raise
+            future = executor.submit(self._synthesize, backend, text, voice, output_path)
         except Exception:
+            self._slots.release()
+            self.cleanup_path(output_path)
             raise
-        # Spawn playback in background and return immediately
-        from subprocess import Popen
+
+        future.add_done_callback(lambda _future: self._slots.release())
+        return future, output_path
+
+    def _synthesize(
+        self,
+        backend: TTSBackend,
+        text: str,
+        voice: str | None,
+        output_path: str,
+    ) -> str:
+        available_voices = discover_voices(backend, self.config.forced_voices)
+        selected_voice: str | None = None
+        if available_voices:
+            selected_voice = voice or available_voices[0]
+            if selected_voice not in available_voices:
+                raise InvalidVoiceError(f"Voice '{selected_voice}' is not available")
+
+        if selected_voice is None:
+            backend.tts_to_file(text=text, file_path=output_path)
+        else:
+            backend.tts_to_file(text=text, file_path=output_path, speaker=selected_voice)
+
+        output = Path(output_path)
+        if not output.exists() or output.stat().st_size <= 0:
+            raise RuntimeError("TTS backend produced an empty audio file")
+        return output_path
+
+
+def error_payload(code: str, message: str) -> dict[str, object]:
+    return {"ok": False, "error": {"code": code, "message": message}}
+
+
+def raise_api_error(status_code: int, code: str, message: str) -> None:
+    raise HTTPException(status_code=status_code, detail={"code": code, "message": message})
+
+
+def create_app(
+    *,
+    config: ServiceConfig | None = None,
+    model_loader: ModelLoader = load_coqui_model,
+) -> FastAPI:
+    service_config = config or ServiceConfig.from_environment()
+    application = FastAPI(title="Chrome Read It Coqui TTS", docs_url=None, redoc_url=None)
+    runtime = SynthesisRuntime(service_config, model_loader)
+    application.state.runtime = runtime
+
+    @application.on_event("startup")
+    def startup_event() -> None:
+        runtime.start()
+
+    @application.on_event("shutdown")
+    def shutdown_event() -> None:
+        runtime.shutdown()
+
+    @application.exception_handler(HTTPException)
+    async def http_exception_handler(_request: Request, exception: HTTPException) -> JSONResponse:
+        detail = exception.detail
+        if isinstance(detail, dict) and isinstance(detail.get("code"), str):
+            payload = error_payload(str(detail["code"]), str(detail.get("message", "Request failed")))
+        else:
+            payload = error_payload("HTTP_ERROR", str(detail))
+        return JSONResponse(status_code=exception.status_code, content=payload)
+
+    @application.exception_handler(RequestValidationError)
+    async def validation_exception_handler(_request: Request, _exception: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content=error_payload("INVALID_REQUEST", "The request body is invalid."),
+        )
+
+    @application.get("/api/ping")
+    def ping() -> dict[str, bool]:
+        return {"ok": True}
+
+    @application.get("/api/ready")
+    def ready() -> dict[str, bool]:
+        if not runtime.ready:
+            raise_api_error(503, "NOT_READY", "The TTS model is not ready.")
+        return {"ok": True, "ready": True}
+
+    @application.get("/api/voices")
+    def voices() -> dict[str, list[str]]:
+        if not runtime.ready:
+            raise_api_error(503, "NOT_READY", "The TTS model is not ready.")
+        return {"voices": runtime.voices()}
+
+    @application.post("/api/tts")
+    def synthesize(request: TTSRequest) -> FileResponse:
+        text = request.text.strip()
+        if not text:
+            raise_api_error(400, "EMPTY_TEXT", "Text must not be empty.")
+        if len(text) > service_config.max_text_chars:
+            raise_api_error(
+                413,
+                "TEXT_TOO_LONG",
+                f"Text exceeds the {service_config.max_text_chars}-character limit.",
+            )
+        if not runtime.ready:
+            raise_api_error(503, "NOT_READY", "The TTS model is not ready.")
+
         try:
-            from subprocess import Popen
-            if os.path.exists("/usr/bin/paplay"):
-                p = Popen(["/usr/bin/paplay", out_path])
-            elif os.path.exists("/usr/bin/aplay"):
-                p = Popen(["/usr/bin/aplay", out_path])
-            else:
-                raise HTTPException(status_code=500, detail="No playback utility found (paplay or aplay)")
-            with app.state._play_lock:
-                app.state._play_procs.append(p)
-            return {"ok": True, "played": True}
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        # Let the OS clean up the temporary file later; if you want aggressive
-        # cleanup, implement a background cleanup task that deletes files after a
-        # short delay.
-        pass
+            future, output_path = runtime.submit(text, request.voice)
+        except OverflowError:
+            raise_api_error(429, "QUEUE_FULL", "The synthesis queue is full.")
+        except RuntimeError:
+            raise_api_error(503, "NOT_READY", "The TTS model is not ready.")
 
-
-@app.get("/api/debug")
-def debug():
-    """Debug endpoint to inspect TTS object."""
-    tts = getattr(app.state, "tts", None)
-    if tts is None:
-        return {"error": "TTS not initialized"}
-    
-    attrs = [attr for attr in dir(tts) if not attr.startswith('_')]
-    speakers = getattr(tts, 'speakers', None)
-    available_speakers = getattr(tts, 'available_speakers', None)
-    
-    return {
-        "attributes": attrs,
-        "speakers": speakers,
-        "available_speakers": available_speakers,
-        "is_multi_speaker": getattr(tts, 'is_multi_speaker', None),
-        "speaker_manager": getattr(tts, 'speaker_manager', None)
-    }
-
-
-@app.get("/api/ping")
-def ping():
-    return {"ok": True}
-
-
-@app.get("/api/voices")
-def voices():
-    """Return a list of available voices/speakers that the backend supports.
-
-    This tries a few common attributes on the TTS object. If nothing is
-    discoverable, an empty list is returned. You can also set COQUI_VOICES
-    environment variable to a comma-separated list to force a value.
-    """
-    tts = getattr(app.state, "tts", None)
-    # Allow explicit override from environment for simple setups
-    env = os.environ.get("COQUI_VOICES")
-    if env:
-        return {"voices": [v.strip() for v in env.split(",") if v.strip()]}
-
-    if tts is None:
-        raise HTTPException(status_code=503, detail="TTS backend not initialized")
-
-    # Try several common attribute names
-    candidates = []
-    try:
-        # Many multi-speaker models expose 'speakers' or 'available_speakers'
-        for attr in ("speakers", "available_speakers", "voices", "available_voices"):
-            val = getattr(tts, attr, None)
-            if val:
-                # some are dicts/lists
-                if isinstance(val, dict):
-                    candidates.extend(list(val.keys()))
-                elif isinstance(val, (list, tuple)):
-                    candidates.extend(list(val))
-                else:
-                    # fallback: try to coerce
-                    candidates.append(str(val))
-                break
-    except Exception:
-        # If introspection fails, return empty list
-        candidates = []
-
-    # Deduplicate and return
-    seen = []
-    for v in candidates:
-        if v not in seen:
-            seen.append(v)
-    return {"voices": seen}
-
-
-@app.get("/api/playing")
-def playing():
-    """Return whether any background playback processes are currently running."""
-    with app.state._play_lock:
-        procs = list(app.state._play_procs)
-    active = 0
-    for p in procs:
         try:
-            if p.poll() is None:
-                active += 1
+            completed_path = future.result(timeout=service_config.synthesis_timeout_seconds)
+        except FutureTimeoutError:
+            future.add_done_callback(lambda _future: runtime.cleanup_path(output_path))
+            raise_api_error(504, "SYNTHESIS_TIMEOUT", "Speech synthesis timed out.")
+        except InvalidVoiceError as error:
+            runtime.cleanup_path(output_path)
+            raise_api_error(400, "INVALID_VOICE", str(error))
         except Exception:
-            # ignore and continue
-            pass
-    return {"playing": active > 0, "count": active}
+            runtime.cleanup_path(output_path)
+            raise_api_error(500, "SYNTHESIS_FAILED", "Speech synthesis failed.")
+
+        return FileResponse(
+            completed_path,
+            media_type="audio/wav",
+            background=BackgroundTask(runtime.cleanup_path, completed_path),
+        )
+
+    return application
 
 
-@app.post("/api/tts/cancel")
-def cancel_playback():
-    """Attempt to terminate any active background playback processes.
-
-    Returns the number of processes that were signalled.
-    """
-    canceled = 0
-    with app.state._play_lock:
-        procs = list(app.state._play_procs)
-        # clear the list now; we'll re-add any processes still running that we didn't kill
-        app.state._play_procs = []
-
-    for p in procs:
-        try:
-            if p.poll() is None:
-                try:
-                    p.terminate()
-                except Exception:
-                    try:
-                        p.kill()
-                    except Exception:
-                        pass
-                canceled += 1
-        except Exception:
-            pass
-
-    return {"ok": True, "canceled": canceled}
+app = create_app()
