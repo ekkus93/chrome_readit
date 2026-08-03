@@ -29,6 +29,7 @@ const LAST_PLAYBACK_STATUS_KEY = 'readitLastPlaybackStatus'
 const PROBE_TIMEOUT_MS = 5_000
 const DIAGNOSTICS_ENABLED = typeof __READIT_E2E__ !== 'undefined' && __READIT_E2E__
 const MAX_DIAGNOSTIC_EVENTS = 200
+const DIAGNOSTICS_START_TIMEOUT_MS = 2_000
 
 type ActivePlaybackStatus = PlaybackStatus & {
   sessionId: string
@@ -53,6 +54,7 @@ let latestQueuedStatus: PlaybackStatus | null = null
 let persistenceDegraded = false
 const diagnosticEvents: PlaybackEvent[] = []
 let latestPlayerDiagnostics: PlayerDiagnosticsSnapshot | null = null
+const diagnosticSnapshotWaiters = new Set<() => void>()
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -72,6 +74,28 @@ function isPlayerDiagnostics(value: unknown): value is PlayerDiagnosticsSnapshot
     && isNonNegativeInteger(value.cleanupFailureCount)
     && (value.lastCleanupFailureStage === null || typeof value.lastCleanupFailureStage === 'string')
     && isNonNegativeInteger(value.invariantViolationCount)
+}
+
+function recordPlayerDiagnostics(value: unknown): void {
+  if (!isPlayerDiagnostics(value)) return
+  latestPlayerDiagnostics = value
+  for (const notify of [...diagnosticSnapshotWaiters]) notify()
+}
+
+function waitForInitialDiagnostics(timeoutMs = DIAGNOSTICS_START_TIMEOUT_MS): Promise<boolean> {
+  if (latestPlayerDiagnostics) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const onSnapshot = () => {
+      clearTimeout(timeoutId)
+      diagnosticSnapshotWaiters.delete(onSnapshot)
+      resolve(true)
+    }
+    const timeoutId = setTimeout(() => {
+      diagnosticSnapshotWaiters.delete(onSnapshot)
+      resolve(false)
+    }, timeoutMs)
+    diagnosticSnapshotWaiters.add(onSnapshot)
+  })
 }
 
 function isTerminalStatus(status: PlaybackStatus): boolean {
@@ -356,6 +380,23 @@ async function queryPlaybackStatus(): Promise<PlaybackStatus> {
   }
 }
 
+async function queryPlaybackDiagnostics() {
+  try {
+    await ensureOffscreenPlaybackDocument()
+    await waitForInitialDiagnostics()
+  } catch (error) {
+    return { ok: false as const, error: offscreenTransportError(error).message }
+  }
+  return latestPlayerDiagnostics
+    ? {
+        ok: true as const,
+        status: latestQueuedStatus,
+        events: [...diagnosticEvents],
+        player: { ...latestPlayerDiagnostics },
+      }
+    : { ok: false as const, error: 'No playback diagnostics were published before the bounded startup deadline.' }
+}
+
 export const deriveApiSiblingUrl = deriveTtsSiblingUrl
 
 async function probeTtsServer(): Promise<{ ok: boolean; status?: number; error?: string }> {
@@ -384,8 +425,7 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
       if (diagnosticEvents.length > MAX_DIAGNOSTIC_EVENTS) {
         diagnosticEvents.splice(0, diagnosticEvents.length - MAX_DIAGNOSTIC_EVENTS)
       }
-      const player = (message as PlaybackEvent & { player?: unknown }).player
-      if (isPlayerDiagnostics(player)) latestPlayerDiagnostics = player
+      recordPlayerDiagnostics((message as PlaybackEvent & { player?: unknown }).player)
     }
     void writeLastPlaybackStatus(message.status)
     return false
@@ -403,14 +443,7 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     return true
   }
   if (DIAGNOSTICS_ENABLED && isRecord(message) && message.kind === 'PLAYBACK_DIAGNOSTICS') {
-    sendResponse(latestPlayerDiagnostics
-      ? {
-          ok: true,
-          status: latestQueuedStatus,
-          events: [...diagnosticEvents],
-          player: { ...latestPlayerDiagnostics },
-        }
-      : { ok: false, error: 'No playback diagnostics have been observed.' })
+    void queryPlaybackDiagnostics().then(sendResponse)
     return true
   }
   if (isMsg(message)) {
@@ -456,6 +489,7 @@ chrome.contextMenus?.onClicked?.addListener(async (info) => {
 
 export const __testing = {
   ensureOffscreenPlaybackDocument,
+  queryPlaybackDiagnostics,
   queryPlaybackStatus,
   routeControl,
   readLastPlaybackStatus,
