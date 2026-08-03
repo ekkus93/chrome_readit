@@ -590,7 +590,10 @@ async function verifyCleanupFailure(context) {
   const start = await startReadText(context, 'BLOCK13_LONG_AUDIO cleanup source.')
   assert(start?.ok === true, `cleanup source start rejected: ${JSON.stringify(start)}`)
   await waitForState(context.cdp, context.page.sessionId, start.sessionId, 'playing')
-  const before = await queryDiagnostics(context.cdp, context.page.sessionId)
+  const before = await waitFor('cleanup source audible player', async () => {
+    const diagnostics = await queryDiagnostics(context.cdp, context.page.sessionId)
+    return diagnostics.player.activePlayerCount === 1 ? diagnostics : null
+  })
   await installAudioFault(context, 'pause-throw')
   const replacement = await startReadText(context, 'BLOCK13 cleanup replacement.')
   assert(replacement?.ok === false, 'cleanup failure did not reject replacement')
