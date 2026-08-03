@@ -67,8 +67,10 @@ jobs:
           fi
           docker volume ls --format json \
             > reports/real-coqui/volumes.json 2>/dev/null || true
-          docker compose -f docker/docker-compose.yml logs --no-color coqui-local \
-            > reports/real-coqui/final-container.log 2>&1 || true
+          if [[ ! -s reports/real-coqui/final-container.log ]]; then
+            docker compose -f docker/docker-compose.yml logs --no-color coqui-local \
+              > reports/real-coqui/workflow-final-container.log 2>&1 || true
+          fi
 
       - name: Upload real Coqui evidence
         if: ${{ always() }}
