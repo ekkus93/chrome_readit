@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: fix2-block17-reconciliation
@@ -23,35 +24,44 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Reconcile Block 17 documentation
-        run: python .github/fix2-block17-reconcile.py
-
-      - name: Validate documentation diff
+      - name: Reconcile, validate, and commit
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          git diff --check
-          grep -F '**Status:** `PARTIAL' docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_IMPLEMENTATION_REPORT_2026-08-02.md
-          grep -F '**Status:** Not yet executed' docs/CHROME_READIT_FIX2_LISTENING_EVIDENCE_TEMPLATE_2026-08-02.md
-          grep -F 'Run `30854518366` passed' docker/coqui-local/README.md
-          test -f docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_BLOCK17_RECONCILIATION_2026-08-03.md
-
-      - name: Commit reconciled documentation
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add \
-            README.md \
-            docker/coqui-local/README.md \
-            docs/CHROME_READIT_PLAYBACK_HARDENING_TODO_2026-08-02.md \
-            docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_TODO_2026-08-02.md \
-            docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_IMPLEMENTATION_REPORT_2026-08-02.md \
-            docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_EVIDENCE_ADDENDUM_2026-08-03.md \
-            docs/CHROME_READIT_FIX2_EVIDENCE_INDEX_2026-08-02.md \
-            docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_BLOCK17_RECONCILIATION_2026-08-03.md
-          git diff --cached --check
-          git commit -m 'Reconcile FIX2 Block 17 documentation'
-          test -z "$(git status --short)"
-          git push origin HEAD:master
+          set +e
+          set -o pipefail
+          {
+            set -euo pipefail
+            python .github/fix2-block17-reconcile.py
+            git diff --check
+            grep -F '**Status:** `PARTIAL' docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_IMPLEMENTATION_REPORT_2026-08-02.md
+            grep -F '**Status:** Not yet executed' docs/CHROME_READIT_FIX2_LISTENING_EVIDENCE_TEMPLATE_2026-08-02.md
+            grep -F 'Run `30854518366` passed' docker/coqui-local/README.md
+            test -f docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_BLOCK17_RECONCILIATION_2026-08-03.md
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add \
+              README.md \
+              docker/coqui-local/README.md \
+              docs/CHROME_READIT_PLAYBACK_HARDENING_TODO_2026-08-02.md \
+              docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_TODO_2026-08-02.md \
+              docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_IMPLEMENTATION_REPORT_2026-08-02.md \
+              docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_EVIDENCE_ADDENDUM_2026-08-03.md \
+              docs/CHROME_READIT_FIX2_EVIDENCE_INDEX_2026-08-02.md \
+              docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_BLOCK17_RECONCILIATION_2026-08-03.md
+            git diff --cached --check
+            git commit -m 'Reconcile FIX2 Block 17 documentation'
+            test -z "$(git status --short)"
+            git push origin HEAD:master
+          } 2>&1 | tee /tmp/block17-reconcile.log
+          status=${PIPESTATUS[0]}
+          if [[ ${status} -ne 0 ]]; then
+            {
+              printf 'Temporary reconciliation run `%s` failed on `%s`.\n\n```text\n' "${GITHUB_RUN_ID}" "${GITHUB_SHA}"
+              tail -n 120 /tmp/block17-reconcile.log
+              printf '\n```\n'
+            } >/tmp/block17-issue.md
+            gh issue create --title "FIX2 Block 17 reconciliation failure ${GITHUB_RUN_ID}" --body-file /tmp/block17-issue.md
+          fi
+          exit "${status}"
