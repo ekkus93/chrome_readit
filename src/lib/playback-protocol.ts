@@ -123,12 +123,15 @@ function isPlaybackSettingsSnapshot(value: unknown): value is PlaybackSettingsSn
     && Number.isFinite(value.rate)
 }
 
+export function isPlaybackSource(value: unknown): value is PlaybackSource {
+  return typeof value === 'string' && PLAYBACK_SOURCES.has(value as PlaybackSource)
+}
+
 export function isStartPlaybackRequest(value: unknown): value is StartPlaybackRequest {
   if (!isRecord(value)) return false
   return value.kind === START_PLAYBACK
     && isNonEmptyString(value.requestId)
-    && typeof value.source === 'string'
-    && PLAYBACK_SOURCES.has(value.source as PlaybackSource)
+    && isPlaybackSource(value.source)
     && typeof value.text === 'string'
     && isPlaybackSettingsSnapshot(value.settings)
 }
@@ -149,7 +152,7 @@ export function isPlaybackStatus(value: unknown): value is PlaybackStatus {
   if (typeof value.state !== 'string' || !PLAYBACK_STATES.has(value.state as PlaybackState)) return false
   if (value.sessionId !== null && !isNonEmptyString(value.sessionId)) return false
   if (value.requestId !== null && !isNonEmptyString(value.requestId)) return false
-  if (value.source !== null && (typeof value.source !== 'string' || !PLAYBACK_SOURCES.has(value.source as PlaybackSource))) return false
+  if (value.source !== null && !isPlaybackSource(value.source)) return false
   return [value.currentChunk, value.totalChunks, value.currentParagraph, value.totalParagraphs]
     .every((entry) => typeof entry === 'number' && Number.isInteger(entry) && entry >= 0)
 }
