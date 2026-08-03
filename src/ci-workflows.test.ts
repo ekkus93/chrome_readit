@@ -49,12 +49,16 @@ describe('FIX2 workflow contracts', () => {
     expect(publisher).toContain("Ignoring stale attempt {run_attempt}")
   })
 
-  it('keeps the real-model workflow opt-in and retains evidence', () => {
+  it('keeps real-model execution explicitly requested and retains evidence', () => {
     const workflow = read('.github/workflows/real-coqui-validation.yml')
 
     expect(workflow).toContain('workflow_dispatch:')
-    expect(workflow).not.toContain('\n  push:')
+    expect(workflow).toContain('\n  push:')
+    expect(workflow).toContain('branches: [master]')
+    expect(workflow).toContain('- docs/CHROME_READIT_FIX2_REAL_COQUI_VALIDATION_REQUEST.md')
+    expect(workflow.match(/- docs\/CHROME_READIT_FIX2_REAL_COQUI_VALIDATION_REQUEST\.md/g)).toHaveLength(1)
     expect(workflow).toContain('scripts/validate-real-coqui.sh')
+    expect(workflow).toContain('scripts/publish-real-coqui-status.py --phase in_progress')
     expect(workflow).toContain('image-inspect.json')
     expect(workflow).toContain('real-coqui-${{ github.run_id }}-${{ github.run_attempt }}')
     expect(workflow).toContain('if-no-files-found: error')
