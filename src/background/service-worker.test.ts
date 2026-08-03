@@ -7,38 +7,12 @@ vi.mock('../lib/storage', () => ({
 import { getSettings } from '../lib/storage'
 import { PLAYBACK_CONTROL, PLAYBACK_STATUS, START_PLAYBACK } from '../lib/playback-protocol'
 
-type ChromeMock = {
-  tabs: { query: ReturnType<typeof vi.fn> }
-  scripting: { executeScript: ReturnType<typeof vi.fn> }
-  offscreen: { createDocument: ReturnType<typeof vi.fn>; hasDocument?: ReturnType<typeof vi.fn> }
-  commands: { onCommand: { addListener: ReturnType<typeof vi.fn> } }
-  runtime: {
-    onMessage: { addListener: ReturnType<typeof vi.fn> }
-    onInstalled: { addListener: ReturnType<typeof vi.fn> }
-    sendMessage: ReturnType<typeof vi.fn>
-    getURL: ReturnType<typeof vi.fn>
-    getContexts: ReturnType<typeof vi.fn>
-    lastError?: { message?: string }
-  }
-  storage: {
-    session: {
-      get: ReturnType<typeof vi.fn>
-      set: ReturnType<typeof vi.fn>
-    }
-  }
-  contextMenus: {
-    removeAll: ReturnType<typeof vi.fn>
-    create: ReturnType<typeof vi.fn>
-    onClicked: { addListener: ReturnType<typeof vi.fn> }
-  }
-}
-
-function installChromeMock(): ChromeMock {
+function installChromeMock() {
   const sessionValues: Record<string, unknown> = {}
-  const chromeMock: ChromeMock = {
+  const chromeMock = {
     tabs: { query: vi.fn() },
     scripting: { executeScript: vi.fn() },
-    offscreen: { createDocument: vi.fn().mockResolvedValue(undefined) },
+    offscreen: { createDocument: vi.fn().mockResolvedValue(undefined), hasDocument: vi.fn() },
     commands: { onCommand: { addListener: vi.fn() } },
     runtime: {
       onMessage: { addListener: vi.fn() },
@@ -46,7 +20,7 @@ function installChromeMock(): ChromeMock {
       sendMessage: vi.fn(),
       getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
       getContexts: vi.fn().mockResolvedValue([]),
-      lastError: undefined,
+      lastError: undefined as { message?: string } | undefined,
     },
     storage: {
       session: {
@@ -60,7 +34,7 @@ function installChromeMock(): ChromeMock {
       onClicked: { addListener: vi.fn() },
     },
   }
-  ;(globalThis as unknown as { chrome: ChromeMock }).chrome = chromeMock
+  ;(globalThis as unknown as { chrome: typeof chrome }).chrome = chromeMock as unknown as typeof chrome
   return chromeMock
 }
 
