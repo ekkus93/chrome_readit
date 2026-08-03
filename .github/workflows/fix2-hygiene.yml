@@ -1,0 +1,20 @@
+name: FIX2 Hygiene
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Reject dangerous fallbacks and silent failures
+        run: bash scripts/check-fix2-hygiene.sh
