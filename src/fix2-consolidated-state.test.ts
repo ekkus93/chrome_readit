@@ -89,6 +89,27 @@ describe('consolidated FIX2 source state', () => {
     expect(worker).toContain('player: { ...latestPlayerDiagnostics }')
   })
 
+  it('runs real popup and Options workflows and keeps cleanup recovery fail-closed', () => {
+    const ci = read('.github/workflows/ci.yml')
+    const packageJson = read('package.json')
+    const uiHarness = read('scripts/chromium-ui-e2e.mjs')
+    const cleanupWrapper = read('scripts/run-chromium-e2e.mjs')
+    const popupRace = read('src/popup/Popup.start-response-race.test.tsx')
+    const optionsRace = read('src/options/Options.start-response-race.test.tsx')
+
+    expect(ci).toContain('npm run test:chromium 2>&1 | tee reports/chromium-e2e.log')
+    expect(ci).toContain('npm run test:chromium-ui 2>&1 | tee -a reports/chromium-e2e.log')
+    expect(packageJson).toContain('scripts/run-chromium-e2e.mjs')
+    expect(uiHarness).toContain('selection-popup-options-selection-selection-replacement')
+    expect(uiHarness).toContain('popup-pause-resume-cancel-buttons')
+    expect(uiHarness).toContain('options-pause-resume-stop-buttons')
+    expect(cleanupWrapper).toContain('const completedAssertions = /"ok"\\s*:\\s*true/')
+    expect(cleanupWrapper).toContain('/tmp\\/chrome-readit-e2e-')
+    expect(cleanupWrapper).toContain('maxRetries: 10')
+    expect(popupRace).toContain('late accepted response resurrect a superseded test session')
+    expect(optionsRace).toContain('late accepted response resurrect a superseded test session')
+  })
+
   it('prevents stale workflow attempts from publishing either status issue', () => {
     const ciPublisher = read('.github/workflows/publish-ci-status.yml')
     const runtimePublisher = read('scripts/publish-real-coqui-status.py')
