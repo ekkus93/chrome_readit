@@ -9,14 +9,18 @@ import {
   PLAYBACK_STATUS,
   START_PLAYBACK,
   createPlaybackError,
+  isPlaybackControlRequest,
   isPlaybackControlResponse,
   isPlaybackEvent,
   isPlaybackStatus,
+  isPlaybackStatusRequest,
+  isStartPlaybackRequest,
   isStartPlaybackResponse,
   type PlaybackControlAction,
   type PlaybackControlResponse,
   type PlaybackSource,
   type PlaybackStatus,
+  type StartPlaybackRequest,
   type StartPlaybackResponse,
 } from '../lib/playback-protocol'
 import { getSettings } from '../lib/storage'
@@ -25,52 +29,95 @@ const UNSUPPORTED_PLAYBACK_ERROR = 'Playback not supported on this page'
 const OFFSCREEN_DOCUMENT_PATH = 'src/offscreen.html'
 const OFFSCREEN_JUSTIFICATION = 'Play selected text audio in an extension-owned document.'
 const LAST_PLAYBACK_STATUS_KEY = 'readitLastPlaybackStatus'
+const PROBE_TIMEOUT_MS = 5_000
 
 let offscreenDocumentPromise: Promise<void> | null = null
-let offscreenDocumentKnown = false
+let statusWriteChain: Promise<void> = Promise.resolve()
+let latestQueuedStatus: PlaybackStatus | null = null
+let persistenceDegraded = false
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+function isTerminalState(status: PlaybackStatus): boolean {
+  return status.state === 'completed' || status.state === 'cancelled' || status.state === 'failed' || status.state === 'idle'
+}
+
 function isActivePlaybackStatus(status: PlaybackStatus | null): status is PlaybackStatus {
   return status !== null
     && status.sessionId !== null
-    && status.state !== 'idle'
-    && status.state !== 'completed'
-    && status.state !== 'cancelled'
-    && status.state !== 'failed'
+    && !isTerminalState(status)
+}
+
+function withPersistenceState(status: PlaybackStatus): PlaybackStatus {
+  return persistenceDegraded ? { ...status, persistenceDegraded: true } : status
 }
 
 function interruptedPlaybackStatus(previous: PlaybackStatus, message: string): PlaybackStatus {
   return {
     ...previous,
+    sequence: previous.sequence + 1,
     state: 'failed',
+    persistenceDegraded,
     error: createPlaybackError('OFFSCREEN_INTERRUPTED', message),
   }
 }
 
+function shouldAcceptStatus(current: PlaybackStatus | null, candidate: PlaybackStatus): boolean {
+  if (!current) return true
+  if (current.sessionId === candidate.sessionId) return candidate.sequence > current.sequence
+
+  // A starting state is the coordinator's authoritative acceptance of a new
+  // session, including after an offscreen-document recreation where sequence
+  // numbering starts over.
+  if (candidate.state === 'starting') return true
+
+  // Never let a late terminal record from an older session replace a newer
+  // active session.
+  if (isActivePlaybackStatus(current)) return false
+  return true
+}
+
 async function readLastPlaybackStatus(): Promise<PlaybackStatus | null> {
   const sessionStorage = chrome.storage?.session
-  if (!sessionStorage) return null
+  if (!sessionStorage) {
+    persistenceDegraded = true
+    return latestQueuedStatus
+  }
   try {
     const stored = await sessionStorage.get(LAST_PLAYBACK_STATUS_KEY)
     const status = stored[LAST_PLAYBACK_STATUS_KEY]
-    return isPlaybackStatus(status) ? status : null
-  } catch (error) {
-    console.warn('[readit] failed to read durable playback status', error)
-    return null
+    const validated = isPlaybackStatus(status) ? status : null
+    if (validated && shouldAcceptStatus(latestQueuedStatus, validated)) latestQueuedStatus = validated
+    persistenceDegraded = false
+    return latestQueuedStatus ?? validated
+  } catch {
+    persistenceDegraded = true
+    console.warn('[readit] durable playback status read failed')
+    return latestQueuedStatus
   }
 }
 
-async function writeLastPlaybackStatus(status: PlaybackStatus): Promise<void> {
-  const sessionStorage = chrome.storage?.session
-  if (!sessionStorage) return
-  try {
-    await sessionStorage.set({ [LAST_PLAYBACK_STATUS_KEY]: status })
-  } catch (error) {
-    console.warn('[readit] failed to persist playback status', error)
-  }
+function writeLastPlaybackStatus(status: PlaybackStatus): Promise<void> {
+  if (!shouldAcceptStatus(latestQueuedStatus, status)) return statusWriteChain
+  latestQueuedStatus = status
+
+  statusWriteChain = statusWriteChain.then(async () => {
+    const sessionStorage = chrome.storage?.session
+    if (!sessionStorage) {
+      persistenceDegraded = true
+      return
+    }
+    try {
+      await sessionStorage.set({ [LAST_PLAYBACK_STATUS_KEY]: status })
+      persistenceDegraded = false
+    } catch {
+      persistenceDegraded = true
+      console.warn('[readit] durable playback status write failed')
+    }
+  })
+  return statusWriteChain
 }
 
 async function getActiveHttpTab(): Promise<chrome.tabs.Tab | null> {
@@ -109,23 +156,18 @@ async function hasOffscreenPlaybackDocument(): Promise<boolean> {
     hasDocument?: () => Promise<boolean>
   }
   if (typeof offscreenApi?.hasDocument === 'function') return await offscreenApi.hasDocument()
-  return offscreenDocumentKnown
+  throw new Error('OFFSCREEN_UNSUPPORTED')
 }
 
 async function ensureOffscreenPlaybackDocument(): Promise<void> {
-  if (!chrome.offscreen?.createDocument) throw new Error('Chrome offscreen documents are unavailable.')
-  if (await hasOffscreenPlaybackDocument()) {
-    offscreenDocumentKnown = true
-    return
-  }
+  if (!chrome.offscreen?.createDocument) throw new Error('OFFSCREEN_UNSUPPORTED')
+  if (await hasOffscreenPlaybackDocument()) return
   if (offscreenDocumentPromise) return await offscreenDocumentPromise
 
   offscreenDocumentPromise = chrome.offscreen.createDocument({
     url: OFFSCREEN_DOCUMENT_PATH,
     reasons: [chrome.offscreen.Reason.AUDIO_PLAYBACK],
     justification: OFFSCREEN_JUSTIFICATION,
-  }).then(() => {
-    offscreenDocumentKnown = true
   }).finally(() => {
     offscreenDocumentPromise = null
   })
@@ -135,19 +177,42 @@ async function ensureOffscreenPlaybackDocument(): Promise<void> {
 
 async function sendToOffscreen(message: unknown): Promise<unknown> {
   await ensureOffscreenPlaybackDocument()
-  try {
-    return await chrome.runtime.sendMessage(message)
-  } catch (error) {
-    offscreenDocumentKnown = false
-    throw error
-  }
+  return await chrome.runtime.sendMessage(message)
 }
 
-function invalidOffscreenResponse(message: string): StartPlaybackResponse {
+function invalidOffscreenResponse(message: string, requestId?: string): StartPlaybackResponse {
   return {
     ok: false,
     accepted: false,
+    ...(requestId ? { requestId } : {}),
     error: createPlaybackError('OFFSCREEN_INTERRUPTED', message),
+  }
+}
+
+function offscreenTransportError(error: unknown): ReturnType<typeof createPlaybackError> {
+  const unsupported = error instanceof Error && error.message === 'OFFSCREEN_UNSUPPORTED'
+  return createPlaybackError(
+    unsupported ? 'OFFSCREEN_UNSUPPORTED' : 'OFFSCREEN_INTERRUPTED',
+    unsupported
+      ? 'This Chrome version does not provide the required offscreen playback APIs.'
+      : 'The offscreen playback document could not be reached.',
+  )
+}
+
+async function forwardStartRequest(request: StartPlaybackRequest): Promise<StartPlaybackResponse> {
+  try {
+    const response = await sendToOffscreen(request)
+    return isStartPlaybackResponse(response)
+      ? response
+      : invalidOffscreenResponse('The offscreen playback document returned an invalid start response.', request.requestId)
+  } catch (error) {
+    console.warn('[readit] offscreen playback start transport failed')
+    return {
+      ok: false,
+      accepted: false,
+      requestId: request.requestId,
+      error: offscreenTransportError(error),
+    }
   }
 }
 
@@ -163,10 +228,9 @@ async function startPlayback(text: string, source: PlaybackSource): Promise<Star
 
   try {
     const settings = await getSettings()
-    const requestId = crypto.randomUUID()
-    const response = await sendToOffscreen({
+    return await forwardStartRequest({
       kind: START_PLAYBACK,
-      requestId,
+      requestId: crypto.randomUUID(),
       source,
       text: normalizedText,
       settings: {
@@ -175,19 +239,18 @@ async function startPlayback(text: string, source: PlaybackSource): Promise<Star
         rate: settings.rate,
       },
     })
-    return isStartPlaybackResponse(response)
-      ? response
-      : invalidOffscreenResponse('The offscreen playback document returned an invalid start response.')
-  } catch (error) {
-    console.warn('[readit] failed to start offscreen playback', error)
-    return invalidOffscreenResponse(`Unable to start offscreen playback: ${String(error)}`)
+  } catch {
+    console.warn('[readit] playback settings could not be loaded')
+    return {
+      ok: false,
+      accepted: false,
+      error: createPlaybackError('INTERNAL_PLAYBACK_ERROR', 'Playback settings could not be loaded.'),
+    }
   }
 }
 
 export async function sendToActiveTabOrInject(message: Msg): Promise<StartPlaybackResponse> {
-  if (message.kind === 'READ_TEXT') {
-    return await startPlayback(message.text, message.source ?? 'debug-fixture')
-  }
+  if (message.kind === 'READ_TEXT') return await startPlayback(message.text, message.source)
 
   try {
     const tab = await getActiveHttpTab()
@@ -207,20 +270,23 @@ export async function sendToActiveTabOrInject(message: Msg): Promise<StartPlayba
       }
     }
     return await startPlayback(selection, 'selection')
-  } catch (error) {
-    console.warn('[readit] selection capture failed', error)
+  } catch {
+    console.warn('[readit] selection capture failed')
     return {
       ok: false,
       accepted: false,
-      error: createPlaybackError('INVALID_REQUEST', `Failed to capture selection: ${String(error)}`),
+      error: createPlaybackError('INVALID_REQUEST', 'Failed to capture the selected text.'),
     }
   }
 }
 
-async function routeControl(action: PlaybackControlAction): Promise<PlaybackControlResponse> {
+async function routeControl(
+  action: PlaybackControlAction,
+  expectedSessionId?: string,
+): Promise<PlaybackControlResponse> {
   const previousStatus = await readLastPlaybackStatus()
   try {
-    const response = await sendToOffscreen({ kind: PLAYBACK_CONTROL, action })
+    const response = await sendToOffscreen({ kind: PLAYBACK_CONTROL, action, expectedSessionId })
     if (isPlaybackControlResponse(response)) {
       if (!response.ok && response.error.code === 'SESSION_NOT_FOUND' && isActivePlaybackStatus(previousStatus)) {
         const interrupted = interruptedPlaybackStatus(
@@ -240,22 +306,20 @@ async function routeControl(action: PlaybackControlAction): Promise<PlaybackCont
     if (isActivePlaybackStatus(previousStatus)) {
       const interrupted = interruptedPlaybackStatus(
         previousStatus,
-        `Playback control failed after the offscreen document was interrupted: ${String(error)}`,
+        'Playback control failed after the offscreen document was interrupted.',
       )
       await writeLastPlaybackStatus(interrupted)
       return { ok: false, error: interrupted.error! }
     }
-    return {
-      ok: false,
-      error: createPlaybackError('OFFSCREEN_INTERRUPTED', `Playback control failed: ${String(error)}`),
-    }
+    return { ok: false, error: offscreenTransportError(error) }
   }
 }
 
-function unavailablePlaybackStatus(message: string): PlaybackStatus {
+function unavailablePlaybackStatus(message: string, sequence = 0): PlaybackStatus {
   return {
     kind: PLAYBACK_STATUS,
-    state: 'idle',
+    sequence,
+    state: 'failed',
     sessionId: null,
     requestId: null,
     source: null,
@@ -263,6 +327,7 @@ function unavailablePlaybackStatus(message: string): PlaybackStatus {
     totalChunks: 0,
     currentParagraph: 0,
     totalParagraphs: 0,
+    persistenceDegraded,
     error: createPlaybackError('OFFSCREEN_INTERRUPTED', message),
   }
 }
@@ -278,23 +343,31 @@ async function queryPlaybackStatus(): Promise<PlaybackStatus> {
           'The active offscreen playback document was destroyed. Start a new reading to continue.',
         )
         await writeLastPlaybackStatus(interrupted)
-        return interrupted
+        return withPersistenceState(interrupted)
       }
       await writeLastPlaybackStatus(response)
-      return response
+      return withPersistenceState(response)
     }
+    return unavailablePlaybackStatus(
+      'The offscreen playback document returned an invalid status response.',
+      (previousStatus?.sequence ?? 0) + 1,
+    )
   } catch (error) {
-    console.warn('[readit] playback status query failed', error)
+    console.warn('[readit] playback status query failed')
     if (isActivePlaybackStatus(previousStatus)) {
       const interrupted = interruptedPlaybackStatus(
         previousStatus,
-        `The active offscreen playback document was interrupted: ${String(error)}`,
+        'The active offscreen playback document was interrupted.',
       )
       await writeLastPlaybackStatus(interrupted)
-      return interrupted
+      return withPersistenceState(interrupted)
+    }
+    const transport = offscreenTransportError(error)
+    return {
+      ...unavailablePlaybackStatus(transport.message, (previousStatus?.sequence ?? 0) + 1),
+      error: transport,
     }
   }
-  return unavailablePlaybackStatus('Playback status is unavailable.')
 }
 
 export function deriveApiSiblingUrl(ttsUrl: string, sibling: 'ping' | 'ready' | 'voices'): string | null {
@@ -313,14 +386,21 @@ export function deriveApiSiblingUrl(ttsUrl: string, sibling: 'ping' | 'ready' | 
 }
 
 async function probeTtsServer(): Promise<{ ok: boolean; status?: number; error?: string }> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
   try {
     const settings = await getSettings()
     const readyUrl = deriveApiSiblingUrl(settings.ttsUrl, 'ready')
-    if (!readyUrl) return { ok: false, error: 'invalid ttsUrl' }
-    const response = await fetch(readyUrl, { method: 'GET' })
+    if (!readyUrl) return { ok: false, error: 'The configured TTS URL is invalid.' }
+    const response = await fetch(readyUrl, { method: 'GET', signal: controller.signal })
     return { ok: response.ok, status: response.status }
   } catch (error) {
-    return { ok: false, error: String(error) }
+    return {
+      ok: false,
+      error: controller.signal.aborted ? 'The TTS readiness probe timed out.' : 'The TTS readiness probe failed.',
+    }
+  } finally {
+    clearTimeout(timeoutId)
   }
 }
 
@@ -337,11 +417,37 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     return false
   }
 
+  if (isStartPlaybackRequest(message)) {
+    void forwardStartRequest(message).then(sendResponse)
+    return true
+  }
+
+  if (isPlaybackControlRequest(message)) {
+    void routeControl(message.action, message.expectedSessionId).then(sendResponse)
+    return true
+  }
+
+  if (isPlaybackStatusRequest(message)) {
+    void queryPlaybackStatus().then(sendResponse)
+    return true
+  }
+
   if (isMsg(message)) {
     void sendToActiveTabOrInject(message).then(sendResponse)
     return true
   }
 
+  if (isRecord(message) && message.kind === 'READ_TEXT') {
+    sendResponse({
+      ok: false,
+      accepted: false,
+      error: createPlaybackError('INVALID_REQUEST', 'READ_TEXT requires text and an explicit playback source.'),
+    })
+    return true
+  }
+
+  // Temporary compatibility adapter. Popup and Options are migrated to the
+  // shared protocol in FIX2; keyboard commands are direct coordinator routes.
   if (isLegacyPlaybackControlRequest(message)) {
     if (message.kind === 'SPEECH_STATUS') void queryPlaybackStatus().then(sendResponse)
     else {
@@ -392,4 +498,5 @@ export const __testing = {
   routeControl,
   readLastPlaybackStatus,
   writeLastPlaybackStatus,
+  shouldAcceptStatus,
 }
