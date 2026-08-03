@@ -19,7 +19,10 @@ describe('consolidated FIX2 source state', () => {
 
   it('classifies Coqui readiness separately from internal submission failure', () => {
     const app = read('docker/coqui-local/app.py')
-    const tests = read('docker/coqui-local/tests/test_app.py')
+    const tests = [
+      read('docker/coqui-local/tests/test_app.py'),
+      read('docker/coqui-local/tests/test_submission_classification.py'),
+    ].join('\n')
 
     expect(app).toContain('class BackendNotReadyError(RuntimeError)')
     expect(app).toContain('except BackendNotReadyError:')
