@@ -34,7 +34,16 @@ function runHarness(childScript, { bufferStderr = false } = {}) {
   })
 }
 
-async function requireSuccessfulHarness(childScript, options = {}) {
+async function removeProfile(profileDirectory) {
+  await rm(profileDirectory, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  })
+}
+
+async function requireSuccessfulHarness(childScript, options = {}, attempt = 1) {
   const result = await runHarness(childScript, options)
   if (result.code === 0) return
 
@@ -49,16 +58,18 @@ async function requireSuccessfulHarness(childScript, options = {}) {
   if (options.bufferStderr && result.stderr) process.stderr.write(result.stderr)
   const profileMatch = combined.match(PROFILE_PATTERN)
   const completedAssertions = /"ok"\s*:\s*true/.test(result.stdout)
+
+  if (!completedAssertions && profileMatch && !result.signal && attempt === 1) {
+    await removeProfile(profileMatch[1])
+    console.log(`Retrying Chromium harness after pre-verdict profile cleanup race: ${profileMatch[1]}`)
+    return await requireSuccessfulHarness(childScript, options, attempt + 1)
+  }
+
   if (!completedAssertions || !profileMatch || result.signal) {
     throw new Error(`Chromium harness ${childScript} failed before verified cleanup recovery (code=${result.code}, signal=${result.signal ?? 'none'}).`)
   }
 
-  await rm(profileMatch[1], {
-    recursive: true,
-    force: true,
-    maxRetries: 10,
-    retryDelay: 100,
-  })
+  await removeProfile(profileMatch[1])
   console.log(`Recovered verified Chromium profile cleanup race: ${profileMatch[1]}`)
 }
 
