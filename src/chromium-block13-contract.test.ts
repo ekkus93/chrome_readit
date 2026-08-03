@@ -91,6 +91,18 @@ describe('Chromium Block 13 matrix contract', () => {
     expect(worker).toContain("if (command === 'cancel-speech') await routeControl('cancel')")
   })
 
+  it('retries a pre-verdict profile cleanup race once without converting it to success', () => {
+    const wrapper = read('scripts/run-chromium-e2e.mjs')
+
+    expect(wrapper).toContain('async function requireSuccessfulHarness(childScript, options = {}, attempt = 1)')
+    expect(wrapper).toContain('!completedAssertions && profileMatch && !result.signal && attempt === 1')
+    expect(wrapper).toContain('Retrying Chromium harness after pre-verdict profile cleanup race')
+    expect(wrapper).toContain('return await requireSuccessfulHarness(childScript, options, attempt + 1)')
+    expect(wrapper).toContain('maxRetries: 10')
+    expect(wrapper).toContain('retryDelay: 100')
+    expect(wrapper).toContain('failed before verified cleanup recovery')
+  })
+
   it('retains fail-closed player and offscreen recovery assertions', () => {
     const matrix = read('scripts/chromium-block13-e2e.mjs')
     const tail = read('scripts/chromium-block13-tail-e2e.mjs')
