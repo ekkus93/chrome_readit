@@ -1,0 +1,58 @@
+name: Temporary FIX2 Block 17 reconciliation
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/fix2-block17-reconcile.yml
+      - .github/fix2-block17-reconcile.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fix2-block17-reconciliation
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Reconcile Block 17 documentation
+        run: python .github/fix2-block17-reconcile.py
+
+      - name: Validate documentation diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -F '**Status:** `PARTIAL' docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_IMPLEMENTATION_REPORT_2026-08-02.md
+          grep -F '**Status:** Not yet executed' docs/CHROME_READIT_FIX2_LISTENING_EVIDENCE_TEMPLATE_2026-08-02.md
+          grep -F 'Run `30854518366` passed' docker/coqui-local/README.md
+          test -f docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_BLOCK17_RECONCILIATION_2026-08-03.md
+
+      - name: Commit reconciled documentation and remove temporary files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/fix2-block17-reconcile.yml .github/fix2-block17-reconcile.py
+          git add \
+            README.md \
+            docker/coqui-local/README.md \
+            docs/CHROME_READIT_PLAYBACK_HARDENING_TODO_2026-08-02.md \
+            docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_TODO_2026-08-02.md \
+            docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_IMPLEMENTATION_REPORT_2026-08-02.md \
+            docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_EVIDENCE_ADDENDUM_2026-08-03.md \
+            docs/CHROME_READIT_FIX2_EVIDENCE_INDEX_2026-08-02.md \
+            docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_BLOCK17_RECONCILIATION_2026-08-03.md
+          git diff --cached --check
+          git commit -m 'Reconcile FIX2 Block 17 documentation'
+          test -z "$(git status --short)"
+          git push origin HEAD:master
