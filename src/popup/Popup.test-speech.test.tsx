@@ -220,6 +220,7 @@ describe('Popup coordinator test speech and voice loading', () => {
     })
 
     render(<Popup />)
+    await screen.findByText(/Playback: idle/i)
     act(() => {
       getListener()?.({
         kind: PLAYBACK_EVENT,
@@ -239,7 +240,9 @@ describe('Popup coordinator test speech and voice loading', () => {
       })
     })
 
-    await userEvent.click(await screen.findByRole('button', { name: /^Pause$/i }))
+    const pauseButton = screen.getByRole('button', { name: /^Pause$/i }) as HTMLButtonElement
+    await waitFor(() => expect(pauseButton.disabled).toBe(false))
+    await userEvent.click(pauseButton)
 
     expect(sendMessage.mock.calls.some(([message]) => (
       message.kind === PLAYBACK_CONTROL
