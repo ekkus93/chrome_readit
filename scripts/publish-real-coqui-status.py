@@ -12,6 +12,7 @@ from typing import Any
 
 MARKER = "<!-- maintained by .github/workflows/real-coqui-validation.yml -->"
 WORKFLOW_NAME = "Real Coqui Validation"
+WORKFLOW_FILE = "real-coqui-validation.yml"
 
 
 def gh_json(endpoint: str) -> Any:
@@ -22,6 +23,28 @@ def gh_json(endpoint: str) -> Any:
         capture_output=True,
     )
     return json.loads(completed.stdout)
+
+
+def is_current_attempt(repo: str, run_id: int, attempt: int) -> bool:
+    latest = gh_json(
+        f"repos/{repo}/actions/workflows/{WORKFLOW_FILE}/runs?branch=master&per_page=1"
+    )
+    runs = latest.get("workflow_runs") if isinstance(latest, dict) else None
+    if not isinstance(runs, list) or not runs or not isinstance(runs[0], dict):
+        raise RuntimeError("Latest real Coqui workflow lookup returned no valid run.")
+    latest_run_id = runs[0].get("id")
+    if latest_run_id != run_id:
+        print(f"Skipping stale real Coqui run {run_id}; latest run is {latest_run_id}.")
+        return False
+
+    current = gh_json(f"repos/{repo}/actions/runs/{run_id}")
+    current_attempt = int(current.get("run_attempt") or 1)
+    if current_attempt != attempt:
+        print(
+            f"Skipping stale real Coqui attempt {attempt}; current attempt is {current_attempt}."
+        )
+        return False
+    return True
 
 
 def artifact_for_run(repo: str, run_id: int, artifact_name: str) -> dict[str, Any] | None:
@@ -38,6 +61,9 @@ def artifact_for_run(repo: str, run_id: int, artifact_name: str) -> dict[str, An
                 None,
             )
             if artifact is not None:
+                workflow_run = artifact.get("workflow_run")
+                if isinstance(workflow_run, dict) and workflow_run.get("id") not in (None, run_id):
+                    raise RuntimeError("Runtime artifact belongs to a different workflow run.")
                 return artifact
         time.sleep(2)
     return None
@@ -54,6 +80,10 @@ def main() -> None:
     attempt = int(os.environ["GITHUB_RUN_ATTEMPT"])
     sha = os.environ["GITHUB_SHA"]
     issue_number = int(os.environ.get("REAL_COQUI_STATUS_ISSUE", "3"))
+
+    if not is_current_attempt(repo, run_id, attempt):
+        return
+
     artifact_name = f"real-coqui-{run_id}-{attempt}"
     artifact = (
         artifact_for_run(repo, run_id, artifact_name)
