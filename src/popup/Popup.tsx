@@ -22,7 +22,7 @@ function isCancellable(status: PlaybackStatus | null): boolean {
 }
 
 function isPausable(status: PlaybackStatus | null): boolean {
-  return isCancellable(status) && status.state !== 'paused'
+  return status !== null && isCancellable(status) && status.state !== 'paused'
 }
 
 export default function Popup() {
