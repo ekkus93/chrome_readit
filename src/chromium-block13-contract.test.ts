@@ -9,13 +9,17 @@ function read(path: string): string {
 }
 
 describe('Chromium Block 13 matrix contract', () => {
-  it('keeps the expanded matrix in the permanent Chromium entry point', () => {
+  it('keeps the complete matrix in the permanent Chromium entry point', () => {
     const wrapper = read('scripts/run-chromium-e2e.mjs')
     const matrix = read('scripts/chromium-block13-e2e.mjs')
+    const tail = read('scripts/chromium-block13-tail-e2e.mjs')
 
     expect(wrapper).toContain("resolve(ROOT, 'scripts/chromium-e2e.mjs')")
     expect(wrapper).toContain("resolve(ROOT, 'scripts/chromium-block13-e2e.mjs')")
-    expect(wrapper).toContain('for (const childScript of CHILD_SCRIPTS)')
+    expect(wrapper).toContain("resolve(ROOT, 'scripts/chromium-block13-tail-e2e.mjs')")
+    expect(wrapper).toContain('await requireSuccessfulHarness(CORE_SCRIPT)')
+    expect(wrapper).toContain('await requireSuccessfulHarness(BLOCK13_SCRIPT')
+    expect(wrapper).toContain('await requireSuccessfulHarness(BLOCK13_TAIL_SCRIPT)')
 
     for (const scenario of [
       'rejected-audio-play-promise',
@@ -31,10 +35,18 @@ describe('Chromium Block 13 matrix contract', () => {
       'worker-restart-while-paused',
       'worker-restart-during-transition-gap',
       'pause-halfway-through-gap-preserves-remaining-delay',
-      'keyboard-global-pause-resume-cancel',
-      'offscreen-destruction-and-unique-recovery-session',
     ]) {
       expect(matrix).toContain(`'${scenario}'`)
+    }
+    for (const scenario of [
+      'registered-command-names',
+      'manifest-suggested-shortcuts',
+      'runtime-shortcut-assignment-recorded',
+      'session-global-pause-resume-cancel',
+      'offscreen-destruction-interruption-classification',
+      'unique-session-offscreen-recovery',
+    ]) {
+      expect(tail).toContain(`'${scenario}'`)
     }
   })
 
@@ -51,41 +63,44 @@ describe('Chromium Block 13 matrix contract', () => {
     expect(worker).not.toContain('BLOCK13_')
   })
 
-  it('proves registered keyboard shortcuts use session-global control routing', () => {
-    const matrix = read('scripts/chromium-block13-e2e.mjs')
+  it('classifies inactive shortcut assignment without hiding command failures', () => {
+    const wrapper = read('scripts/run-chromium-e2e.mjs')
+    const tail = read('scripts/chromium-block13-tail-e2e.mjs')
     const manifest = read('src/manifest.ts')
     const worker = read('src/background/service-worker.ts')
 
-    expect(matrix).toContain('chrome.commands.getAll()')
-    expect(matrix).toContain("['pause-speech', 'Alt+Shift+P']")
-    expect(matrix).toContain("['resume-speech', 'Alt+Shift+U']")
-    expect(matrix).toContain("['cancel-speech', 'Alt+Shift+C']")
-    expect(matrix).toContain("kind: PLAYBACK_CONTROL,\n    action: 'pause',\n  })")
-    expect(matrix).toContain("kind: PLAYBACK_CONTROL,\n    action: 'resume',\n  })")
-    expect(matrix).toContain("kind: PLAYBACK_CONTROL,\n    action: 'cancel',\n  })")
-    expect(manifest).toContain("'pause-speech'")
+    expect(wrapper).toContain('INACTIVE_SHORTCUT_BOUNDARY')
+    expect(wrapper).toContain('allowInactiveShortcutBoundary')
+    expect(wrapper).toContain('INACTIVE_SHORTCUT_BOUNDARY.test(result.stderr)')
+    expect(wrapper).toContain('!result.signal')
+    expect(tail).toContain('chrome.commands.getAll()')
+    expect(tail).toContain('if (command.shortcut)')
+    expect(tail).toContain("['pause-speech', 'Alt+Shift+P']")
+    expect(tail).toContain("['resume-speech', 'Alt+Shift+U']")
+    expect(tail).toContain("['cancel-speech', 'Alt+Shift+C']")
+    expect(tail).toContain("kind: PLAYBACK_CONTROL, action")
+    expect(tail).not.toContain('expectedSessionId')
     expect(manifest).toContain("default: 'Alt+Shift+P'")
-    expect(manifest).toContain("'resume-speech'")
     expect(manifest).toContain("default: 'Alt+Shift+U'")
-    expect(manifest).toContain("'cancel-speech'")
     expect(manifest).toContain("default: 'Alt+Shift+C'")
     expect(worker).toContain("if (command === 'pause-speech') await routeControl('pause')")
     expect(worker).toContain("if (command === 'resume-speech') await routeControl('resume')")
     expect(worker).toContain("if (command === 'cancel-speech') await routeControl('cancel')")
   })
 
-  it('retains fail-closed player and recovery assertions', () => {
+  it('retains fail-closed player and offscreen recovery assertions', () => {
     const matrix = read('scripts/chromium-block13-e2e.mjs')
+    const tail = read('scripts/chromium-block13-tail-e2e.mjs')
 
     expect(matrix).toContain("replacement.error?.code === 'AUDIO_CLEANUP_FAILED'")
     expect(matrix).toContain("replacement.error?.stage === 'pause'")
     expect(matrix).toContain('afterFailure.player.playAttemptCount === before.player.playAttemptCount')
     expect(matrix).toContain('afterFailure.player.maxActivePlayerCount <= 1')
     expect(matrix).toContain('afterFailure.player.invariantViolationCount === 0')
-    expect(matrix).toContain('diagnostics.player.activePlayerCount === 0')
-    expect(matrix).toContain('diagnostics.player.maxActivePlayerCount <= 1')
-    expect(matrix).toContain('diagnostics.player.invariantViolationCount === 0')
-    expect(matrix).toContain("response.error?.code === 'OFFSCREEN_INTERRUPTED'")
-    expect(matrix).toContain('replacement.sessionId !== start.sessionId')
+    expect(tail).toContain("interrupted.error?.code === 'OFFSCREEN_INTERRUPTED'")
+    expect(tail).toContain('recovery.sessionId !== start.sessionId')
+    expect(tail).toContain('diagnostics.player.activePlayerCount === 0')
+    expect(tail).toContain('diagnostics.player.maxActivePlayerCount <= 1')
+    expect(tail).toContain('diagnostics.player.invariantViolationCount === 0')
   })
 })
