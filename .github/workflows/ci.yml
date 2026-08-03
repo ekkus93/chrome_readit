@@ -120,6 +120,7 @@ jobs:
           set -euo pipefail
           mkdir -p reports
           xvfb-run -a npm run test:chromium 2>&1 | tee reports/chromium-e2e.log
+          xvfb-run -a npm run test:chromium-ui 2>&1 | tee -a reports/chromium-e2e.log
 
       - name: Upload Chromium diagnostic log
         if: ${{ always() && hashFiles('reports/chromium-e2e.log') != '' }}
