@@ -57,6 +57,13 @@ function shouldProtectPeriod(text: string, sentenceStart: number, index: number)
   return false
 }
 
+function isUrlQueryMarker(text: string, sentenceStart: number, index: number): boolean {
+  const candidate = text.slice(sentenceStart, index)
+  const token = candidate.slice(Math.max(candidate.lastIndexOf(' '), candidate.lastIndexOf('\n'), candidate.lastIndexOf('\t')) + 1)
+  const next = text[index + 1]
+  return /^https?:\/\/\S+$/i.test(token) && typeof next === 'string' && !/\s/.test(next)
+}
+
 function fallbackSegment(text: string): string[] {
   const trimmed = text.trim()
   if (!trimmed) return []
@@ -67,6 +74,7 @@ function fallbackSegment(text: string): string[] {
   for (let index = 0; index < trimmed.length; index += 1) {
     const value = trimmed[index]
     if (value !== '.' && value !== '!' && value !== '?') continue
+    if (value === '?' && isUrlQueryMarker(trimmed, sentenceStart, index)) continue
 
     if (value === '.') {
       let runEnd = index + 1
