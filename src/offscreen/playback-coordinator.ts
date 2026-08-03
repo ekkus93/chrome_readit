@@ -174,6 +174,7 @@ export class PlaybackCoordinator {
     if (action === 'resume') await this.resumeSession(session)
     if (action === 'cancel') await this.cancelSession(session, true)
 
+    if (session.state === 'failed' && session.error) return { ok: false, error: session.error }
     return { ok: true, sessionId: session.id, state: session.state }
   }
 
@@ -229,7 +230,11 @@ export class PlaybackCoordinator {
       try {
         await this.audio.play()
       } catch (error) {
-        throw new TtsClientError(createPlaybackError('AUDIO_PLAYBACK_FAILED', 'Audio playback could not resume.'), error)
+        this.stopAudio()
+        session.error = createPlaybackError('AUDIO_PLAYBACK_FAILED', 'Audio playback could not resume.')
+        session.state = 'failed'
+        this.emit('failed')
+        return
       }
     }
     this.emit('state-changed')
@@ -280,6 +285,15 @@ export class PlaybackCoordinator {
         voice: session.settings.voice,
         signal: controller.signal,
       })
+    } catch (error) {
+      if (error instanceof TtsClientError || error instanceof SessionInterruptedError) throw error
+      if (controller.signal.aborted || !this.isCurrent(session)) {
+        throw new SessionInterruptedError('synthesis was interrupted')
+      }
+      throw new TtsClientError(
+        createPlaybackError('TTS_FETCH_FAILED', 'The TTS request failed before audio was returned.'),
+        error,
+      )
     } finally {
       session.fetchControllers.delete(controller)
     }
@@ -372,6 +386,7 @@ export class PlaybackCoordinator {
         const chunk = session.chunks[index]
         const currentResult = await currentAudioPromise
         if (!currentResult.ok) throw currentResult.error
+        await this.waitWhilePaused(session)
         if (!this.isCurrent(session)) return
 
         const nextChunk = session.chunks[index + 1]
