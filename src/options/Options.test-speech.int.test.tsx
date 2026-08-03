@@ -3,12 +3,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { PLAYBACK_CONTROL, PLAYBACK_EVENT, PLAYBACK_STATUS } from '../lib/playback-protocol'
+import {
+  PLAYBACK_CONTROL,
+  PLAYBACK_EVENT,
+  PLAYBACK_STATUS,
+  type PlaybackStatus,
+} from '../lib/playback-protocol'
 import Options from './Options'
 
 type RuntimeListener = (message: unknown) => boolean
 
-function playbackStatus(overrides: Record<string, unknown> = {}) {
+function playbackStatus(overrides: Partial<PlaybackStatus> = {}): PlaybackStatus {
   return {
     kind: PLAYBACK_STATUS,
     sequence: 1,
@@ -31,7 +36,7 @@ function installChrome() {
     voice: 'p225',
     rate: 1,
   }
-  const sendMessage = vi.fn(async (message: Record<string, unknown>) => {
+  const sendMessage = vi.fn(async (message: Record<string, unknown>): Promise<unknown> => {
     if (message.action === 'probe-tts') return { ok: true, status: 200 }
     if (message.kind === PLAYBACK_STATUS) return playbackStatus()
     if (message.kind === 'READ_TEXT') {
@@ -110,7 +115,8 @@ describe('Options coordinator test speech', () => {
     await userEvent.type(input, 'not a url')
     expect(persisted.ttsUrl).toBe('http://localhost:5002/api/tts')
     await userEvent.click(screen.getByRole('button', { name: /Save endpoint/i }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(/valid HTTP or HTTPS/i)
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/valid HTTP or HTTPS/i)
     expect(persisted.ttsUrl).toBe('http://localhost:5002/api/tts')
 
     await userEvent.clear(input)
@@ -149,9 +155,9 @@ describe('Options coordinator test speech', () => {
   it('clears sending state when another source supersedes test speech', async () => {
     const { getListener } = installChrome()
     render(<Options />)
-    const button = await screen.findByRole('button', { name: /^Test speech$/i })
+    const button = await screen.findByRole('button', { name: /^Test speech$/i }) as HTMLButtonElement
     await userEvent.click(button)
-    expect(button).toBeDisabled()
+    expect(button.disabled).toBe(true)
 
     act(() => {
       getListener()?.({
@@ -173,7 +179,7 @@ describe('Options coordinator test speech', () => {
     })
 
     expect(await screen.findByText(/superseded by another playback request/i)).toBeTruthy()
-    expect(screen.getByRole('button', { name: /^Test speech$/i })).not.toBeDisabled()
+    expect((screen.getByRole('button', { name: /^Test speech$/i }) as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('sends expected-session controls and displays structured failures', async () => {
