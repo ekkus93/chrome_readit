@@ -17,19 +17,23 @@ export function deriveVoicesUrl(ttsUrl: string): string | null {
   }
 }
 
+function extractVoiceNames(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object' || !('voices' in payload)) return []
+  const voices = (payload as { voices?: unknown }).voices
+  if (!Array.isArray(voices)) return []
+  return voices.filter((voice): voice is string => typeof voice === 'string' && voice.trim().length > 0)
+}
+
 export async function fetchServerVoices(ttsUrl: string): Promise<VoiceOption[]> {
   try {
     const voicesUrl = deriveVoicesUrl(ttsUrl)
     if (!voicesUrl) return []
     const res = await fetch(voicesUrl, { method: 'GET' })
     if (!res.ok) return []
-    const js = await res.json().catch(() => null)
-    if (!js || !Array.isArray(js.voices)) return []
-
-    const uniqueVoices = [...new Set(js.voices.filter((voice): voice is string => typeof voice === 'string' && voice.trim().length > 0))]
+    const payload: unknown = await res.json().catch(() => null)
+    const uniqueVoices = [...new Set(extractVoiceNames(payload))]
     return uniqueVoices.map((voice) => ({ name: voice, label: voice }))
-  } catch (e) {
-    void e
+  } catch {
     return []
   }
 }
