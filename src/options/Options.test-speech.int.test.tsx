@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PLAYBACK_EVENT, PLAYBACK_STATUS } from '../lib/playback-protocol'
 import Options from './Options'
@@ -55,6 +55,11 @@ describe('Options coordinator test speech', () => {
     }))
   })
 
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
+
   it('persists the selected voice and routes test speech without local Audio', async () => {
     const { persisted, sendMessage } = installChrome()
     const audioConstructor = vi.fn()
@@ -81,24 +86,26 @@ describe('Options coordinator test speech', () => {
     render(<Options />)
     await userEvent.click(await screen.findByRole('button', { name: /^Test speech$/i }))
 
-    getListener()?.({
-      kind: PLAYBACK_EVENT,
-      event: 'completed',
-      atMs: 1,
-      status: {
-        kind: PLAYBACK_STATUS,
-        state: 'completed',
-        sessionId: 'session-1',
-        requestId: 'request-1',
-        source: 'options-test',
-        currentChunk: 1,
-        totalChunks: 1,
-        currentParagraph: 1,
-        totalParagraphs: 1,
-      },
+    act(() => {
+      getListener()?.({
+        kind: PLAYBACK_EVENT,
+        event: 'completed',
+        atMs: 1,
+        status: {
+          kind: PLAYBACK_STATUS,
+          state: 'completed',
+          sessionId: 'session-1',
+          requestId: 'request-1',
+          source: 'options-test',
+          currentChunk: 1,
+          totalChunks: 1,
+          currentParagraph: 1,
+          totalParagraphs: 1,
+        },
+      })
     })
 
-    expect(await screen.findByText(/Completed/i)).toBeTruthy()
+    expect(await screen.findByText(/^Completed$/)).toBeTruthy()
   })
 
   it('tests server health without synthesizing audio', async () => {
