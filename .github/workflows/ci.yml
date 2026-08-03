@@ -179,7 +179,7 @@ jobs:
           python scripts/check_python_coverage.py
 
       - name: Upload Python coverage evidence
-        if: ${{ always() }}
+        if: ${{ always() && hashFiles('reports/coqui-coverage.json') != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: python-coverage-${{ github.run_id }}-${{ github.run_attempt }}
