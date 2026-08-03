@@ -13,6 +13,7 @@ import {
   isStartPlaybackResponse,
   type PlaybackControlAction,
   type PlaybackControlResponse,
+  type PlaybackEvent,
   type PlaybackSource,
   type PlaybackStatus,
   type StartPlaybackRequest,
@@ -27,6 +28,7 @@ const OFFSCREEN_JUSTIFICATION = 'Play selected text audio in an extension-owned 
 const LAST_PLAYBACK_STATUS_KEY = 'readitLastPlaybackStatus'
 const PROBE_TIMEOUT_MS = 5_000
 const DIAGNOSTICS_ENABLED = typeof __READIT_E2E__ !== 'undefined' && __READIT_E2E__
+const MAX_DIAGNOSTIC_EVENTS = 200
 
 type ActivePlaybackStatus = PlaybackStatus & {
   sessionId: string
@@ -34,13 +36,42 @@ type ActivePlaybackStatus = PlaybackStatus & {
   source: PlaybackSource
 }
 
+type PlayerDiagnosticsSnapshot = {
+  activePlayerCount: number
+  maxActivePlayerCount: number
+  playAttemptCount: number
+  successfulPlayStartCount: number
+  settlementCount: number
+  cleanupFailureCount: number
+  lastCleanupFailureStage: string | null
+  invariantViolationCount: number
+}
+
 let offscreenDocumentPromise: Promise<void> | null = null
 let statusWriteChain: Promise<void> = Promise.resolve()
 let latestQueuedStatus: PlaybackStatus | null = null
 let persistenceDegraded = false
+const diagnosticEvents: PlaybackEvent[] = []
+let latestPlayerDiagnostics: PlayerDiagnosticsSnapshot | null = null
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
+
+function isPlayerDiagnostics(value: unknown): value is PlayerDiagnosticsSnapshot {
+  if (!isRecord(value)) return false
+  return isNonNegativeInteger(value.activePlayerCount)
+    && isNonNegativeInteger(value.maxActivePlayerCount)
+    && isNonNegativeInteger(value.playAttemptCount)
+    && isNonNegativeInteger(value.successfulPlayStartCount)
+    && isNonNegativeInteger(value.settlementCount)
+    && isNonNegativeInteger(value.cleanupFailureCount)
+    && (value.lastCleanupFailureStage === null || typeof value.lastCleanupFailureStage === 'string')
+    && isNonNegativeInteger(value.invariantViolationCount)
 }
 
 function isTerminalStatus(status: PlaybackStatus): boolean {
@@ -348,6 +379,14 @@ async function probeTtsServer(): Promise<{ ok: boolean; status?: number; error?:
 
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
   if (isPlaybackEvent(message)) {
+    if (DIAGNOSTICS_ENABLED) {
+      diagnosticEvents.push(message)
+      if (diagnosticEvents.length > MAX_DIAGNOSTIC_EVENTS) {
+        diagnosticEvents.splice(0, diagnosticEvents.length - MAX_DIAGNOSTIC_EVENTS)
+      }
+      const player = (message as PlaybackEvent & { player?: unknown }).player
+      if (isPlayerDiagnostics(player)) latestPlayerDiagnostics = player
+    }
     void writeLastPlaybackStatus(message.status)
     return false
   }
@@ -364,9 +403,14 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     return true
   }
   if (DIAGNOSTICS_ENABLED && isRecord(message) && message.kind === 'PLAYBACK_DIAGNOSTICS') {
-    void sendToOffscreen({ kind: 'PLAYBACK_DIAGNOSTICS_OFFSCREEN' })
-      .then(sendResponse)
-      .catch(() => sendResponse({ ok: false, error: 'Playback diagnostics transport failed.' }))
+    sendResponse(latestPlayerDiagnostics
+      ? {
+          ok: true,
+          status: latestQueuedStatus,
+          events: [...diagnosticEvents],
+          player: { ...latestPlayerDiagnostics },
+        }
+      : { ok: false, error: 'No playback diagnostics have been observed.' })
     return true
   }
   if (isMsg(message)) {
