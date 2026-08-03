@@ -3,10 +3,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { PLAYBACK_EVENT, PLAYBACK_STATUS } from '../lib/playback-protocol'
+import { PLAYBACK_CONTROL, PLAYBACK_EVENT, PLAYBACK_STATUS } from '../lib/playback-protocol'
 import Options from './Options'
 
 type RuntimeListener = (message: unknown) => boolean
+
+function playbackStatus(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: PLAYBACK_STATUS,
+    sequence: 1,
+    state: 'idle',
+    sessionId: null,
+    requestId: null,
+    source: null,
+    currentChunk: 0,
+    totalChunks: 0,
+    currentParagraph: 0,
+    totalParagraphs: 0,
+    ...overrides,
+  }
+}
 
 function installChrome() {
   let listener: RuntimeListener | undefined
@@ -17,10 +33,14 @@ function installChrome() {
   }
   const sendMessage = vi.fn(async (message: Record<string, unknown>) => {
     if (message.action === 'probe-tts') return { ok: true, status: 200 }
+    if (message.kind === PLAYBACK_STATUS) return playbackStatus()
     if (message.kind === 'READ_TEXT') {
       return { ok: true, accepted: true, requestId: 'request-1', sessionId: 'session-1' }
     }
-    return { ok: true }
+    if (message.kind === PLAYBACK_CONTROL) {
+      return { ok: true, sessionId: message.expectedSessionId ?? null, state: message.action === 'pause' ? 'paused' : 'playing' }
+    }
+    return { ok: false }
   })
   ;(globalThis as unknown as { chrome: unknown }).chrome = {
     runtime: {
@@ -60,7 +80,7 @@ describe('Options coordinator test speech', () => {
     vi.unstubAllGlobals()
   })
 
-  it('persists the selected voice and routes test speech without local Audio', async () => {
+  it('persists the selected voice only after storage succeeds and routes test speech without local Audio', async () => {
     const { persisted, sendMessage } = installChrome()
     const audioConstructor = vi.fn()
     vi.stubGlobal('Audio', audioConstructor)
@@ -81,6 +101,24 @@ describe('Options coordinator test speech', () => {
     expect(audioConstructor).not.toHaveBeenCalled()
   })
 
+  it('does not persist malformed endpoint drafts and saves a valid endpoint explicitly', async () => {
+    const { persisted } = installChrome()
+    render(<Options />)
+    const input = await screen.findByLabelText(/TTS synthesis endpoint/i)
+
+    await userEvent.clear(input)
+    await userEvent.type(input, 'not a url')
+    expect(persisted.ttsUrl).toBe('http://localhost:5002/api/tts')
+    await userEvent.click(screen.getByRole('button', { name: /Save endpoint/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/valid HTTP or HTTPS/i)
+    expect(persisted.ttsUrl).toBe('http://localhost:5002/api/tts')
+
+    await userEvent.clear(input)
+    await userEvent.type(input, 'https://example.com/api/tts')
+    await userEvent.click(screen.getByRole('button', { name: /Save endpoint/i }))
+    await waitFor(() => expect(persisted.ttsUrl).toBe('https://example.com/api/tts'))
+  })
+
   it('shows completion from the shared playback event stream', async () => {
     const { getListener } = installChrome()
     render(<Options />)
@@ -91,8 +129,8 @@ describe('Options coordinator test speech', () => {
         kind: PLAYBACK_EVENT,
         event: 'completed',
         atMs: 1,
-        status: {
-          kind: PLAYBACK_STATUS,
+        status: playbackStatus({
+          sequence: 3,
           state: 'completed',
           sessionId: 'session-1',
           requestId: 'request-1',
@@ -101,11 +139,77 @@ describe('Options coordinator test speech', () => {
           totalChunks: 1,
           currentParagraph: 1,
           totalParagraphs: 1,
-        },
+        }),
       })
     })
 
     expect(await screen.findByText(/^Completed$/)).toBeTruthy()
+  })
+
+  it('clears sending state when another source supersedes test speech', async () => {
+    const { getListener } = installChrome()
+    render(<Options />)
+    const button = await screen.findByRole('button', { name: /^Test speech$/i })
+    await userEvent.click(button)
+    expect(button).toBeDisabled()
+
+    act(() => {
+      getListener()?.({
+        kind: PLAYBACK_EVENT,
+        event: 'accepted',
+        atMs: 2,
+        status: playbackStatus({
+          sequence: 4,
+          state: 'starting',
+          sessionId: 'replacement',
+          requestId: 'request-2',
+          source: 'selection',
+          currentChunk: 1,
+          totalChunks: 1,
+          currentParagraph: 1,
+          totalParagraphs: 1,
+        }),
+      })
+    })
+
+    expect(await screen.findByText(/superseded by another playback request/i)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^Test speech$/i })).not.toBeDisabled()
+  })
+
+  it('sends expected-session controls and displays structured failures', async () => {
+    const { sendMessage, getListener } = installChrome()
+    render(<Options />)
+    act(() => {
+      getListener()?.({
+        kind: PLAYBACK_EVENT,
+        event: 'state-changed',
+        atMs: 1,
+        status: playbackStatus({
+          sequence: 2,
+          state: 'playing',
+          sessionId: 'session-active',
+          requestId: 'request-active',
+          source: 'selection',
+          currentChunk: 1,
+          totalChunks: 1,
+          currentParagraph: 1,
+          totalParagraphs: 1,
+        }),
+      })
+    })
+
+    sendMessage.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'SESSION_NOT_FOUND', message: 'The displayed session is stale.' },
+    })
+    await userEvent.click(await screen.findByRole('button', { name: /^Pause$/i }))
+
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      kind: PLAYBACK_CONTROL,
+      action: 'pause',
+      expectedSessionId: 'session-active',
+    })
+    expect(await screen.findByText(/displayed session is stale/i)).toBeTruthy()
   })
 
   it('tests server health without synthesizing audio', async () => {
@@ -117,6 +221,6 @@ describe('Options coordinator test speech', () => {
 
     expect(sendMessage).toHaveBeenCalledWith({ action: 'probe-tts' })
     expect(fetchMock.mock.calls.every(([url]) => !String(url).endsWith('/api/tts'))).toBe(true)
-    expect(await screen.findByText(/Server reachable/i)).toBeTruthy()
+    expect(await screen.findByText(/Server accepting requests/i)).toBeTruthy()
   })
 })
