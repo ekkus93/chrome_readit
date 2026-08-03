@@ -1,0 +1,123 @@
+name: FIX2 One-Shot Consolidation
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/fix2-one-shot-consolidate.yml
+
+permissions:
+  contents: write
+
+jobs:
+  consolidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout latest master
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Wait for guarded patches
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 90); do
+            git fetch origin master
+            git reset --hard origin/master
+            if python <<'PY'
+          from pathlib import Path
+
+          checks = {
+              'street continuation': (
+                  Path('src/lib/text-segmentation.ts'),
+                  'if (isLowercaseLetter(nextCharacter)) return true',
+              ),
+              'Coqui not-ready type': (
+                  Path('docker/coqui-local/app.py'),
+                  'class BackendNotReadyError(RuntimeError)',
+              ),
+              'Coqui endpoint regression': (
+                  Path('docker/coqui-local/tests/test_app.py'),
+                  'test_executor_submit_failure_is_internal_not_not_ready',
+              ),
+              'legacy adapter removal': (
+                  Path('src/background/service-worker.ts'),
+                  'isLegacyPlaybackControlRequest',
+                  False,
+              ),
+              'legacy message removal': (
+                  Path('src/lib/messaging.ts'),
+                  'SPEECH_STATUS',
+                  False,
+              ),
+              'legacy hygiene guard': (
+                  Path('scripts/check-fix2-hygiene.sh'),
+                  'chrome-readit-legacy-protocol.txt',
+              ),
+              'real harness root': (
+                  Path('scripts/validate-real-coqui.sh'),
+                  'cd "${ROOT_DIR}"',
+              ),
+              'real harness exact image': (
+                  Path('scripts/validate-real-coqui.sh'),
+                  'images -q coqui-local',
+              ),
+              'publisher attempt guard': (
+                  Path('.github/workflows/publish-ci-status.yml'),
+                  'current_attempt != run_attempt',
+              ),
+          }
+
+          missing = []
+          for name, check in checks.items():
+              path, needle, *expected_parts = check
+              expected = expected_parts[0] if expected_parts else True
+              present = needle in path.read_text()
+              if present is not expected:
+                  missing.append(name)
+          if missing:
+              raise SystemExit(', '.join(missing))
+          PY
+            then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'Guarded FIX2 patches did not converge.' >&2
+          exit 1
+
+      - name: Remove every temporary workflow
+        run: rm -f .github/workflows/fix2-one-shot-*.yml
+
+      - name: Run combined automated gates
+        run: |
+          set -euo pipefail
+          npm ci
+          bash scripts/check-fix2-hygiene.sh
+          npm run lint
+          npm run typecheck
+          npx vitest --run --coverage \
+            --coverage.thresholds.lines=80 \
+            --coverage.thresholds.functions=80 \
+            --coverage.thresholds.statements=80 \
+            --coverage.thresholds.branches=70
+          python -m pip install --disable-pip-version-check -r docker/coqui-local/requirements-test.txt
+          python -m pytest -q docker/coqui-local/tests
+          bash -n scripts/validate-real-coqui.sh
+          docker compose -f docker/docker-compose.yml config >/tmp/chrome-readit-compose.yml
+          grep -q 'host_ip: 127.0.0.1' /tmp/chrome-readit-compose.yml
+
+      - name: Commit clean consolidated state
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A .github/workflows
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Remove completed FIX2 patch workflows"
+          git pull --rebase origin master
+          git push origin HEAD:master
