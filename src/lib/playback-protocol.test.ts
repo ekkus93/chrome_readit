@@ -16,6 +16,7 @@ import {
 
 const playingStatus = {
   kind: PLAYBACK_STATUS,
+  sequence: 7,
   state: 'playing',
   sessionId: 'session-1',
   requestId: 'request-1',
@@ -85,11 +86,22 @@ describe('playback protocol guards', () => {
     expect(isPlaybackStatusRequest({ kind: PLAYBACK_STATUS })).toBe(true)
     expect(isPlaybackStatusRequest({ kind: 'SPEECH_STATUS' })).toBe(false)
     expect(isPlaybackStatus(playingStatus)).toBe(true)
+    expect(isPlaybackStatus({ ...playingStatus, sequence: -1 })).toBe(false)
     expect(isPlaybackStatus({ ...playingStatus, currentChunk: -1 })).toBe(false)
+    expect(isPlaybackStatus({ ...playingStatus, currentChunk: 3 })).toBe(false)
+    expect(isPlaybackStatus({ ...playingStatus, currentParagraph: 2 })).toBe(false)
     expect(isPlaybackStatus({ ...playingStatus, source: 'unknown' })).toBe(false)
+    expect(isPlaybackStatus({ ...playingStatus, sessionId: null })).toBe(false)
+    expect(isPlaybackStatus({ ...playingStatus, error: { code: 'TTS_FETCH_FAILED', message: 'bad' } })).toBe(false)
+    expect(isPlaybackStatus({ ...playingStatus, state: 'failed' })).toBe(false)
+    expect(isPlaybackStatus({
+      ...playingStatus,
+      state: 'failed',
+      error: { code: 'TTS_FETCH_FAILED', message: 'bad' },
+    })).toBe(true)
   })
 
-  it('validates playback events', () => {
+  it('validates chunk event optional fields and state consistency', () => {
     expect(isPlaybackEvent({
       kind: PLAYBACK_EVENT,
       event: 'chunk-started',
@@ -100,9 +112,82 @@ describe('playback protocol guards', () => {
     })).toBe(true)
     expect(isPlaybackEvent({
       kind: PLAYBACK_EVENT,
-      event: 'unknown',
+      event: 'chunk-started',
       atMs: 123,
       status: playingStatus,
+    })).toBe(false)
+    expect(isPlaybackEvent({
+      kind: PLAYBACK_EVENT,
+      event: 'chunk-ended',
+      atMs: 123,
+      status: playingStatus,
+      chunkId: 1,
+      transition: 'sentence',
+    })).toBe(false)
+    expect(isPlaybackEvent({
+      kind: PLAYBACK_EVENT,
+      event: 'chunk-ended',
+      atMs: 123,
+      status: playingStatus,
+      chunkId: 'session-1:0',
+      transition: 'unknown',
+    })).toBe(false)
+    expect(isPlaybackEvent({
+      kind: PLAYBACK_EVENT,
+      event: 'completed',
+      atMs: 123,
+      status: playingStatus,
+    })).toBe(false)
+    expect(isPlaybackEvent({
+      kind: PLAYBACK_EVENT,
+      event: 'accepted',
+      atMs: 123,
+      status: playingStatus,
+      chunkId: 'not-allowed',
+    })).toBe(false)
+  })
+
+  it('validates superseded and terminal events', () => {
+    const superseded = {
+      ...playingStatus,
+      state: 'cancelled',
+      error: { code: 'SESSION_SUPERSEDED', message: 'superseded' },
+    } as const
+    expect(isPlaybackEvent({
+      kind: PLAYBACK_EVENT,
+      event: 'superseded',
+      atMs: 124,
+      status: superseded,
+    })).toBe(true)
+    expect(isPlaybackEvent({
+      kind: PLAYBACK_EVENT,
+      event: 'cancelled',
+      atMs: 124,
+      status: superseded,
+    })).toBe(true)
+    expect(isPlaybackEvent({
+      kind: PLAYBACK_EVENT,
+      event: 'superseded',
+      atMs: 124,
+      status: { ...superseded, error: { code: 'CANCELLED', message: 'cancelled' } },
+    })).toBe(false)
+  })
+
+  it('requires cleanup stage only for cleanup errors', () => {
+    expect(createPlaybackError('AUDIO_CLEANUP_FAILED', 'Unable to clear source.', undefined, 'clear-source')).toEqual({
+      code: 'AUDIO_CLEANUP_FAILED',
+      message: 'Unable to clear source.',
+      stage: 'clear-source',
+    })
+    expect(isPlaybackStatus({
+      ...playingStatus,
+      state: 'failed',
+      error: { code: 'AUDIO_CLEANUP_FAILED', message: 'failed' },
+    })).toBe(false)
+    expect(isPlaybackStatus({
+      ...playingStatus,
+      state: 'failed',
+      error: { code: 'TTS_FETCH_FAILED', message: 'failed', stage: 'pause' },
     })).toBe(false)
   })
 
