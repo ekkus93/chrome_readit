@@ -27,6 +27,8 @@ const OFFSCREEN_DOCUMENT_PATH = 'src/offscreen.html'
 const OFFSCREEN_JUSTIFICATION = 'Play selected text audio in an extension-owned document.'
 const LAST_PLAYBACK_STATUS_KEY = 'readitLastPlaybackStatus'
 const PROBE_TIMEOUT_MS = 5_000
+const OFFSCREEN_READY_TIMEOUT_MS = 2_000
+const OFFSCREEN_READY_POLL_MS = 25
 const DIAGNOSTICS_ENABLED = typeof __READIT_E2E__ !== 'undefined' && __READIT_E2E__
 const MAX_DIAGNOSTIC_EVENTS = 200
 const DIAGNOSTICS_START_TIMEOUT_MS = 2_000
@@ -96,6 +98,10 @@ function waitForInitialDiagnostics(timeoutMs = DIAGNOSTICS_START_TIMEOUT_MS): Pr
     }, timeoutMs)
     diagnosticSnapshotWaiters.add(onSnapshot)
   })
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 function isTerminalStatus(status: PlaybackStatus): boolean {
@@ -224,8 +230,23 @@ async function ensureOffscreenPlaybackDocument(): Promise<void> {
   await offscreenDocumentPromise
 }
 
+async function waitForOffscreenReady(timeoutMs = OFFSCREEN_READY_TIMEOUT_MS): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const response = await chrome.runtime.sendMessage({ kind: PLAYBACK_STATUS })
+      if (isPlaybackStatus(response)) return
+    } catch {
+      // The document context may exist before its runtime listener is installed.
+    }
+    await delay(OFFSCREEN_READY_POLL_MS)
+  }
+  throw new Error('OFFSCREEN_NOT_READY')
+}
+
 async function sendToOffscreen(message: unknown): Promise<unknown> {
   await ensureOffscreenPlaybackDocument()
+  await waitForOffscreenReady()
   return await chrome.runtime.sendMessage(message)
 }
 
@@ -383,6 +404,7 @@ async function queryPlaybackStatus(): Promise<PlaybackStatus> {
 async function queryPlaybackDiagnostics() {
   try {
     await ensureOffscreenPlaybackDocument()
+    await waitForOffscreenReady()
     await waitForInitialDiagnostics()
   } catch (error) {
     return { ok: false as const, error: offscreenTransportError(error).message }
@@ -489,6 +511,7 @@ chrome.contextMenus?.onClicked?.addListener(async (info) => {
 
 export const __testing = {
   ensureOffscreenPlaybackDocument,
+  waitForOffscreenReady,
   queryPlaybackDiagnostics,
   queryPlaybackStatus,
   routeControl,
