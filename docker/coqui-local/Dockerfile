@@ -1,42 +1,45 @@
-FROM python:3.11-slim
-
-# Allow selecting the Coqui model at build time (default to a multi-speaker VITS)
-ARG COQUI_MODEL=tts_models/en/vctk/vits
-ENV COQUI_MODEL=${COQUI_MODEL}
+FROM python:3.11-slim AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        build-essential git ffmpeg libsndfile1 pulseaudio-utils alsa-utils espeak-ng && \
+    apt-get install -y --no-install-recommends build-essential git && \
     rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
 
+WORKDIR /build
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Pre-warm the Coqui TTS model at build time so the image already contains
-# the downloaded weights. This makes the image larger but avoids long first-run
-# downloads when the container starts. You can override the model at build
-# time with: docker build --build-arg COQUI_MODEL=tts_models/en/ljspeech/tacotron2-DDC .
-RUN python - <<PY
-import os
-model = os.environ.get('COQUI_MODEL')
-if model:
-    try:
-        print('Pre-downloading Coqui model:', model)
-        from TTS.api import TTS
-        # progress_bar=False avoids interactive download output during build
-        TTS(model_name=model, progress_bar=False, gpu=False)
-        print('Model download complete')
-    except Exception as e:
-        print('Warning: model pre-download failed:', e)
-PY
 
-COPY app.py ./
-COPY README.md ./
+FROM python:3.11-slim AS runtime
 
+ENV DEBIAN_FRONTEND=noninteractive \
+    PATH="/opt/venv/bin:${PATH}" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    TTS_HOME=/home/readit/.local/share/tts \
+    XDG_DATA_HOME=/home/readit/.local/share
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg libsndfile1 espeak-ng && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd --create-home --uid 10001 --shell /usr/sbin/nologin readit && \
+    mkdir -p /home/readit/.local/share/tts && \
+    chown -R readit:readit /home/readit
+
+COPY --from=builder /opt/venv /opt/venv
+
+WORKDIR /app
+COPY --chown=readit:readit app.py README.md ./
+
+USER readit
 EXPOSE 5002
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5002", "--workers", "1"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5m --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5002/api/ready', timeout=4)" || exit 1
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5002", "--workers", "1", "--no-access-log"]
