@@ -15,7 +15,7 @@
     "build:e2e": "vite build --mode test",
     "preview": "vite build && vite preview",
     "test": "vitest run",
-    "test:chromium": "node scripts/chromium-e2e.mjs",
+    "test:chromium": "node scripts/run-chromium-e2e.mjs",
     "test:chromium-ui": "node scripts/chromium-ui-e2e.mjs"
   },
   "dependencies": {
