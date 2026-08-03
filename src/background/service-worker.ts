@@ -9,7 +9,9 @@ import {
   PLAYBACK_STATUS,
   START_PLAYBACK,
   createPlaybackError,
+  isPlaybackControlResponse,
   isPlaybackStatus,
+  isStartPlaybackResponse,
   type PlaybackControlAction,
   type PlaybackControlResponse,
   type PlaybackSource,
@@ -101,22 +103,6 @@ function invalidOffscreenResponse(message: string): StartPlaybackResponse {
   }
 }
 
-function parseStartResponse(value: unknown): StartPlaybackResponse | null {
-  if (!isRecord(value) || typeof value.ok !== 'boolean' || typeof value.accepted !== 'boolean') return null
-  if (value.ok && value.accepted && typeof value.requestId === 'string' && typeof value.sessionId === 'string') {
-    return {
-      ok: true,
-      accepted: true,
-      requestId: value.requestId,
-      sessionId: value.sessionId,
-    }
-  }
-  if (!value.ok && !value.accepted && isRecord(value.error) && typeof value.error.code === 'string' && typeof value.error.message === 'string') {
-    return value as StartPlaybackResponse
-  }
-  return null
-}
-
 async function startPlayback(text: string, source: PlaybackSource): Promise<StartPlaybackResponse> {
   const normalizedText = text.trim()
   if (!normalizedText) {
@@ -141,8 +127,9 @@ async function startPlayback(text: string, source: PlaybackSource): Promise<Star
         rate: settings.rate,
       },
     })
-    return parseStartResponse(response)
-      ?? invalidOffscreenResponse('The offscreen playback document returned an invalid start response.')
+    return isStartPlaybackResponse(response)
+      ? response
+      : invalidOffscreenResponse('The offscreen playback document returned an invalid start response.')
   } catch (error) {
     console.warn('[readit] failed to start offscreen playback', error)
     return invalidOffscreenResponse(`Unable to start offscreen playback: ${String(error)}`)
@@ -185,7 +172,7 @@ export async function sendToActiveTabOrInject(message: Msg): Promise<StartPlayba
 async function routeControl(action: PlaybackControlAction): Promise<PlaybackControlResponse> {
   try {
     const response = await sendToOffscreen({ kind: PLAYBACK_CONTROL, action })
-    if (isRecord(response) && typeof response.ok === 'boolean') return response as PlaybackControlResponse
+    if (isPlaybackControlResponse(response)) return response
     return {
       ok: false,
       error: createPlaybackError('OFFSCREEN_INTERRUPTED', 'The offscreen document returned an invalid control response.'),
@@ -237,9 +224,9 @@ export function deriveApiSiblingUrl(ttsUrl: string, sibling: 'ping' | 'ready' | 
 async function probeTtsServer(): Promise<{ ok: boolean; status?: number; error?: string }> {
   try {
     const settings = await getSettings()
-    const pingUrl = deriveApiSiblingUrl(settings.ttsUrl, 'ping')
-    if (!pingUrl) return { ok: false, error: 'invalid ttsUrl' }
-    const response = await fetch(pingUrl, { method: 'GET' })
+    const readyUrl = deriveApiSiblingUrl(settings.ttsUrl, 'ready')
+    if (!readyUrl) return { ok: false, error: 'invalid ttsUrl' }
+    const response = await fetch(readyUrl, { method: 'GET' })
     return { ok: response.ok, status: response.status }
   } catch (error) {
     return { ok: false, error: String(error) }
