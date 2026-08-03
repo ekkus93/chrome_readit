@@ -1,0 +1,67 @@
+name: FIX2 Direct Legacy Adapter Cleanup
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/fix2-direct-legacy-cleanup.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout current master
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Remove the retired service-worker adapter
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path('src/background/service-worker.ts')
+          text = path.read_text()
+          text = text.replace(
+              "import {\n  isLegacyPlaybackControlRequest,\n  isMsg,\n  type Msg,\n} from '../lib/messaging'",
+              "import { isMsg, type Msg } from '../lib/messaging'",
+              1,
+          )
+          block = """  if (isLegacyPlaybackControlRequest(message)) {
+            if (message.kind === 'SPEECH_STATUS') void queryPlaybackStatus().then(sendResponse)
+            else {
+              const action: PlaybackControlAction = message.kind === 'PAUSE_SPEECH'
+                ? 'pause'
+                : message.kind === 'RESUME_SPEECH'
+                  ? 'resume'
+                  : 'cancel'
+              void routeControl(action).then(sendResponse)
+            }
+            return true
+          }
+          """
+          if block not in text:
+              raise SystemExit('retired adapter block was not found exactly once')
+          text = text.replace(block, '', 1)
+          forbidden = ('isLegacyPlaybackControlRequest', 'SPEECH_STATUS', 'PAUSE_SPEECH', 'RESUME_SPEECH', 'CANCEL_SPEECH')
+          remaining = [name for name in forbidden if name in text]
+          if remaining:
+              raise SystemExit(f'retired names remain: {remaining}')
+          path.write_text(text)
+          PY
+
+      - name: Commit cleanup and remove this workflow
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/fix2-direct-legacy-cleanup.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/background/service-worker.ts .github/workflows/fix2-direct-legacy-cleanup.yml
+          git commit -m "Remove retired service-worker playback adapter"
+          git pull --rebase origin master
+          git push origin HEAD:master
