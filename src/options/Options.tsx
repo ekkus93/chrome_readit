@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { DEBUG_PARAGRAPH_FIXTURE } from '../lib/debug-fixtures'
-import { isPlaybackEvent } from '../lib/playback-protocol'
+import {
+  isPlaybackEvent,
+  isPlaybackStatus,
+  type PlaybackStatus,
+} from '../lib/playback-protocol'
 import { DEFAULT_SETTINGS, DEFAULT_TTS_URL, getSettings, saveSettings, type Settings } from '../lib/storage'
 import { fetchServerVoices, type VoiceOption } from '../lib/voices'
 
@@ -20,6 +24,7 @@ export default function Options() {
   const [testText, setTestText] = useState('Hello — this is a quick test of Read It.')
   const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
   const [testError, setTestError] = useState<string | null>(null)
+  const [playbackStatus, setPlaybackStatus] = useState<PlaybackStatus | null>(null)
   const [ttsUrl, setTtsUrl] = useState(DEFAULT_SETTINGS.ttsUrl)
   const [voicesList, setVoicesList] = useState<VoiceOption[]>([])
   const [serverHealth, setServerHealth] = useState<'unknown' | 'ok' | 'error'>('unknown')
@@ -73,21 +78,37 @@ export default function Options() {
   }, [ttsUrl])
 
   useEffect(() => {
-    const listener = (message: unknown) => {
-      if (!isPlaybackEvent(message) || message.status.source !== 'options-test') return false
-      if (message.event === 'completed') {
+    let mounted = true
+    const applyStatus = (status: PlaybackStatus) => {
+      if (!mounted) return
+      setPlaybackStatus(status)
+      if (status.source !== 'options-test') return
+      if (status.state === 'completed') {
         setTestStatus('ok')
         setTestError(null)
-      } else if (message.event === 'failed' || message.event === 'cancelled') {
+      } else if (status.state === 'failed' || status.state === 'cancelled') {
         setTestStatus('error')
-        setTestError(message.status.error?.message ?? 'Test speech failed or was cancelled.')
-      } else {
+        setTestError(status.error?.message ?? 'Test speech failed or was cancelled.')
+      } else if (status.state !== 'idle') {
         setTestStatus('sending')
+        setTestError(null)
       }
+    }
+
+    const listener = (message: unknown) => {
+      if (!isPlaybackEvent(message)) return false
+      applyStatus(message.status)
       return false
     }
     chrome.runtime.onMessage.addListener(listener)
-    return () => chrome.runtime.onMessage.removeListener?.(listener)
+    void chrome.runtime.sendMessage({ kind: 'SPEECH_STATUS' }).then((response) => {
+      if (isPlaybackStatus(response)) applyStatus(response)
+    }).catch(() => undefined)
+
+    return () => {
+      mounted = false
+      chrome.runtime.onMessage.removeListener?.(listener)
+    }
   }, [])
 
   const voiceOptions = useMemo(() => {
@@ -172,6 +193,13 @@ export default function Options() {
           <button onClick={() => sendControl('CANCEL_SPEECH')} style={{ padding: '6px 10px' }}>Stop</button>
           {showDebugFixture && <button onClick={handleDebugFixture} style={{ padding: '6px 10px' }}>Debug paragraph transitions</button>}
         </div>
+        {playbackStatus && (
+          <div aria-live="polite" style={{ color: 'GrayText', marginTop: 8 }}>
+            Playback: {playbackStatus.state}
+            {playbackStatus.totalChunks > 0 && ` — chunk ${playbackStatus.currentChunk} of ${playbackStatus.totalChunks}`}
+            {playbackStatus.totalParagraphs > 0 && `, paragraph ${playbackStatus.currentParagraph} of ${playbackStatus.totalParagraphs}`}
+          </div>
+        )}
         <div style={{ color: 'GrayText', marginTop: 6 }}>Read It posts text to the configured synthesis endpoint. The default is {DEFAULT_TTS_URL}.</div>
       </section>
 
