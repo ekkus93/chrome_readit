@@ -359,8 +359,8 @@ async function clickButton(cdp, sessionId, label) {
   assert(result.disabled === false, `Button ${label} was disabled`)
 }
 
-async function clickSelector(cdp, sessionId, selector) {
-  await activateExtensionSession(cdp, sessionId)
+async function clickSelector(cdp, sessionId, selector, activate = true) {
+  if (activate) await activateExtensionSession(cdp, sessionId)
   const clicked = await evaluate(cdp, sessionId, `(() => {
     const button = document.querySelector(${JSON.stringify(selector)})
     if (!(button instanceof HTMLButtonElement) || button.disabled) return false
@@ -433,7 +433,8 @@ async function main() {
     const sessions = []
 
     await setSelection(cdp, selectionSessionId, `${LONG_AUDIO_MARKER} selection one.`)
-    await clickSelector(cdp, popup.sessionId, 'button[aria-label="Read selected text"]')
+    await cdp.send('Target.activateTarget', { targetId: selectionTarget.id })
+    await clickSelector(cdp, popup.sessionId, 'button[aria-label="Read selected text"]', false)
     const selectionOne = await waitForActiveSource(cdp, popup.sessionId, 'selection')
     sessions.push(selectionOne.sessionId)
 
@@ -450,14 +451,16 @@ async function main() {
     await waitFor('popup test button recovery', () => buttonEnabled(cdp, popup.sessionId, 'Try speech'))
 
     await setSelection(cdp, selectionSessionId, `${LONG_AUDIO_MARKER} selection two.`)
-    await clickSelector(cdp, popup.sessionId, 'button[aria-label="Read selected text"]')
+    await cdp.send('Target.activateTarget', { targetId: selectionTarget.id })
+    await clickSelector(cdp, popup.sessionId, 'button[aria-label="Read selected text"]', false)
     const selectionTwo = await waitForActiveSource(cdp, popup.sessionId, 'selection', optionsTest.sessionId)
     sessions.push(selectionTwo.sessionId)
     await waitForBodyText(cdp, options.sessionId, 'Test speech was superseded by another playback request.')
     await waitFor('Options test button recovery', () => buttonEnabled(cdp, options.sessionId, 'Test speech'))
 
     await setSelection(cdp, selectionSessionId, `${LONG_AUDIO_MARKER} selection three.`)
-    await clickSelector(cdp, popup.sessionId, 'button[aria-label="Read selected text"]')
+    await cdp.send('Target.activateTarget', { targetId: selectionTarget.id })
+    await clickSelector(cdp, popup.sessionId, 'button[aria-label="Read selected text"]', false)
     const selectionThree = await waitForActiveSource(cdp, popup.sessionId, 'selection', selectionTwo.sessionId)
     sessions.push(selectionThree.sessionId)
 
