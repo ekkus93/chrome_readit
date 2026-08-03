@@ -15,6 +15,7 @@ import {
   DEFAULT_TTS_URL,
   getSettingsResult,
   isValidTtsUrl,
+  migrateLegacyTtsUrl,
   saveSettings,
   type Settings,
 } from '../lib/storage'
@@ -27,7 +28,7 @@ function isCancellable(status: PlaybackStatus | null): boolean {
 }
 
 function isPausable(status: PlaybackStatus | null): boolean {
-  return isCancellable(status) && status.state !== 'paused'
+  return status !== null && isCancellable(status) && status.state !== 'paused'
 }
 
 export default function Options() {
@@ -182,11 +183,12 @@ export default function Options() {
       setTtsUrlError('Enter a valid HTTP or HTTPS synthesis endpoint.')
       return
     }
+    const canonical = migrateLegacyTtsUrl(trimmed)
     try {
-      await saveSettings({ ttsUrl: trimmed })
-      persistedSettingsRef.current = { ...persistedSettingsRef.current, ttsUrl: trimmed }
-      setTtsUrl(trimmed)
-      setTtsUrlDraft(trimmed)
+      await saveSettings({ ttsUrl: canonical })
+      persistedSettingsRef.current = { ...persistedSettingsRef.current, ttsUrl: canonical }
+      setTtsUrl(canonical)
+      setTtsUrlDraft(canonical)
       setTtsUrlError(null)
       setSettingsError(null)
       setServerHealth('unknown')
