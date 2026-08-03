@@ -251,7 +251,7 @@ describe('PlaybackCoordinator', () => {
     expect(coordinator.getPlayerDiagnostics().activePlayerCount).toBe(0)
   })
 
-  it('rejects replacement and records object URL revocation failure', async () => {
+  it('rejects replacement and retries object URL revocation before a later start', async () => {
     let failRevoke = true
     const { audio, coordinator, revokeObjectUrl } = harness({
       revokeObjectUrl: () => {
@@ -273,6 +273,7 @@ describe('PlaybackCoordinator', () => {
     failRevoke = false
     const retry = await coordinator.start(request('Third.', 'request-3'))
     expect(retry.ok).toBe(true)
+    expect(revokeObjectUrl).toHaveBeenCalledTimes(2)
     await waitForPlay(audio, 2)
   })
 
@@ -297,14 +298,14 @@ describe('PlaybackCoordinator', () => {
     synchronous.audio.synchronousPlayFailure = new Error('sync play failed')
     await synchronous.coordinator.start(request('Hello.', 'request-sync'))
     await vi.waitFor(() => expect(synchronous.coordinator.getStatus().state).toBe('failed'))
-    expect(synchronous.coordinator.getStatus().error?.code).toBe('INTERNAL_PLAYBACK_ERROR')
+    expect(synchronous.coordinator.getStatus().error?.code).toBe('AUDIO_PLAYBACK_FAILED')
     expect(synchronous.coordinator.getPlayerDiagnostics().activePlayerCount).toBe(0)
 
     const rejected = harness()
     rejected.audio.rejectedPlayFailure = new Error('rejected play')
     await rejected.coordinator.start(request('Hello.', 'request-reject'))
     await vi.waitFor(() => expect(rejected.coordinator.getStatus().state).toBe('failed'))
-    expect(rejected.coordinator.getStatus().error?.code).toBe('INTERNAL_PLAYBACK_ERROR')
+    expect(rejected.coordinator.getStatus().error?.code).toBe('AUDIO_PLAYBACK_FAILED')
     expect(rejected.coordinator.getPlayerDiagnostics().activePlayerCount).toBe(0)
   })
 
