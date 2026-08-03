@@ -52,13 +52,6 @@ jobs:
           old_handler = """        except RuntimeError:
               raise_api_error(503, "NOT_READY", "The TTS model is not ready.")
           """
-          new_handler = """        except BackendNotReadyError:
-              raise_api_error(503, "NOT_READY", "The TTS model is not ready.")
-              raise AssertionError("unreachable")
-              
-              
-          """
-          # Add the generic branch without relying on unreachable code in the final text.
           desired_handler = """        except BackendNotReadyError:
               raise_api_error(503, "NOT_READY", "The TTS model is not ready.")
           except Exception:
@@ -101,3 +94,5 @@ jobs:
           git commit -m "Classify Coqui submission failures correctly"
           git pull --rebase origin master
           git push origin HEAD:master
+
+# retriggered by Ralph loop on 2026-08-03
