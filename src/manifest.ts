@@ -2,6 +2,7 @@ import { defineManifest } from '@crxjs/vite-plugin'
 
 export default defineManifest({
   manifest_version: 3,
+  minimum_chrome_version: '116',
   name: 'Read It – Reader',
   version: '0.0.1',
   description: 'Reads selected text aloud with keyboard-first accessible UI.',
@@ -21,6 +22,10 @@ export default defineManifest({
   },
 
   permissions: ['storage', 'activeTab', 'scripting', 'contextMenus', 'offscreen'],
+  // The user may configure any HTTP(S) synthesis endpoint. Selection capture
+  // itself remains user-invoked through activeTab; broad host access exists for
+  // endpoint fetches and should become optional-host permission work before
+  // Chrome Web Store publication.
   host_permissions: ['<all_urls>'],
 
   commands: {
