@@ -6,7 +6,23 @@ const LOWERCASE_CONTINUE_ABBREVIATIONS = new Set([
   'u.s.', 'u.k.', 'u.n.', 'e.u.', 'a.i.', 'u.s.a.', 'd.c.',
   'p.m.', 'a.m.', 'etc.', 'ph.d.', 'm.d.', 'b.a.', 'm.a.',
 ])
+const UPPERCASE_INITIALISM_CONTINUATIONS = new Set([
+  'army', 'navy', 'air', 'marine', 'government', 'department', 'congress',
+  'senate', 'house', 'embassy', 'president', 'supreme', 'court', 'security',
+  'commission', 'parliament', 'constitution', 'treasury', 'military',
+])
+const TIME_CONTINUATIONS = new Set([
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+  'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august',
+  'september', 'october', 'november', 'december', 'today', 'tomorrow',
+  'tonight', 'yesterday', 'local', 'utc', 'est', 'edt', 'cst', 'cdt', 'mst',
+  'mdt', 'pst', 'pdt',
+])
 const SUFFIX_ABBREVIATIONS = new Set(['jr.', 'sr.'])
+
+function isLetter(value: string | undefined): boolean {
+  return typeof value === 'string' && /^\p{L}$/u.test(value)
+}
 
 function isAsciiLetter(value: string | undefined): boolean {
   return typeof value === 'string' && /^[A-Za-z]$/.test(value)
@@ -14,6 +30,10 @@ function isAsciiLetter(value: string | undefined): boolean {
 
 function isLowercaseLetter(value: string | undefined): boolean {
   return typeof value === 'string' && /^\p{Ll}$/u.test(value)
+}
+
+function isUppercaseLetter(value: string | undefined): boolean {
+  return typeof value === 'string' && /^\p{Lu}$/u.test(value)
 }
 
 function nextMeaningfulCharacter(text: string, start: number): string | undefined {
@@ -25,17 +45,36 @@ function nextMeaningfulCharacter(text: string, start: number): string | undefine
   return undefined
 }
 
+function nextMeaningfulWord(text: string, start: number): string | null {
+  const remainder = text.slice(start).replace(/^[\s)\]}'"”’]+/, '')
+  const match = remainder.match(/^([\p{L}]+)/u)
+  return match?.[1]?.toLowerCase() ?? null
+}
+
 function trailingDottedToken(text: string): string | null {
   const match = text.trim().match(/([A-Za-z](?:[A-Za-z.]*[A-Za-z])?\.)[)\]}'"”’]*$/)
   return match?.[1]?.toLowerCase() ?? null
 }
 
 function shouldContinueAfterSt(candidate: string, nextCharacter: string | undefined): boolean {
-  if (!isAsciiLetter(nextCharacter)) return false
+  if (!isLetter(nextCharacter)) return false
   const withoutClosers = candidate.trim().replace(/[)\]}'"”’]+$/, '')
-  const prefix = withoutClosers.slice(0, -3).trim().toLowerCase()
+  const prefix = withoutClosers.slice(0, -3).trim()
   if (!prefix) return true
-  return /(?:^|\s)(?:to|in|at|from|near|toward|towards|visit|visited)$/.test(prefix)
+  if (/(?:^|\s)(?:to|in|at|from|near|toward|towards|visit|visited)$/i.test(prefix)) return true
+  return isLowercaseLetter(nextCharacter)
+    && /(?:^|\s)\d+[\p{L}\d.'’-]*(?:\s+[\p{L}\d.'’-]+)*$/u.test(prefix)
+}
+
+function shouldContinueUppercaseAbbreviation(
+  token: string,
+  text: string,
+  nextStart: number,
+): boolean {
+  const word = nextMeaningfulWord(text, nextStart)
+  if (!word) return false
+  if ((token === 'a.m.' || token === 'p.m.') && TIME_CONTINUATIONS.has(word)) return true
+  return UPPERCASE_INITIALISM_CONTINUATIONS.has(word)
 }
 
 function shouldProtectPeriod(text: string, sentenceStart: number, index: number): boolean {
@@ -43,15 +82,18 @@ function shouldProtectPeriod(text: string, sentenceStart: number, index: number)
   const immediateNext = text[index + 1]
 
   if (/\d/.test(previous ?? '') && /\d/.test(immediateNext ?? '')) return true
-  if (isAsciiLetter(previous) && isAsciiLetter(immediateNext)) return true
+  if (isLetter(previous) && isLetter(immediateNext)) return true
 
   const candidate = text.slice(sentenceStart, index + 1).trim()
   const token = trailingDottedToken(candidate)
   const nextCharacter = nextMeaningfulCharacter(text, index + 1)
   if (!token || !nextCharacter) return false
 
-  if (ALWAYS_CONTINUE_ABBREVIATIONS.has(token) && isAsciiLetter(nextCharacter)) return true
+  if (ALWAYS_CONTINUE_ABBREVIATIONS.has(token) && isLetter(nextCharacter)) return true
   if (LOWERCASE_CONTINUE_ABBREVIATIONS.has(token) && isLowercaseLetter(nextCharacter)) return true
+  if (LOWERCASE_CONTINUE_ABBREVIATIONS.has(token)
+    && isUppercaseLetter(nextCharacter)
+    && shouldContinueUppercaseAbbreviation(token, text, index + 1)) return true
   if (SUFFIX_ABBREVIATIONS.has(token) && isLowercaseLetter(nextCharacter)) return true
   if (token === 'st.' && shouldContinueAfterSt(candidate, nextCharacter)) return true
   return false
@@ -106,16 +148,20 @@ function fallbackSegment(text: string): string[] {
   return output
 }
 
-function shouldMergeUrlQueryBoundary(previous: string, next: string): boolean {
-  return /\bhttps?:\/\/\S+\?$/i.test(previous.trim())
+function shouldMergeUrlQueryBoundary(previous: string, next: string, boundaryHadWhitespace: boolean): boolean {
+  return !boundaryHadWhitespace
+    && /\bhttps?:\/\/\S+\?$/i.test(previous.trim())
     && /^[A-Za-z0-9._~%+-]+=[^\s]/.test(next.trim())
 }
 
 function shouldMergeIntlBoundary(previous: string, next: string): boolean {
   const nextCharacter = nextMeaningfulCharacter(next, 0)
   const token = trailingDottedToken(previous)
-  if (token && ALWAYS_CONTINUE_ABBREVIATIONS.has(token) && isAsciiLetter(nextCharacter)) return true
+  if (token && ALWAYS_CONTINUE_ABBREVIATIONS.has(token) && isLetter(nextCharacter)) return true
   if (token && LOWERCASE_CONTINUE_ABBREVIATIONS.has(token) && isLowercaseLetter(nextCharacter)) return true
+  if (token && LOWERCASE_CONTINUE_ABBREVIATIONS.has(token)
+    && isUppercaseLetter(nextCharacter)
+    && shouldContinueUppercaseAbbreviation(token, next, 0)) return true
   if (token && SUFFIX_ABBREVIATIONS.has(token) && isLowercaseLetter(nextCharacter)) return true
   if (token === 'st.' && shouldContinueAfterSt(previous, nextCharacter)) return true
   if (/\.\.\.[)\]}'"”’]*$/.test(previous.trim()) && isLowercaseLetter(nextCharacter)) return true
@@ -134,22 +180,28 @@ type SegmenterConstructor = new (
 function getIntlCandidates(text: string): string[] {
   const Segmenter = (Intl as unknown as { Segmenter?: SegmenterConstructor }).Segmenter
   if (!Segmenter) return [text]
-  return Array.from(new Segmenter(undefined, { granularity: 'sentence' }).segment(text), (entry) => entry.segment.trim())
-    .filter((entry) => entry.length > 0)
+  return Array.from(new Segmenter(undefined, { granularity: 'sentence' }).segment(text), (entry) => entry.segment)
+    .filter((entry) => entry.trim().length > 0)
 }
 
 export function segmentSentences(text: string): string[] {
-  const candidates = getIntlCandidates(text).flatMap((candidate) => fallbackSegment(candidate))
+  const candidates = getIntlCandidates(text).flatMap((rawCandidate) => {
+    const parts = fallbackSegment(rawCandidate)
+    return parts.map((segment, index) => ({
+      segment,
+      boundaryHadWhitespace: index === 0 && /^\s/.test(rawCandidate),
+    }))
+  })
   const output: string[] = []
 
   for (const candidate of candidates) {
     const previous = output.at(-1)
-    if (previous && shouldMergeUrlQueryBoundary(previous, candidate)) {
-      output[output.length - 1] = `${previous}${candidate}`
-    } else if (previous && shouldMergeIntlBoundary(previous, candidate)) {
-      output[output.length - 1] = `${previous} ${candidate}`
+    if (previous && shouldMergeUrlQueryBoundary(previous, candidate.segment, candidate.boundaryHadWhitespace)) {
+      output[output.length - 1] = `${previous}${candidate.segment}`
+    } else if (previous && shouldMergeIntlBoundary(previous, candidate.segment)) {
+      output[output.length - 1] = `${previous} ${candidate.segment}`
     } else {
-      output.push(candidate)
+      output.push(candidate.segment)
     }
   }
 
