@@ -8,9 +8,17 @@ on:
         required: false
         default: '1200'
         type: string
+  push:
+    branches: [master]
+    paths:
+      - docs/CHROME_READIT_FIX2_REAL_COQUI_VALIDATION_REQUEST.md
 
 permissions:
   contents: read
+
+concurrency:
+  group: real-coqui-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   real-coqui:
@@ -34,7 +42,7 @@ jobs:
 
       - name: Run real model validation
         env:
-          REAL_COQUI_READY_TIMEOUT_SECONDS: ${{ inputs.ready_timeout_seconds }}
+          REAL_COQUI_READY_TIMEOUT_SECONDS: ${{ inputs.ready_timeout_seconds || '1200' }}
           REAL_COQUI_ARTIFACT_DIR: ${{ github.workspace }}/reports/real-coqui
         run: bash scripts/validate-real-coqui.sh
 
