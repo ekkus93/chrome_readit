@@ -120,6 +120,15 @@ if (!runtimeState.initialized) {
 
     return false
   })
+
+  if (DIAGNOSTICS_ENABLED) {
+    emitPlaybackEvent({
+      kind: 'PLAYBACK_EVENT',
+      event: 'state-changed',
+      atMs: performance.now(),
+      status: runtimeState.coordinator.getStatus(),
+    })
+  }
 }
 
 export const __testing = {
