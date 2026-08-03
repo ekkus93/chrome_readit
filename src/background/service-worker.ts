@@ -31,6 +31,12 @@ const OFFSCREEN_JUSTIFICATION = 'Play selected text audio in an extension-owned 
 const LAST_PLAYBACK_STATUS_KEY = 'readitLastPlaybackStatus'
 const PROBE_TIMEOUT_MS = 5_000
 
+type ActivePlaybackStatus = PlaybackStatus & {
+  sessionId: string
+  requestId: string
+  source: PlaybackSource
+}
+
 let offscreenDocumentPromise: Promise<void> | null = null
 let statusWriteChain: Promise<void> = Promise.resolve()
 let latestQueuedStatus: PlaybackStatus | null = null
@@ -44,15 +50,19 @@ function isTerminalStatus(status: PlaybackStatus): boolean {
   return ['idle', 'completed', 'cancelled', 'failed'].includes(status.state)
 }
 
-function isActivePlaybackStatus(status: PlaybackStatus | null): status is PlaybackStatus {
-  return status !== null && status.sessionId !== null && !isTerminalStatus(status)
+function isActivePlaybackStatus(status: PlaybackStatus | null): status is ActivePlaybackStatus {
+  return status !== null
+    && status.sessionId !== null
+    && status.requestId !== null
+    && status.source !== null
+    && !isTerminalStatus(status)
 }
 
 function withPersistenceState(status: PlaybackStatus): PlaybackStatus {
   return persistenceDegraded ? { ...status, persistenceDegraded: true } : status
 }
 
-function interruptedPlaybackStatus(previous: PlaybackStatus, message: string): PlaybackStatus {
+function interruptedPlaybackStatus(previous: ActivePlaybackStatus, message: string): PlaybackStatus {
   return {
     ...previous,
     sequence: previous.sequence + 1,
