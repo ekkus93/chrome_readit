@@ -21,6 +21,13 @@ done < <(find src -type f \( -name '*.ts' -o -name '*.tsx' \) ! -name '*.test.ts
 
 if grep -RInE --include='*.ts' --include='*.tsx' \
   --exclude='*.test.ts' --exclude='*.test.tsx' \
+  'SPEECH_STATUS|PAUSE_SPEECH|RESUME_SPEECH|CANCEL_SPEECH|LegacyPlaybackControlRequest' src \
+  >/tmp/chrome-readit-legacy-protocol.txt; then
+  fail_match 'the obsolete playback message protocol remains active' cat /tmp/chrome-readit-legacy-protocol.txt
+fi
+
+if grep -RInE --include='*.ts' --include='*.tsx' \
+  --exclude='*.test.ts' --exclude='*.test.tsx' \
   'new[[:space:]]+Audio[[:space:]]*\(' src \
   | grep -v '^src/offscreen/playback-coordinator.ts:' >/tmp/chrome-readit-extra-audio.txt; then
   fail_match 'production Audio construction exists outside the coordinator' cat /tmp/chrome-readit-extra-audio.txt
@@ -78,6 +85,7 @@ if grep -RInE --include='*.yml' --include='*.yaml' \
 fi
 
 rm -f \
+  /tmp/chrome-readit-legacy-protocol.txt \
   /tmp/chrome-readit-extra-audio.txt \
   /tmp/chrome-readit-fallback-player.txt \
   /tmp/chrome-readit-empty-list-fallback.txt \
