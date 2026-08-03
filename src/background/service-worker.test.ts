@@ -5,7 +5,7 @@ vi.mock('../lib/storage', () => ({
 }))
 
 import { getSettings } from '../lib/storage'
-import { PLAYBACK_CONTROL, START_PLAYBACK } from '../lib/playback-protocol'
+import { PLAYBACK_CONTROL, PLAYBACK_STATUS, START_PLAYBACK } from '../lib/playback-protocol'
 
 type ChromeMock = {
   tabs: { query: ReturnType<typeof vi.fn> }
@@ -20,6 +20,12 @@ type ChromeMock = {
     getContexts: ReturnType<typeof vi.fn>
     lastError?: { message?: string }
   }
+  storage: {
+    session: {
+      get: ReturnType<typeof vi.fn>
+      set: ReturnType<typeof vi.fn>
+    }
+  }
   contextMenus: {
     removeAll: ReturnType<typeof vi.fn>
     create: ReturnType<typeof vi.fn>
@@ -28,6 +34,7 @@ type ChromeMock = {
 }
 
 function installChromeMock(): ChromeMock {
+  const sessionValues: Record<string, unknown> = {}
   const chromeMock: ChromeMock = {
     tabs: { query: vi.fn() },
     scripting: { executeScript: vi.fn() },
@@ -40,6 +47,12 @@ function installChromeMock(): ChromeMock {
       getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
       getContexts: vi.fn().mockResolvedValue([]),
       lastError: undefined,
+    },
+    storage: {
+      session: {
+        get: vi.fn(async (key: string) => ({ [key]: sessionValues[key] })),
+        set: vi.fn(async (updates: Record<string, unknown>) => { Object.assign(sessionValues, updates) }),
+      },
     },
     contextMenus: {
       removeAll: vi.fn((callback: () => void) => callback()),
@@ -151,6 +164,46 @@ describe('background playback router', () => {
     await module.__testing.routeControl('pause')
 
     expect(chromeMock.runtime.sendMessage).toHaveBeenCalledWith({ kind: PLAYBACK_CONTROL, action: 'pause' })
+  })
+
+  it('reports an interrupted active session when a recreated offscreen document is idle', async () => {
+    const chromeMock = installChromeMock()
+    const module = await import('./service-worker')
+    await module.__testing.writeLastPlaybackStatus({
+      kind: PLAYBACK_STATUS,
+      state: 'playing',
+      sessionId: 'session-lost',
+      requestId: 'request-lost',
+      source: 'selection',
+      currentChunk: 2,
+      totalChunks: 4,
+      currentParagraph: 1,
+      totalParagraphs: 2,
+    })
+    chromeMock.runtime.sendMessage.mockResolvedValue({
+      kind: PLAYBACK_STATUS,
+      state: 'idle',
+      sessionId: null,
+      requestId: null,
+      source: null,
+      currentChunk: 0,
+      totalChunks: 0,
+      currentParagraph: 0,
+      totalParagraphs: 0,
+    })
+
+    const status = await module.__testing.queryPlaybackStatus()
+
+    expect(status).toMatchObject({
+      state: 'failed',
+      sessionId: 'session-lost',
+      currentChunk: 2,
+      error: { code: 'OFFSCREEN_INTERRUPTED' },
+    })
+    await expect(module.__testing.readLastPlaybackStatus()).resolves.toMatchObject({
+      state: 'failed',
+      error: { code: 'OFFSCREEN_INTERRUPTED' },
+    })
   })
 
   it('derives non-synthesizing API health endpoints', async () => {
