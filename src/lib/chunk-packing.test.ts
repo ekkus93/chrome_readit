@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { packPlaybackChunks } from './chunk-packing'
+import { DEBUG_COLLISION_FIXTURE } from './debug-fixtures'
+import { HARD_MAX_CHUNK_CHARS, packPlaybackChunks } from './chunk-packing'
 
 describe('packPlaybackChunks', () => {
   it('packs adjacent short sentences into one request', () => {
@@ -66,5 +67,20 @@ describe('packPlaybackChunks', () => {
       input.replace(/\n\n/g, ' ').replace(/\s+/g, ' '),
     )
     expect(chunks.every((chunk) => chunk.text.length > 0)).toBe(true)
+  })
+
+  it('packs the full collision fixture with exact paragraph and size invariants', () => {
+    const chunks = packPlaybackChunks(DEBUG_COLLISION_FIXTURE)
+    const paragraphIndexes = [...new Set(chunks.map((chunk) => chunk.paragraphIndex))]
+    const reconstructed = chunks.map((chunk) => chunk.text).join(' ').replace(/\s+/g, ' ').trim()
+    const expected = DEBUG_COLLISION_FIXTURE.replace(/\s+/g, ' ').trim()
+
+    expect(paragraphIndexes).toEqual([0, 1, 2])
+    expect(reconstructed).toBe(expected)
+    expect(chunks.every((chunk) => Array.from(chunk.text).length <= HARD_MAX_CHUNK_CHARS)).toBe(true)
+    expect(chunks.filter((chunk) => chunk.transitionAfter === 'paragraph')).toHaveLength(2)
+    expect(chunks.at(-1)?.transitionAfter).toBe('end')
+    expect(chunks.some((chunk) => chunk.forcedSplit && chunk.transitionAfter === 'continuation')).toBe(true)
+    expect(chunks.some((chunk) => chunk.text.includes('semicolon joins this clause; it must not force another synthesis request.'))).toBe(true)
   })
 })
