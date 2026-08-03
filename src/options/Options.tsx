@@ -21,10 +21,14 @@ import {
 } from '../lib/storage'
 import { fetchServerVoices, type VoiceOption } from '../lib/voices'
 
+function isTerminalStatus(status: PlaybackStatus): boolean {
+  return ['idle', 'completed', 'cancelled', 'failed'].includes(status.state)
+}
+
 function isCancellable(status: PlaybackStatus | null): boolean {
   return status !== null
     && status.sessionId !== null
-    && !['idle', 'completed', 'cancelled', 'failed'].includes(status.state)
+    && !isTerminalStatus(status)
 }
 
 function isPausable(status: PlaybackStatus | null): boolean {
@@ -54,6 +58,8 @@ export default function Options() {
   const [serverTestError, setServerTestError] = useState<string | null>(null)
   const persistedSettingsRef = useRef<Settings>(DEFAULT_SETTINGS)
   const testSessionIdRef = useRef<string | null>(null)
+  const nextTestRequestEpochRef = useRef(0)
+  const pendingTestRequestEpochRef = useRef<number | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -130,11 +136,21 @@ export default function Options() {
         ? 'Playback is working, but restart-safe status persistence is unavailable.'
         : null)
 
-      const trackedSessionId = testSessionIdRef.current
+      let trackedSessionId = testSessionIdRef.current
+      if (!trackedSessionId
+        && pendingTestRequestEpochRef.current !== null
+        && status.source === 'options-test'
+        && status.sessionId !== null
+        && !isTerminalStatus(status)) {
+        trackedSessionId = status.sessionId
+        testSessionIdRef.current = trackedSessionId
+      }
       if (!trackedSessionId) return
+
       if (status.sessionId !== trackedSessionId) {
-        if (!['idle', 'completed', 'cancelled', 'failed'].includes(status.state)) {
+        if (!isTerminalStatus(status)) {
           testSessionIdRef.current = null
+          pendingTestRequestEpochRef.current = null
           setTestStatus('error')
           setTestError('Test speech was superseded by another playback request.')
         }
@@ -142,10 +158,12 @@ export default function Options() {
       }
       if (status.state === 'completed') {
         testSessionIdRef.current = null
+        pendingTestRequestEpochRef.current = null
         setTestStatus('ok')
         setTestError(null)
       } else if (status.state === 'failed' || status.state === 'cancelled') {
         testSessionIdRef.current = null
+        pendingTestRequestEpochRef.current = null
         setTestStatus('error')
         setTestError(status.error?.message ?? 'Test speech failed or was cancelled.')
       } else {
@@ -215,16 +233,22 @@ export default function Options() {
   async function handleTestSpeech() {
     const text = testText.trim()
     if (!text || testStatus === 'sending') return
+    const requestEpoch = ++nextTestRequestEpochRef.current
+    pendingTestRequestEpochRef.current = requestEpoch
+    testSessionIdRef.current = null
     setTestStatus('sending')
     setTestError(null)
     const response = await requestReadText(text, 'options-test')
+    if (pendingTestRequestEpochRef.current !== requestEpoch) return
     if (!response.ok) {
+      pendingTestRequestEpochRef.current = null
       testSessionIdRef.current = null
       setTestStatus('error')
       setTestError(response.error.message)
       return
     }
     testSessionIdRef.current = response.sessionId
+    pendingTestRequestEpochRef.current = null
   }
 
   async function testServer() {
