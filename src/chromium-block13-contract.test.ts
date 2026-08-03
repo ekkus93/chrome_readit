@@ -45,8 +45,8 @@ describe('Chromium Block 13 matrix contract', () => {
 
     expect(matrix).toContain('HTMLMediaElement.prototype')
     expect(matrix).toContain("chrome.runtime.onMessage.addListener(listener)")
-    expect(matrix).toContain("Target.closeTarget")
-    expect(matrix).toContain("Input.dispatchKeyEvent")
+    expect(matrix).toContain('Target.closeTarget')
+    expect(matrix).toContain('Input.dispatchKeyEvent')
     expect(offscreen).not.toContain('__readitBlock13FaultState')
     expect(worker).not.toContain('__readitBlock13FaultState')
     expect(worker).not.toContain('BLOCK13_')
@@ -57,7 +57,9 @@ describe('Chromium Block 13 matrix contract', () => {
 
     expect(matrix).toContain("replacement.error?.code === 'AUDIO_CLEANUP_FAILED'")
     expect(matrix).toContain("replacement.error?.stage === 'pause'")
-    expect(matrix).toContain('uncertain.player.activePlayerCount === 1')
+    expect(matrix).toContain('afterFailure.player.playAttemptCount === before.player.playAttemptCount')
+    expect(matrix).toContain('afterFailure.player.maxActivePlayerCount <= 1')
+    expect(matrix).toContain('afterFailure.player.invariantViolationCount === 0')
     expect(matrix).toContain('diagnostics.player.activePlayerCount === 0')
     expect(matrix).toContain('diagnostics.player.maxActivePlayerCount <= 1')
     expect(matrix).toContain('diagnostics.player.invariantViolationCount === 0')
