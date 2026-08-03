@@ -142,6 +142,7 @@ class SynthesisRuntime:
         self._queued_futures = 0
         self._timed_out_futures: set[Future[str]] = set()
         self._temp_paths: set[str] = set()
+        self._active_paths: set[str] = set()
         self._cleanup_failures: dict[str, int] = {}
         self._temp_paths_lock = threading.Lock()
         self.ready = False
@@ -159,13 +160,13 @@ class SynthesisRuntime:
         executor = self._executor
         self._executor = None
         if executor is not None:
-            # Coqui's in-process Python inference cannot be force-cancelled safely.
-            # Do not block the shutdown handler indefinitely; running work retains
-            # its slot and cleanup callback until the thread actually exits.
+            # In-process Coqui inference cannot be force-cancelled safely. This
+            # returns promptly, cancels work that has not started, and leaves
+            # active paths tracked until their worker callback actually exits.
             executor.shutdown(wait=False, cancel_futures=True)
         with self._temp_paths_lock:
-            paths = list(self._temp_paths)
-        for path in paths:
+            retryable_paths = list(self._temp_paths - self._active_paths)
+        for path in retryable_paths:
             self.cleanup_path(path)
         self._backend = None
         self._voices = ()
@@ -194,6 +195,9 @@ class SynthesisRuntime:
             return dict(self._cleanup_failures)
 
     def cleanup_path(self, path: str) -> bool:
+        with self._temp_paths_lock:
+            if path in self._active_paths:
+                return False
         candidate = Path(path)
         try:
             candidate.unlink(missing_ok=True)
@@ -248,6 +252,8 @@ class SynthesisRuntime:
                 raise RuntimeError("Queued synthesis accounting became negative")
             self._queued_futures -= 1
             self._active_inference += 1
+        with self._temp_paths_lock:
+            self._active_paths.add(output_path)
         try:
             if selected_voice is None:
                 backend.tts_to_file(text=text, file_path=output_path)
@@ -259,10 +265,21 @@ class SynthesisRuntime:
                 raise RuntimeError("TTS backend produced an empty audio file")
             return output_path
         finally:
+            with self._temp_paths_lock:
+                self._active_paths.discard(output_path)
             with self._metrics_lock:
                 if self._active_inference <= 0:
                     raise RuntimeError("Active inference accounting became negative")
                 self._active_inference -= 1
+
+    def _future_completed(self, future: Future[str], output_path: str) -> None:
+        if future.cancelled():
+            with self._metrics_lock:
+                if self._queued_futures <= 0:
+                    raise RuntimeError("Queued synthesis accounting became negative")
+                self._queued_futures -= 1
+            self.cleanup_path(output_path)
+        self._release_slot(future)
 
     def submit(self, text: str, voice: str | None) -> tuple[Future[str], str]:
         backend = self._backend
@@ -289,7 +306,7 @@ class SynthesisRuntime:
                 with self._metrics_lock:
                     self._queued_futures -= 1
                 raise
-            future.add_done_callback(lambda completed: self._release_slot(completed))
+            future.add_done_callback(lambda completed: self._future_completed(completed, output_path))
             return future, output_path
         except Exception:
             if descriptor is not None:
