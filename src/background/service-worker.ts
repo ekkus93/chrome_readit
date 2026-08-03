@@ -91,8 +91,14 @@ async function captureSelection(tab: chrome.tabs.Tab): Promise<string> {
 }
 
 async function hasOffscreenPlaybackDocument(): Promise<boolean> {
-  if (typeof chrome.runtime.getContexts === 'function') {
-    const contexts = await chrome.runtime.getContexts({
+  const runtimeApi = chrome.runtime as typeof chrome.runtime & {
+    getContexts?: (filter: {
+      contextTypes: string[]
+      documentUrls: string[]
+    }) => Promise<unknown[]>
+  }
+  if (typeof runtimeApi.getContexts === 'function') {
+    const contexts = await runtimeApi.getContexts({
       contextTypes: ['OFFSCREEN_DOCUMENT'],
       documentUrls: [chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH)],
     })
@@ -116,7 +122,7 @@ async function ensureOffscreenPlaybackDocument(): Promise<void> {
 
   offscreenDocumentPromise = chrome.offscreen.createDocument({
     url: OFFSCREEN_DOCUMENT_PATH,
-    reasons: ['AUDIO_PLAYBACK'],
+    reasons: [chrome.offscreen.Reason.AUDIO_PLAYBACK],
     justification: OFFSCREEN_JUSTIFICATION,
   }).then(() => {
     offscreenDocumentKnown = true
