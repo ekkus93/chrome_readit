@@ -3,8 +3,9 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const ROOT = resolve(new URL('..', import.meta.url).pathname)
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const EXTENSION_DIR = resolve(ROOT, 'dist')
 const CHROME_PATH = process.env.CHROME_PATH || process.env.CHROMIUM_PATH || 'google-chrome'
 
