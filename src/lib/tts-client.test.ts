@@ -22,9 +22,14 @@ function fakeResponse(options: {
 }
 
 async function expectCode(promise: Promise<unknown>, code: string) {
-  await expect(promise).rejects.toSatisfy((error: unknown) => (
-    error instanceof TtsClientError && error.detail.code === code
-  ))
+  let caught: unknown
+  try {
+    await promise
+  } catch (error) {
+    caught = error
+  }
+  expect(caught).toBeInstanceOf(TtsClientError)
+  expect((caught as TtsClientError).detail.code).toBe(code)
 }
 
 describe('fetchTtsAudio', () => {
