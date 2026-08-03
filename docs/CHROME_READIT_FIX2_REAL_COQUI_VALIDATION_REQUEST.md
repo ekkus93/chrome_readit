@@ -1,8 +1,8 @@
 # Chrome Read It FIX2 Real Coqui Validation Request
 
 **Requested:** 2026-08-03  
-**Request sequence:** 16  
-**Purpose:** Validate the reconciled Block 17 documentation candidate together with the complete Chromium Block 13 and real-Coqui evidence matrices on one exact post-reconciliation SHA.  
+**Request sequence:** 17  
+**Purpose:** Validate the reconciled Block 17 documentation and fail-closed Chromium profile-cleanup retry together with the complete Chromium Block 13 and real-Coqui evidence matrices on one exact final candidate.  
 **Ordinary CI:** The same commit must also pass `.github/workflows/ci.yml`.  
 **Runtime status:** GitHub issue `#3` is overwritten at workflow start and completion.
 
@@ -43,6 +43,7 @@ The same exact candidate must validate:
 - explicit terminal `SESSION_SUPERSEDED` event normalization on Popup and Options;
 - popup and Options supersession recovery while the superseded surface is foregrounded;
 - popup and Options pause/resume/cancel controls;
+- one bounded retry when a Chrome profile cleanup race masks the harness verdict, with no conversion of an unverified run into success;
 - retained, fail-closed Chromium and JUnit artifacts.
 
 This request file is a durable validation entry point, not proof that the workflow passed. Record the resulting exact SHA, run IDs, attempts, job IDs, artifact IDs/digests, configured image reference, immutable image ID, browser result, and runtime result in the FIX2 evidence addendum before changing the overall disposition.
