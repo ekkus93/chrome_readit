@@ -179,11 +179,11 @@ function isPlaybackSettingsSnapshot(value: unknown): value is PlaybackSettingsSn
 }
 
 function hasConsistentProgress(value: Record<string, unknown>): boolean {
-  const currentChunk = value.currentChunk
-  const totalChunks = value.totalChunks
-  const currentParagraph = value.currentParagraph
-  const totalParagraphs = value.totalParagraphs
-  if (![currentChunk, totalChunks, currentParagraph, totalParagraphs].every(isNonNegativeInteger)) return false
+  const { currentChunk, totalChunks, currentParagraph, totalParagraphs } = value
+  if (!isNonNegativeInteger(currentChunk)
+    || !isNonNegativeInteger(totalChunks)
+    || !isNonNegativeInteger(currentParagraph)
+    || !isNonNegativeInteger(totalParagraphs)) return false
   if (totalChunks === 0) return currentChunk === 0 && currentParagraph === 0 && totalParagraphs === 0
   return currentChunk >= 1
     && currentChunk <= totalChunks
@@ -246,6 +246,7 @@ export function isPlaybackStatus(value: unknown): value is PlaybackStatus {
   if (!isRecord(value) || value.kind !== PLAYBACK_STATUS) return false
   if (!isNonNegativeInteger(value.sequence)) return false
   if (typeof value.state !== 'string' || !PLAYBACK_STATES.has(value.state as PlaybackState)) return false
+  const state = value.state as PlaybackState
   if (value.sessionId !== null && !isNonEmptyString(value.sessionId)) return false
   if (value.requestId !== null && !isNonEmptyString(value.requestId)) return false
   if (value.source !== null && !isPlaybackSource(value.source)) return false
@@ -256,11 +257,12 @@ export function isPlaybackStatus(value: unknown): value is PlaybackStatus {
   const hasIdentity = value.sessionId !== null && value.requestId !== null && value.source !== null
   const hasNoIdentity = value.sessionId === null && value.requestId === null && value.source === null
   if (!hasIdentity && !hasNoIdentity) return false
-  if (value.state === 'idle' && !hasNoIdentity) return false
-  if (value.state !== 'idle' && !hasIdentity && value.state !== 'failed') return false
-  if (value.state === 'failed' && value.error === undefined) return false
-  if ((value.state === 'completed' || value.state === 'cancelled') && value.error !== undefined && value.state === 'completed') return false
-  if (!TERMINAL_STATES.has(value.state) && value.error !== undefined) return false
+  if (state === 'idle' && (!hasNoIdentity || value.error !== undefined)) return false
+  if (state !== 'idle' && !hasIdentity && state !== 'failed') return false
+  if (state === 'failed' && value.error === undefined) return false
+  if (state === 'completed' && value.error !== undefined) return false
+  if (state === 'cancelled' && value.error === undefined) return false
+  if (!TERMINAL_STATES.has(state) && value.error !== undefined) return false
   return true
 }
 
@@ -279,7 +281,8 @@ export function isPlaybackEvent(value: unknown): value is PlaybackEvent {
     return false
   }
 
-  if ((event === 'completed' && value.status.state !== 'completed')
+  if ((event === 'accepted' && value.status.state !== 'starting')
+    || (event === 'completed' && value.status.state !== 'completed')
     || (event === 'cancelled' && value.status.state !== 'cancelled')
     || (event === 'superseded' && (value.status.state !== 'cancelled' || value.status.error?.code !== 'SESSION_SUPERSEDED'))
     || (event === 'failed' && value.status.state !== 'failed')
