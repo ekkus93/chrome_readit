@@ -34,12 +34,12 @@ RUN apt-get update && \
 COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app
-COPY --chown=readit:readit app.py README.md ./
+COPY --chown=readit:readit app.py healthcheck.py README.md ./
 
 USER readit
 EXPOSE 5002
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15m --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5002/api/ready', timeout=4)" || exit 1
+    CMD ["python", "/app/healthcheck.py"]
 
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5002", "--workers", "1", "--no-access-log"]
