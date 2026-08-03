@@ -8,6 +8,17 @@ describe('packPlaybackChunks', () => {
     expect(chunks[0]).toMatchObject({ text: 'One. Two. Three.', transitionAfter: 'end', forcedSplit: false })
   })
 
+  it('prefers an existing boundary when it is closer to the target size', () => {
+    const chunks = packPlaybackChunks(
+      '1234567890123456789012345. 1234567890.',
+      { targetChars: 25, softMaxChars: 60, hardMaxChars: 80 },
+    )
+    expect(chunks.map((chunk) => chunk.text)).toEqual([
+      '1234567890123456789012345.',
+      '1234567890.',
+    ])
+  })
+
   it('starts a new chunk when the next sentence exceeds the soft maximum', () => {
     const chunks = packPlaybackChunks(
       'First sentence fits. Second sentence is deliberately longer. Third.',
