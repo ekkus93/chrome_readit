@@ -3,12 +3,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { PLAYBACK_CONTROL, PLAYBACK_EVENT, PLAYBACK_STATUS } from '../lib/playback-protocol'
+import { PLAYBACK_CONTROL, PLAYBACK_EVENT, PLAYBACK_STATUS, type PlaybackStatus } from '../lib/playback-protocol'
 import Popup from './Popup'
 
 type RuntimeListener = (message: unknown) => boolean
 
-function status(state: string, sessionId: string | null = null) {
+function status(state: PlaybackStatus['state'], sessionId: string | null = null): PlaybackStatus {
   const active = sessionId !== null
   return {
     kind: PLAYBACK_STATUS,
@@ -21,12 +21,14 @@ function status(state: string, sessionId: string | null = null) {
     totalChunks: active ? 1 : 0,
     currentParagraph: active ? 1 : 0,
     totalParagraphs: active ? 1 : 0,
+    ...(state === 'cancelled' ? { error: { code: 'CANCELLED' as const, message: 'Playback was cancelled.' } } : {}),
+    ...(state === 'failed' ? { error: { code: 'INTERNAL_PLAYBACK_ERROR' as const, message: 'Playback failed.' } } : {}),
   }
 }
 
 function installChrome() {
   let listener: RuntimeListener | undefined
-  const sendMessage = vi.fn(async (message: Record<string, unknown>) => {
+  const sendMessage = vi.fn(async (message: Record<string, unknown>): Promise<unknown> => {
     if (message.kind === PLAYBACK_STATUS) return status('idle')
     if (message.kind === PLAYBACK_CONTROL) {
       return {
@@ -79,9 +81,9 @@ describe('Popup playback control buttons', () => {
     const { sendMessage, getListener } = installChrome()
     render(<Popup />)
 
-    expect(await screen.findByRole('button', { name: /^Pause$/i })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /^Resume$/i })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /^Cancel$/i })).toBeDisabled()
+    expect((await screen.findByRole('button', { name: /^Pause$/i }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /^Resume$/i }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /^Cancel$/i }) as HTMLButtonElement).disabled).toBe(true)
 
     act(() => {
       getListener()?.({
@@ -123,8 +125,7 @@ describe('Popup playback control buttons', () => {
   })
 
   it('updates and persists speech rate changes', async () => {
-    const { sendMessage } = installChrome()
-    void sendMessage
+    installChrome()
     render(<Popup />)
     fireEvent.change(await screen.findByLabelText(/^Rate/i), { target: { value: '1.7' } })
 
@@ -141,7 +142,7 @@ describe('Popup playback control buttons', () => {
     ['Playback not supported on this page'],
   ])('shows a structured read error: %s', async (message) => {
     const { sendMessage } = installChrome()
-    sendMessage.mockImplementation(async (request: Record<string, unknown>) => {
+    sendMessage.mockImplementation(async (request: Record<string, unknown>): Promise<unknown> => {
       if (request.kind === PLAYBACK_STATUS) return status('idle')
       if (request.kind === 'READ_SELECTION') {
         return { ok: false, accepted: false, error: { code: 'INVALID_REQUEST', message } }
