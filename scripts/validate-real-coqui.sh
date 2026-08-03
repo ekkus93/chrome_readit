@@ -83,8 +83,16 @@ build_started=$SECONDS
 dc build --no-cache coqui-local 2>&1 | tee "${ARTIFACT_DIR}/build.log"
 printf '%s\n' "$((SECONDS - build_started))" >"${ARTIFACT_DIR}/build-duration-seconds.txt"
 
-image_id="$(dc images -q coqui-local)"
-[[ -n "${image_id}" ]] || fail "built Coqui image ID was not found"
+mapfile -t image_refs < <(dc config --images)
+[[ "${#image_refs[@]}" -eq 1 ]] \
+  || fail "expected exactly one configured Compose image, found ${#image_refs[@]}"
+image_ref="${image_refs[0]}"
+[[ -n "${image_ref}" ]] || fail "configured Coqui image reference is empty"
+printf '%s\n' "${image_ref}" >"${ARTIFACT_DIR}/image-ref.txt"
+if ! image_id="$(docker image inspect --format '{{.Id}}' "${image_ref}")"; then
+  fail "built Coqui image could not be inspected by configured reference ${image_ref}"
+fi
+[[ -n "${image_id}" ]] || fail "built Coqui image ID was empty"
 printf '%s\n' "${image_id}" >"${ARTIFACT_DIR}/image-id.txt"
 docker image inspect "${image_id}" >"${ARTIFACT_DIR}/image-inspect.json"
 
