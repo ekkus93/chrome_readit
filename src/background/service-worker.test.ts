@@ -58,6 +58,20 @@ function status(overrides: Partial<PlaybackStatus> = {}): PlaybackStatus {
   }
 }
 
+function idleStatus(): PlaybackStatus {
+  return status({
+    sequence: 0,
+    state: 'idle',
+    sessionId: null,
+    requestId: null,
+    source: null,
+    currentChunk: 0,
+    totalChunks: 0,
+    currentParagraph: 0,
+    totalParagraphs: 0,
+  })
+}
+
 describe('background playback router', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -76,12 +90,15 @@ describe('background playback router', () => {
     const { chromeMock } = installChromeMock()
     chromeMock.tabs.query.mockResolvedValue([{ id: 42, url: 'https://example.com' }])
     chromeMock.scripting.executeScript.mockResolvedValue([{ result: ' Selected text. ' }])
-    chromeMock.runtime.sendMessage.mockImplementation(async (message: Record<string, unknown>) => ({
-      ok: true,
-      accepted: true,
-      requestId: message.requestId,
-      sessionId: 'session-uuid',
-    }))
+    chromeMock.runtime.sendMessage.mockImplementation(async (message: Record<string, unknown>) => {
+      if (message.kind === PLAYBACK_STATUS) return idleStatus()
+      return {
+        ok: true,
+        accepted: true,
+        requestId: message.requestId,
+        sessionId: 'session-uuid',
+      }
+    })
 
     const module = await import('./service-worker')
     const result = await module.sendToActiveTabOrInject({ kind: 'READ_SELECTION' })
@@ -102,14 +119,44 @@ describe('background playback router', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('waits for a valid offscreen status before forwarding the first fresh-document start', async () => {
+    const { chromeMock } = installChromeMock()
+    let readinessAttempts = 0
+    chromeMock.runtime.sendMessage.mockImplementation(async (message: Record<string, unknown>) => {
+      if (message.kind === PLAYBACK_STATUS) {
+        readinessAttempts += 1
+        return readinessAttempts < 3 ? undefined : idleStatus()
+      }
+      return {
+        ok: true,
+        accepted: true,
+        requestId: message.requestId,
+        sessionId: 'session-ready',
+      }
+    })
+
+    const module = await import('./service-worker')
+    const result = await module.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: 'Fresh start.', source: 'popup-test' })
+
+    expect(result).toMatchObject({ ok: true, accepted: true, sessionId: 'session-ready' })
+    expect(readinessAttempts).toBe(3)
+    expect(chromeMock.runtime.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      kind: START_PLAYBACK,
+      text: 'Fresh start.',
+    }))
+  })
+
   it('preserves the explicit source for popup and Options test requests', async () => {
     const { chromeMock } = installChromeMock()
-    chromeMock.runtime.sendMessage.mockImplementation(async (message: Record<string, unknown>) => ({
-      ok: true,
-      accepted: true,
-      requestId: message.requestId,
-      sessionId: 'session-uuid',
-    }))
+    chromeMock.runtime.sendMessage.mockImplementation(async (message: Record<string, unknown>) => {
+      if (message.kind === PLAYBACK_STATUS) return idleStatus()
+      return {
+        ok: true,
+        accepted: true,
+        requestId: message.requestId,
+        sessionId: 'session-uuid',
+      }
+    })
 
     const module = await import('./service-worker')
     await module.sendToActiveTabOrInject({ kind: 'READ_TEXT', text: 'Hello.', source: 'popup-test' })
@@ -175,7 +222,10 @@ describe('background playback router', () => {
 
   it('forwards controls through the shared protocol with expected session protection', async () => {
     const { chromeMock } = installChromeMock()
-    chromeMock.runtime.sendMessage.mockResolvedValue({ ok: true, sessionId: 'session-1', state: 'paused' })
+    chromeMock.runtime.sendMessage.mockImplementation(async (message: Record<string, unknown>) => {
+      if (message.kind === PLAYBACK_STATUS) return idleStatus()
+      return { ok: true, sessionId: 'session-1', state: 'paused' }
+    })
 
     const module = await import('./service-worker')
     await module.__testing.routeControl('pause', 'session-1')
@@ -198,17 +248,7 @@ describe('background playback router', () => {
       totalChunks: 4,
       totalParagraphs: 2,
     }))
-    chromeMock.runtime.sendMessage.mockResolvedValue(status({
-      sequence: 0,
-      state: 'idle',
-      sessionId: null,
-      requestId: null,
-      source: null,
-      currentChunk: 0,
-      totalChunks: 0,
-      currentParagraph: 0,
-      totalParagraphs: 0,
-    }))
+    chromeMock.runtime.sendMessage.mockResolvedValue(idleStatus())
 
     const interrupted = await module.__testing.queryPlaybackStatus()
 
