@@ -20,12 +20,12 @@ const TIME_CONTINUATIONS = new Set([
 ])
 const SUFFIX_ABBREVIATIONS = new Set(['jr.', 'sr.'])
 
-function isLetter(value: string | undefined): boolean {
-  return typeof value === 'string' && /^\p{L}$/u.test(value)
-}
-
 function isAsciiLetter(value: string | undefined): boolean {
   return typeof value === 'string' && /^[A-Za-z]$/.test(value)
+}
+
+function isLetter(value: string | undefined): boolean {
+  return isAsciiLetter(value) || (typeof value === 'string' && /^\p{L}$/u.test(value))
 }
 
 function isLowercaseLetter(value: string | undefined): boolean {
