@@ -12,7 +12,11 @@ function installChromeMock() {
   const chromeMock = {
     tabs: { query: vi.fn() },
     scripting: { executeScript: vi.fn() },
-    offscreen: { createDocument: vi.fn().mockResolvedValue(undefined), hasDocument: vi.fn() },
+    offscreen: {
+      Reason: { AUDIO_PLAYBACK: 'AUDIO_PLAYBACK' },
+      createDocument: vi.fn().mockResolvedValue(undefined),
+      hasDocument: vi.fn(),
+    },
     commands: { onCommand: { addListener: vi.fn() } },
     runtime: {
       onMessage: { addListener: vi.fn() },
