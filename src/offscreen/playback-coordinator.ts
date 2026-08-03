@@ -51,6 +51,7 @@ type ActivePlayback = {
   settle: (error?: Error) => void
   settled: boolean
   started: boolean
+  audible: boolean
 }
 
 type AudioFetchResult =
@@ -76,6 +77,17 @@ class AudioCleanupError extends Error {
   constructor(detail: PlaybackError, cause?: unknown) {
     super(detail.message, cause === undefined ? undefined : { cause })
     this.name = 'AudioCleanupError'
+    this.detail = detail
+  }
+}
+
+class AudioPlaybackError extends Error {
+  readonly detail: PlaybackError
+
+  constructor(message: string, cause?: unknown) {
+    const detail = createPlaybackError('AUDIO_PLAYBACK_FAILED', message)
+    super(detail.message, cause === undefined ? undefined : { cause })
+    this.name = 'AudioPlaybackError'
     this.detail = detail
   }
 }
@@ -304,10 +316,13 @@ export class PlaybackCoordinator {
     return null
   }
 
-  private markPlayStarted(active: ActivePlayback): void {
-    if (active.settled || active.started || this.activePlayback !== active) return
-    active.started = true
-    this.playerDiagnostics.successfulPlayStartCount += 1
+  private incrementAudiblePlayer(active: ActivePlayback, initialStart: boolean): void {
+    if (active.settled || active.audible || this.activePlayback !== active) return
+    active.audible = true
+    if (initialStart) {
+      active.started = true
+      this.playerDiagnostics.successfulPlayStartCount += 1
+    }
     this.playerDiagnostics.activePlayerCount += 1
     this.playerDiagnostics.maxActivePlayerCount = Math.max(
       this.playerDiagnostics.maxActivePlayerCount,
@@ -328,6 +343,10 @@ export class PlaybackCoordinator {
     }
   }
 
+  private markPlayStarted(active: ActivePlayback): void {
+    this.incrementAudiblePlayer(active, true)
+  }
+
   private settleActivePlayback(active: ActivePlayback, error?: Error, alreadyEnded = false): PlaybackError | null {
     if (active.settled) return null
     active.settled = true
@@ -336,45 +355,46 @@ export class PlaybackCoordinator {
     this.audio.onerror = null
 
     let cleanupFailure: AudioCleanupError | null = null
-    let pauseSucceeded = alreadyEnded
+    let stopped = alreadyEnded
     if (!alreadyEnded) {
       try {
         this.audio.pause()
-        pauseSucceeded = true
+        stopped = true
       } catch (cause) {
         cleanupFailure = this.cleanupError('pause', cause)
       }
     }
 
-    try {
-      this.audio.removeAttribute('src')
-    } catch (cause) {
-      cleanupFailure ??= this.cleanupError('clear-source', cause)
+    if (active.audible && stopped) {
+      active.audible = false
+      cleanupFailure ??= this.decrementActivePlayer()
     }
 
-    if (pauseSucceeded) {
+    // If pause failed, retain src and object URL so every later request can
+    // retry cleanup. Discarding those handles would allow an uncertain player
+    // to escape the fail-closed gate.
+    if (stopped) {
+      try {
+        this.audio.removeAttribute('src')
+      } catch (cause) {
+        cleanupFailure ??= this.cleanupError('clear-source', cause)
+      }
+
       try {
         this.audio.load()
-      } catch (cause) {
-        // Reload is explicitly best-effort after pause and source clearing. It
-        // is recorded for diagnostics but does not permit a second player.
+      } catch {
         this.playerDiagnostics.cleanupFailureCount += 1
         this.playerDiagnostics.lastCleanupFailureStage = 'reload'
-        void cause
       }
-    }
 
-    if (this.currentObjectUrl === active.objectUrl) {
-      try {
-        this.dependencies.revokeObjectUrl(active.objectUrl)
-        this.currentObjectUrl = null
-      } catch (cause) {
-        cleanupFailure ??= this.cleanupError('revoke-url', cause)
+      if (this.currentObjectUrl === active.objectUrl) {
+        try {
+          this.dependencies.revokeObjectUrl(active.objectUrl)
+          this.currentObjectUrl = null
+        } catch (cause) {
+          cleanupFailure ??= this.cleanupError('revoke-url', cause)
+        }
       }
-    }
-
-    if (active.started && pauseSucceeded) {
-      cleanupFailure ??= this.decrementActivePlayer()
     }
 
     this.playerDiagnostics.settlementCount += 1
@@ -384,12 +404,20 @@ export class PlaybackCoordinator {
   }
 
   private cleanupOrphanedSource(): PlaybackError | null {
-    if (!this.currentObjectUrl) return null
-    let failure: AudioCleanupError | null = null
+    if (!this.currentObjectUrl) {
+      if (this.playerDiagnostics.activePlayerCount > 0) return this.cleanupError('accounting').detail
+      return null
+    }
+
     try {
       this.audio.pause()
     } catch (cause) {
-      failure = this.cleanupError('pause', cause)
+      return this.cleanupError('pause', cause).detail
+    }
+
+    let failure: AudioCleanupError | null = null
+    if (this.playerDiagnostics.activePlayerCount > 0) {
+      failure = this.decrementActivePlayer()
     }
     try {
       this.audio.removeAttribute('src')
@@ -398,16 +426,17 @@ export class PlaybackCoordinator {
     }
     try {
       this.audio.load()
-    } catch (cause) {
+    } catch {
       this.playerDiagnostics.cleanupFailureCount += 1
       this.playerDiagnostics.lastCleanupFailureStage = 'reload'
-      void cause
     }
-    try {
-      this.dependencies.revokeObjectUrl(this.currentObjectUrl)
-      this.currentObjectUrl = null
-    } catch (cause) {
-      failure ??= this.cleanupError('revoke-url', cause)
+    if (!failure) {
+      try {
+        this.dependencies.revokeObjectUrl(this.currentObjectUrl)
+        this.currentObjectUrl = null
+      } catch (cause) {
+        failure = this.cleanupError('revoke-url', cause)
+      }
     }
     return failure?.detail ?? null
   }
@@ -447,12 +476,18 @@ export class PlaybackCoordinator {
     if (!this.isCurrent(session) || session.paused || isTerminalState(session.state)) return
     session.paused = true
     session.stateBeforePause = session.state
-    if (this.activePlayback?.sessionId === session.id) {
+    const active = this.activePlayback?.sessionId === session.id ? this.activePlayback : null
+    if (active) {
       try {
         this.audio.pause()
+        if (active.audible) {
+          active.audible = false
+          const accountingFailure = this.decrementActivePlayer()
+          if (accountingFailure) throw accountingFailure
+        }
       } catch (cause) {
-        const failure = this.stopAudio(cause instanceof Error ? cause : new Error(String(cause)))
-        session.error = failure ?? createPlaybackError('AUDIO_PLAYBACK_FAILED', 'Audio playback could not pause.')
+        const cleanupFailure = this.stopAudio(cause instanceof Error ? cause : new Error(String(cause)))
+        session.error = cleanupFailure ?? createPlaybackError('AUDIO_PLAYBACK_FAILED', 'Audio playback could not pause.')
         session.state = 'failed'
         this.emit('failed')
         this.wakeAll()
@@ -468,12 +503,14 @@ export class PlaybackCoordinator {
     if (!this.isCurrent(session) || !session.paused || isTerminalState(session.state)) return
     session.paused = false
     session.state = session.stateBeforePause
-    if (this.activePlayback?.sessionId === session.id) {
+    const active = this.activePlayback?.sessionId === session.id ? this.activePlayback : null
+    if (active) {
       try {
         await this.audio.play()
+        this.incrementAudiblePlayer(active, false)
       } catch (cause) {
-        const failure = this.stopAudio(cause instanceof Error ? cause : new Error(String(cause)))
-        session.error = failure ?? createPlaybackError('AUDIO_PLAYBACK_FAILED', 'Audio playback could not resume.')
+        const cleanupFailure = this.stopAudio(cause instanceof Error ? cause : new Error(String(cause)))
+        session.error = cleanupFailure ?? createPlaybackError('AUDIO_PLAYBACK_FAILED', 'Audio playback could not resume.')
         session.state = 'failed'
         this.emit('failed')
         this.wakeAll()
@@ -551,10 +588,7 @@ export class PlaybackCoordinator {
       this.audio.src = objectUrl
       this.audio.playbackRate = session.settings.rate
     } catch (cause) {
-      throw new AudioCleanupError(
-        createPlaybackError('AUDIO_CLEANUP_FAILED', 'Audio source setup failed.', undefined, 'clear-source'),
-        cause,
-      )
+      throw new AudioPlaybackError('Audio source setup failed.', cause)
     }
 
     await new Promise<void>((resolve, reject) => {
@@ -565,6 +599,7 @@ export class PlaybackCoordinator {
         objectUrl,
         settled: false,
         started: false,
+        audible: false,
         settle: (error) => {
           if (error) reject(error)
           else resolve()
@@ -578,16 +613,16 @@ export class PlaybackCoordinator {
       }
 
       this.audio.onended = () => finish(undefined, true)
-      this.audio.onerror = () => finish(new Error('audio playback failed'))
+      this.audio.onerror = () => finish(new AudioPlaybackError('Audio playback failed.'))
 
       try {
         const playPromise = this.audio.play()
         void playPromise.then(
           () => this.markPlayStarted(active),
-          (cause) => finish(cause instanceof Error ? cause : new Error(String(cause))),
+          (cause) => finish(new AudioPlaybackError('Audio playback could not start.', cause)),
         )
       } catch (cause) {
-        finish(cause instanceof Error ? cause : new Error(String(cause)))
+        finish(new AudioPlaybackError('Audio playback could not start.', cause))
       }
     })
   }
@@ -655,9 +690,11 @@ export class PlaybackCoordinator {
       const detail = cleanupFailure
         ?? (error instanceof AudioCleanupError
           ? error.detail
-          : error instanceof TtsClientError
+          : error instanceof AudioPlaybackError
             ? error.detail
-            : createPlaybackError('INTERNAL_PLAYBACK_ERROR', 'Playback failed unexpectedly.'))
+            : error instanceof TtsClientError
+              ? error.detail
+              : createPlaybackError('INTERNAL_PLAYBACK_ERROR', 'Playback failed unexpectedly.'))
       session.error = detail
       session.state = 'failed'
       this.emit('failed')
