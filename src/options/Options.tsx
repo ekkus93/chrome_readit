@@ -2,18 +2,32 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { DEBUG_PARAGRAPH_FIXTURE } from '../lib/debug-fixtures'
 import {
   isPlaybackEvent,
-  isPlaybackStatus,
+  type PlaybackControlAction,
   type PlaybackStatus,
 } from '../lib/playback-protocol'
-import { DEFAULT_SETTINGS, DEFAULT_TTS_URL, getSettings, saveSettings, type Settings } from '../lib/storage'
+import {
+  queryPlaybackStatus,
+  requestReadText,
+  sendPlaybackControl,
+} from '../lib/playback-runtime-client'
+import {
+  DEFAULT_SETTINGS,
+  DEFAULT_TTS_URL,
+  getSettingsResult,
+  isValidTtsUrl,
+  saveSettings,
+  type Settings,
+} from '../lib/storage'
 import { fetchServerVoices, type VoiceOption } from '../lib/voices'
 
-function responseError(response: unknown, fallback: string): string {
-  if (!response || typeof response !== 'object') return fallback
-  const error = (response as { error?: unknown }).error
-  if (typeof error === 'string') return error
-  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') return error.message
-  return fallback
+function isCancellable(status: PlaybackStatus | null): boolean {
+  return status !== null
+    && status.sessionId !== null
+    && !['idle', 'completed', 'cancelled', 'failed'].includes(status.state)
+}
+
+function isPausable(status: PlaybackStatus | null): boolean {
+  return isCancellable(status) && status.state !== 'paused'
 }
 
 export default function Options() {
@@ -21,25 +35,39 @@ export default function Options() {
   const [voice, setVoice] = useState(DEFAULT_SETTINGS.voice)
   const [rate, setRate] = useState(DEFAULT_SETTINGS.rate)
   const [loaded, setLoaded] = useState(false)
+  const [settingsWarning, setSettingsWarning] = useState<string | null>(null)
+  const [settingsError, setSettingsError] = useState<string | null>(null)
   const [testText, setTestText] = useState('Hello — this is a quick test of Read It.')
   const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
   const [testError, setTestError] = useState<string | null>(null)
   const [playbackStatus, setPlaybackStatus] = useState<PlaybackStatus | null>(null)
+  const [statusError, setStatusError] = useState<string | null>(null)
+  const [controlError, setControlError] = useState<string | null>(null)
   const [ttsUrl, setTtsUrl] = useState(DEFAULT_SETTINGS.ttsUrl)
+  const [ttsUrlDraft, setTtsUrlDraft] = useState(DEFAULT_SETTINGS.ttsUrl)
+  const [ttsUrlError, setTtsUrlError] = useState<string | null>(null)
   const [voicesList, setVoicesList] = useState<VoiceOption[]>([])
+  const [voiceError, setVoiceError] = useState<string | null>(null)
   const [serverHealth, setServerHealth] = useState<'unknown' | 'ok' | 'error'>('unknown')
   const [serverTesting, setServerTesting] = useState(false)
   const [serverTestError, setServerTestError] = useState<string | null>(null)
   const persistedSettingsRef = useRef<Settings>(DEFAULT_SETTINGS)
+  const testSessionIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     let mounted = true
-    void getSettings().then((settings) => {
+    void getSettingsResult().then(({ settings, warnings }) => {
       if (!mounted) return
       persistedSettingsRef.current = settings
       setRate(settings.rate)
       setVoice(settings.voice)
       setTtsUrl(settings.ttsUrl)
+      setTtsUrlDraft(settings.ttsUrl)
+      setSettingsWarning(warnings.map((warning) => warning.message).join(' ') || null)
+      setLoaded(true)
+    }).catch(() => {
+      if (!mounted) return
+      setSettingsError('Settings could not be loaded. Reload the extension and try again.')
       setLoaded(true)
     })
     return () => { mounted = false }
@@ -47,32 +75,47 @@ export default function Options() {
 
   useEffect(() => {
     if (!loaded || rate === persistedSettingsRef.current.rate) return
+    let mounted = true
     const timeoutId = window.setTimeout(() => {
-      if (rate === persistedSettingsRef.current.rate) return
-      persistedSettingsRef.current = { ...persistedSettingsRef.current, rate }
-      void saveSettings({ rate })
+      void saveSettings({ rate }).then(() => {
+        if (!mounted) return
+        persistedSettingsRef.current = { ...persistedSettingsRef.current, rate }
+        setSettingsError(null)
+      }).catch(() => {
+        if (mounted) setSettingsError('The playback rate could not be saved. Change it again to retry.')
+      })
     }, 200)
-    return () => window.clearTimeout(timeoutId)
+    return () => {
+      mounted = false
+      window.clearTimeout(timeoutId)
+    }
   }, [rate, loaded])
 
   useEffect(() => {
     if (!loaded || voice === persistedSettingsRef.current.voice) return
-    persistedSettingsRef.current = { ...persistedSettingsRef.current, voice }
-    void saveSettings({ voice })
+    let mounted = true
+    void saveSettings({ voice }).then(() => {
+      if (!mounted) return
+      persistedSettingsRef.current = { ...persistedSettingsRef.current, voice }
+      setSettingsError(null)
+    }).catch(() => {
+      if (mounted) setSettingsError('The selected voice could not be saved. Select it again to retry.')
+    })
+    return () => { mounted = false }
   }, [voice, loaded])
-
-  useEffect(() => {
-    const nextTtsUrl = ttsUrl || DEFAULT_TTS_URL
-    if (!loaded || nextTtsUrl === persistedSettingsRef.current.ttsUrl) return
-    persistedSettingsRef.current = { ...persistedSettingsRef.current, ttsUrl: nextTtsUrl }
-    void saveSettings({ ttsUrl: nextTtsUrl })
-  }, [ttsUrl, loaded])
 
   useEffect(() => {
     if (!ttsUrl) return
     let mounted = true
-    void fetchServerVoices(ttsUrl).then((voices) => {
-      if (mounted) setVoicesList(voices)
+    void fetchServerVoices(ttsUrl).then((result) => {
+      if (!mounted) return
+      if (result.ok) {
+        setVoicesList(result.voices)
+        setVoiceError(null)
+      } else {
+        setVoicesList([])
+        setVoiceError(result.error.message)
+      }
     })
     return () => { mounted = false }
   }, [ttsUrl])
@@ -82,14 +125,29 @@ export default function Options() {
     const applyStatus = (status: PlaybackStatus) => {
       if (!mounted) return
       setPlaybackStatus(status)
-      if (status.source !== 'options-test') return
+      setStatusError(status.persistenceDegraded
+        ? 'Playback is working, but restart-safe status persistence is unavailable.'
+        : null)
+
+      const trackedSessionId = testSessionIdRef.current
+      if (!trackedSessionId) return
+      if (status.sessionId !== trackedSessionId) {
+        if (!['idle', 'completed', 'cancelled', 'failed'].includes(status.state)) {
+          testSessionIdRef.current = null
+          setTestStatus('error')
+          setTestError('Test speech was superseded by another playback request.')
+        }
+        return
+      }
       if (status.state === 'completed') {
+        testSessionIdRef.current = null
         setTestStatus('ok')
         setTestError(null)
       } else if (status.state === 'failed' || status.state === 'cancelled') {
+        testSessionIdRef.current = null
         setTestStatus('error')
         setTestError(status.error?.message ?? 'Test speech failed or was cancelled.')
-      } else if (status.state !== 'idle') {
+      } else {
         setTestStatus('sending')
         setTestError(null)
       }
@@ -101,9 +159,11 @@ export default function Options() {
       return false
     }
     chrome.runtime.onMessage.addListener(listener)
-    void chrome.runtime.sendMessage({ kind: 'SPEECH_STATUS' }).then((response) => {
-      if (isPlaybackStatus(response)) applyStatus(response)
-    }).catch(() => undefined)
+    void queryPlaybackStatus().then((result) => {
+      if (!mounted) return
+      if (result.ok) applyStatus(result.status)
+      else setStatusError(result.error.message)
+    })
 
     return () => {
       mounted = false
@@ -116,16 +176,38 @@ export default function Options() {
     return [{ name: voice, label: voice }, ...voicesList]
   }, [voice, voicesList])
 
-  async function sendControl(kind: 'PAUSE_SPEECH' | 'RESUME_SPEECH' | 'CANCEL_SPEECH') {
-    try { await chrome.runtime.sendMessage({ kind }) } catch (error) { console.warn(`readit: ${kind} failed`, error) }
+  async function commitTtsUrl(candidate: string) {
+    const trimmed = candidate.trim()
+    if (!isValidTtsUrl(trimmed)) {
+      setTtsUrlError('Enter a valid HTTP or HTTPS synthesis endpoint.')
+      return
+    }
+    try {
+      await saveSettings({ ttsUrl: trimmed })
+      persistedSettingsRef.current = { ...persistedSettingsRef.current, ttsUrl: trimmed }
+      setTtsUrl(trimmed)
+      setTtsUrlDraft(trimmed)
+      setTtsUrlError(null)
+      setSettingsError(null)
+      setServerHealth('unknown')
+    } catch {
+      setTtsUrlError('The TTS endpoint could not be saved. Try again.')
+    }
+  }
+
+  async function handleControl(action: PlaybackControlAction) {
+    setControlError(null)
+    const response = await sendPlaybackControl(action, playbackStatus?.sessionId ?? undefined)
+    if (!response.ok) {
+      setControlError(response.error.message)
+      return
+    }
+    setPlaybackStatus((current) => current ? { ...current, state: response.state } : current)
   }
 
   async function handleDebugFixture() {
-    try {
-      await chrome.runtime.sendMessage({ kind: 'READ_TEXT', text: DEBUG_PARAGRAPH_FIXTURE, source: 'debug-fixture' })
-    } catch (error) {
-      console.warn('readit: debug fixture failed', error)
-    }
+    const response = await requestReadText(DEBUG_PARAGRAPH_FIXTURE, 'debug-fixture')
+    if (!response.ok) setControlError(response.error.message)
   }
 
   async function handleTestSpeech() {
@@ -133,16 +215,14 @@ export default function Options() {
     if (!text || testStatus === 'sending') return
     setTestStatus('sending')
     setTestError(null)
-    try {
-      const response = await chrome.runtime.sendMessage({ kind: 'READ_TEXT', text, source: 'options-test' })
-      if (!response?.ok) {
-        setTestStatus('error')
-        setTestError(responseError(response, 'Unable to start test speech.'))
-      }
-    } catch (error) {
+    const response = await requestReadText(text, 'options-test')
+    if (!response.ok) {
+      testSessionIdRef.current = null
       setTestStatus('error')
-      setTestError(String(error))
+      setTestError(response.error.message)
+      return
     }
+    testSessionIdRef.current = response.sessionId
   }
 
   async function testServer() {
@@ -153,11 +233,11 @@ export default function Options() {
       if (response?.ok) setServerHealth('ok')
       else {
         setServerHealth('error')
-        setServerTestError(responseError(response, 'Server unavailable.'))
+        setServerTestError(typeof response?.error === 'string' ? response.error : 'Server unavailable.')
       }
-    } catch (error) {
+    } catch {
       setServerHealth('error')
-      setServerTestError(String(error))
+      setServerTestError('The server test could not be completed.')
     } finally {
       setServerTesting(false)
     }
@@ -172,25 +252,37 @@ export default function Options() {
           {voiceOptions.map((option) => <option key={option.name || 'default'} value={option.name}>{option.label}</option>)}
         </select>
         <p style={{ color: 'GrayText' }}>Choose a voice exposed by the configured TTS server/model.</p>
+        {voiceError && <div role="alert" style={{ color: '#8b0000' }}>{voiceError}</div>}
       </section>
 
       <section style={{ marginTop: 24 }}>
-        <label htmlFor="ttsUrl" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>TTS service URL (optional, opt-in)</label>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <input id="ttsUrl" type="text" value={ttsUrl} onChange={(event) => setTtsUrl(event.target.value)} style={{ width: 440, padding: 8 }} placeholder={DEFAULT_TTS_URL} />
-          <button onClick={() => setTtsUrl(DEFAULT_TTS_URL)} style={{ padding: '8px 10px' }}>Use local default</button>
+        <label htmlFor="ttsUrl" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>TTS synthesis endpoint</label>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            id="ttsUrl"
+            type="text"
+            value={ttsUrlDraft}
+            onChange={(event) => setTtsUrlDraft(event.target.value)}
+            style={{ width: 440, padding: 8 }}
+            placeholder={DEFAULT_TTS_URL}
+            aria-invalid={Boolean(ttsUrlError)}
+          />
+          <button onClick={() => commitTtsUrl(ttsUrlDraft)} style={{ padding: '8px 10px' }}>Save endpoint</button>
+          <button onClick={() => commitTtsUrl(DEFAULT_TTS_URL)} style={{ padding: '8px 10px' }}>Use local default</button>
         </div>
+        <div style={{ color: 'GrayText', marginTop: 6 }}>Saved endpoint: {ttsUrl}</div>
+        {ttsUrlError && <div role="alert" style={{ color: '#8b0000', marginTop: 6 }}>{ttsUrlError}</div>}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
           <button onClick={testServer} disabled={serverTesting} style={{ padding: '6px 10px' }}>{serverTesting ? 'Testing…' : 'Test server'}</button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ width: 12, height: 12, borderRadius: 12, background: serverHealth === 'ok' ? '#00c853' : serverHealth === 'error' ? '#d50000' : '#bdbdbd' }} />
             <div style={{ color: serverHealth === 'ok' ? '#006400' : serverHealth === 'error' ? '#8b0000' : 'GrayText' }}>
-              {serverHealth === 'ok' ? 'Server reachable' : serverHealth === 'error' ? `Server error${serverTestError ? `: ${serverTestError}` : ''}` : 'Server status unknown'}
+              {serverHealth === 'ok' ? 'Server accepting requests' : serverHealth === 'error' ? `Server error${serverTestError ? `: ${serverTestError}` : ''}` : 'Server status unknown'}
             </div>
           </div>
-          <button onClick={() => sendControl('PAUSE_SPEECH')} style={{ padding: '6px 10px' }}>Pause</button>
-          <button onClick={() => sendControl('RESUME_SPEECH')} style={{ padding: '6px 10px' }}>Resume</button>
-          <button onClick={() => sendControl('CANCEL_SPEECH')} style={{ padding: '6px 10px' }}>Stop</button>
+          <button onClick={() => handleControl('pause')} disabled={!isPausable(playbackStatus)} style={{ padding: '6px 10px' }}>Pause</button>
+          <button onClick={() => handleControl('resume')} disabled={playbackStatus?.state !== 'paused'} style={{ padding: '6px 10px' }}>Resume</button>
+          <button onClick={() => handleControl('cancel')} disabled={!isCancellable(playbackStatus)} style={{ padding: '6px 10px' }}>Stop</button>
           {showDebugFixture && <button onClick={handleDebugFixture} style={{ padding: '6px 10px' }}>Debug paragraph transitions</button>}
         </div>
         {playbackStatus && (
@@ -200,7 +292,9 @@ export default function Options() {
             {playbackStatus.totalParagraphs > 0 && `, paragraph ${playbackStatus.currentParagraph} of ${playbackStatus.totalParagraphs}`}
           </div>
         )}
-        <div style={{ color: 'GrayText', marginTop: 6 }}>Read It posts text to the configured synthesis endpoint. The default is {DEFAULT_TTS_URL}.</div>
+        {controlError && <div role="alert" style={{ color: '#8b0000', marginTop: 8 }}>{controlError}</div>}
+        {statusError && <div role="alert" style={{ color: '#8b0000', marginTop: 8 }}>{statusError}</div>}
+        <div style={{ color: 'GrayText', marginTop: 6 }}>Read It posts selected text to the saved synthesis endpoint.</div>
       </section>
 
       <section>
@@ -216,12 +310,15 @@ export default function Options() {
           <button onClick={handleTestSpeech} disabled={testStatus === 'sending'} style={{ padding: '8px 12px' }}>
             {testStatus === 'sending' ? 'Playing…' : 'Test speech'}
           </button>
-          <span style={{ marginLeft: 12 }}>
+          <span aria-live="polite" style={{ marginLeft: 12 }}>
             {testStatus === 'ok' && <span style={{ color: '#006400' }}> Completed</span>}
-            {testStatus === 'error' && <span style={{ color: '#8b0000' }}> Error: {testError}</span>}
+            {testStatus === 'error' && <span role="alert" style={{ color: '#8b0000' }}> Error: {testError}</span>}
           </span>
         </div>
       </section>
+
+      {settingsWarning && <div role="status" style={{ marginTop: 16, color: '#7a4b00' }}>{settingsWarning}</div>}
+      {settingsError && <div role="alert" style={{ marginTop: 16, color: '#8b0000' }}>{settingsError}</div>}
     </main>
   )
 }
