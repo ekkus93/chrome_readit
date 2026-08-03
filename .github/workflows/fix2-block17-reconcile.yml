@@ -36,13 +36,12 @@ jobs:
           grep -F 'Run `30854518366` passed' docker/coqui-local/README.md
           test -f docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_BLOCK17_RECONCILIATION_2026-08-03.md
 
-      - name: Commit reconciled documentation and remove temporary files
+      - name: Commit reconciled documentation
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git rm .github/workflows/fix2-block17-reconcile.yml .github/fix2-block17-reconcile.py
           git add \
             README.md \
             docker/coqui-local/README.md \
