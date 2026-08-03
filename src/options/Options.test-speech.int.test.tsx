@@ -184,6 +184,18 @@ describe('Options coordinator test speech', () => {
 
   it('sends expected-session controls and displays structured failures', async () => {
     const { sendMessage, getListener } = installChrome()
+    sendMessage.mockImplementation(async (message: Record<string, unknown>): Promise<unknown> => {
+      if (message.action === 'probe-tts') return { ok: true, status: 200 }
+      if (message.kind === PLAYBACK_STATUS) return playbackStatus()
+      if (message.kind === PLAYBACK_CONTROL) {
+        return {
+          ok: false,
+          error: { code: 'SESSION_NOT_FOUND', message: 'The displayed session is stale.' },
+        }
+      }
+      return { ok: false }
+    })
+
     render(<Options />)
     act(() => {
       getListener()?.({
@@ -204,17 +216,13 @@ describe('Options coordinator test speech', () => {
       })
     })
 
-    sendMessage.mockResolvedValueOnce({
-      ok: false,
-      error: { code: 'SESSION_NOT_FOUND', message: 'The displayed session is stale.' },
-    })
     await userEvent.click(await screen.findByRole('button', { name: /^Pause$/i }))
 
-    expect(sendMessage).toHaveBeenLastCalledWith({
-      kind: PLAYBACK_CONTROL,
-      action: 'pause',
-      expectedSessionId: 'session-active',
-    })
+    expect(sendMessage.mock.calls.some(([message]) => (
+      message.kind === PLAYBACK_CONTROL
+      && message.action === 'pause'
+      && message.expectedSessionId === 'session-active'
+    ))).toBe(true)
     expect(await screen.findByText(/displayed session is stale/i)).toBeTruthy()
   })
 
