@@ -1,0 +1,65 @@
+name: FIX2 One-Shot Docker Healthcheck Wiring
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/fix2-one-shot-docker-healthcheck.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout latest master
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Wire queue-aware healthcheck
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path('docker/coqui-local/Dockerfile')
+          text = path.read_text()
+          text = text.replace(
+              'COPY --chown=readit:readit app.py README.md ./',
+              'COPY --chown=readit:readit app.py healthcheck.py README.md ./',
+          )
+          old = '''HEALTHCHECK --interval=30s --timeout=5s --start-period=15m --retries=3 \\
+              CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5002/api/ready', timeout=4)" || exit 1
+          '''
+          new = '''HEALTHCHECK --interval=30s --timeout=5s --start-period=15m --retries=3 \\
+              CMD ["python", "/app/healthcheck.py"]
+          '''
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('expected Docker healthcheck block was not found')
+              text = text.replace(old, new, 1)
+          if 'healthcheck.py README.md' not in text:
+              raise SystemExit('healthcheck.py was not copied into the runtime image')
+          path.write_text(text)
+          PY
+
+      - name: Validate healthcheck tests and Dockerfile
+        run: |
+          python -m pip install --disable-pip-version-check -r docker/coqui-local/requirements-test.txt
+          python -m pytest -q docker/coqui-local/tests/test_healthcheck.py
+          grep -q 'CMD \["python", "/app/healthcheck.py"\]' docker/coqui-local/Dockerfile
+
+      - name: Remove temporary workflow
+        run: rm -f .github/workflows/fix2-one-shot-docker-healthcheck.yml
+
+      - name: Commit and push safely
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add docker/coqui-local/Dockerfile .github/workflows/fix2-one-shot-docker-healthcheck.yml
+          git commit -m "Use queue-aware Coqui healthcheck"
+          git pull --rebase origin master
+          git push origin HEAD:master
