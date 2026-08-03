@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Popup from './Popup'
 
@@ -32,6 +32,11 @@ describe('Popup playback control buttons', () => {
       }
       return Promise.resolve(new Response(null, { status: 404 }))
     }))
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
   })
 
   function getGlobal(path: string[]) {
