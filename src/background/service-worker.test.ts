@@ -5,7 +5,7 @@ vi.mock('../lib/storage', () => ({
 }))
 
 import { getSettings } from '../lib/storage'
-import { PLAYBACK_CONTROL, PLAYBACK_STATUS, START_PLAYBACK } from '../lib/playback-protocol'
+import { PLAYBACK_CONTROL, PLAYBACK_STATUS, START_PLAYBACK, type PlaybackStatus } from '../lib/playback-protocol'
 
 function installChromeMock() {
   const sessionValues: Record<string, unknown> = {}
@@ -42,7 +42,7 @@ function installChromeMock() {
   return { chromeMock, sessionValues }
 }
 
-function status(overrides: Record<string, unknown> = {}) {
+function status(overrides: Partial<PlaybackStatus> = {}): PlaybackStatus {
   return {
     kind: PLAYBACK_STATUS,
     sequence: 1,
@@ -198,8 +198,7 @@ describe('background playback router', () => {
       totalChunks: 4,
       totalParagraphs: 2,
     }))
-    chromeMock.runtime.sendMessage.mockResolvedValue({
-      kind: PLAYBACK_STATUS,
+    chromeMock.runtime.sendMessage.mockResolvedValue(status({
       sequence: 0,
       state: 'idle',
       sessionId: null,
@@ -209,7 +208,7 @@ describe('background playback router', () => {
       totalChunks: 0,
       currentParagraph: 0,
       totalParagraphs: 0,
-    })
+    }))
 
     const interrupted = await module.__testing.queryPlaybackStatus()
 
