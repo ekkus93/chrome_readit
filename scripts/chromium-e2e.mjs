@@ -7,8 +7,13 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const EXTENSION_DIR = resolve(ROOT, 'dist')
+const FIXTURE_PATH = resolve(ROOT, 'fixtures/playback-collision.txt')
 const CHROME_PATH = process.env.CHROME_PATH || process.env.CHROMIUM_PATH || 'google-chrome'
 const EXTENSION_NAME = 'Read It – Reader'
+const START_PLAYBACK = 'READ_TEXT'
+const PLAYBACK_STATUS = 'PLAYBACK_STATUS'
+const PLAYBACK_CONTROL = 'PLAYBACK_CONTROL'
+const DIAGNOSTICS = 'PLAYBACK_DIAGNOSTICS'
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -18,7 +23,7 @@ function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds))
 }
 
-async function waitFor(label, operation, timeoutMs = 30_000, intervalMs = 50) {
+async function waitFor(label, operation, timeoutMs = 30_000, intervalMs = 25) {
   const deadline = Date.now() + timeoutMs
   let lastError
   while (Date.now() < deadline) {
@@ -33,7 +38,7 @@ async function waitFor(label, operation, timeoutMs = 30_000, intervalMs = 50) {
   throw new Error(`${label} timed out${lastError ? `: ${lastError}` : ''}`)
 }
 
-function makeSilentWav(durationMs = 300, sampleRate = 8_000) {
+function makeSilentWav(durationMs = 120, sampleRate = 8_000) {
   const sampleCount = Math.max(1, Math.floor(sampleRate * durationMs / 1_000))
   const dataLength = sampleCount * 2
   const buffer = Buffer.alloc(44 + dataLength)
@@ -61,7 +66,6 @@ async function readJsonBody(request) {
 
 async function startFakeTtsServer() {
   const requests = []
-  const audio = makeSilentWav()
   const server = createServer(async (request, response) => {
     response.setHeader('access-control-allow-origin', '*')
     if (request.method === 'OPTIONS') {
@@ -80,7 +84,16 @@ async function startFakeTtsServer() {
     }
     if (request.method === 'GET' && request.url === '/api/ready') {
       response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ ok: true, ready: true }))
+      response.end(JSON.stringify({
+        ok: true,
+        ready: true,
+        accepting_requests: true,
+        queue_capacity: 4,
+        slots_in_use: 0,
+        active_inference: 0,
+        queued_futures: 0,
+        timed_out_running: 0,
+      }))
       return
     }
     if (request.method === 'GET' && request.url === '/api/voices') {
@@ -91,15 +104,20 @@ async function startFakeTtsServer() {
     if (request.method === 'POST' && request.url === '/api/tts') {
       try {
         const body = await readJsonBody(request)
-        requests.push({ text: String(body.text ?? ''), voice: String(body.voice ?? '') })
+        const text = String(body.text ?? '')
+        const voice = String(body.voice ?? '')
+        requests.push({ text, voice, receivedAtMs: performance.now() })
+        const invalid = text.includes('INVALID_AUDIO_FIXTURE')
+        const durationMs = text.includes('RESTART_CONTROL_FIXTURE') ? 900 : 120
+        const audio = invalid ? Buffer.from('not-a-valid-wave') : makeSilentWav(durationMs)
         response.writeHead(200, {
           'content-type': 'audio/wav',
           'content-length': String(audio.length),
         })
         response.end(audio)
-      } catch (error) {
+      } catch {
         response.writeHead(400, { 'content-type': 'application/json' })
-        response.end(JSON.stringify({ error: String(error) }))
+        response.end(JSON.stringify({ ok: false, error: { code: 'INVALID_REQUEST', message: 'Invalid request.' } }))
       }
       return
     }
@@ -190,7 +208,7 @@ async function listTargets(port) {
 async function launchChrome() {
   const profileDirectory = await mkdtemp(resolve(tmpdir(), 'chrome-readit-e2e-'))
   const stderr = []
-  const process = spawn(CHROME_PATH, [
+  const chromeProcess = spawn(CHROME_PATH, [
     `--user-data-dir=${profileDirectory}`,
     `--disable-extensions-except=${EXTENSION_DIR}`,
     `--load-extension=${EXTENSION_DIR}`,
@@ -207,10 +225,10 @@ async function launchChrome() {
     '--remote-debugging-port=0',
     'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe'] })
-  process.stderr.setEncoding('utf8')
-  process.stderr.on('data', (chunk) => {
+  chromeProcess.stderr.setEncoding('utf8')
+  chromeProcess.stderr.on('data', (chunk) => {
     stderr.push(chunk)
-    if (stderr.join('').length > 20_000) stderr.shift()
+    if (stderr.join('').length > 30_000) stderr.shift()
   })
 
   const activePort = await waitFor('Chrome DevTools port', async () => {
@@ -222,14 +240,14 @@ async function launchChrome() {
 
   return {
     ...activePort,
-    process,
+    process: chromeProcess,
     profileDirectory,
     stderr,
     async close() {
-      process.kill('SIGTERM')
+      chromeProcess.kill('SIGTERM')
       await Promise.race([
-        new Promise((resolveExit) => process.once('exit', resolveExit)),
-        delay(3_000).then(() => process.kill('SIGKILL')),
+        new Promise((resolveExit) => chromeProcess.once('exit', resolveExit)),
+        delay(3_000).then(() => chromeProcess.kill('SIGKILL')),
       ])
       await rm(profileDirectory, { recursive: true, force: true })
     },
@@ -257,22 +275,6 @@ async function sendExtensionMessage(cdp, sessionId, message) {
   )
 }
 
-function assertNoOverlappingChunks(events) {
-  let activeChunk = null
-  for (const event of events) {
-    if (event.event === 'accepted') activeChunk = null
-    if (event.event === 'chunk-started') {
-      assert(activeChunk === null, `Chunk ${event.chunkId} started while ${activeChunk} was active`)
-      activeChunk = event.chunkId
-    }
-    if (event.event === 'chunk-ended') {
-      assert(activeChunk === event.chunkId, `Chunk ${event.chunkId} ended while ${activeChunk} was active`)
-      activeChunk = null
-    }
-    if (event.event === 'completed' || event.event === 'cancelled' || event.event === 'failed') activeChunk = null
-  }
-}
-
 async function findReadItWorkerTarget(cdp, port) {
   const targets = await listTargets(port)
   const workers = targets.filter((target) => (
@@ -291,18 +293,297 @@ async function findReadItWorkerTarget(cdp, port) {
       const name = await evaluate(cdp, probeSessionId, 'chrome.runtime?.getManifest?.().name')
       if (name === EXTENSION_NAME) return target
     } catch {
-      // Ignore unrelated or disappearing extension targets.
+      // Unrelated or disappearing extension targets are expected while Chrome
+      // starts; final target discovery remains fail-closed through waitFor.
     } finally {
       if (probeSessionId) {
-        await cdp.send('Target.detachFromTarget', { sessionId: probeSessionId }).catch(() => {})
+        await cdp.send('Target.detachFromTarget', { sessionId: probeSessionId }).catch(() => undefined)
       }
     }
   }
-
   return null
 }
 
+async function createExtensionPage(cdp, extensionId, path = 'src/popup.html') {
+  const created = await cdp.send('Target.createTarget', { url: `chrome-extension://${extensionId}/${path}` })
+  const attached = await cdp.send('Target.attachToTarget', { targetId: created.targetId, flatten: true })
+  const sessionId = attached.sessionId
+  await cdp.send('Runtime.enable', {}, sessionId)
+  await waitFor(`extension page ${path}`, async () => (
+    await evaluate(cdp, sessionId, 'document.readyState') === 'complete'
+  ))
+  return { targetId: created.targetId, sessionId }
+}
+
+async function setSettings(cdp, sessionId, settings) {
+  await evaluate(cdp, sessionId, `chrome.storage.sync.set(${JSON.stringify(settings)})`)
+}
+
+async function queryStatus(cdp, sessionId) {
+  return await sendExtensionMessage(cdp, sessionId, { kind: PLAYBACK_STATUS })
+}
+
+async function queryDiagnostics(cdp, sessionId) {
+  const diagnostics = await sendExtensionMessage(cdp, sessionId, { kind: DIAGNOSTICS })
+  assert(diagnostics?.ok === true, 'Playback diagnostics were unavailable in the test build')
+  return diagnostics
+}
+
+async function waitForState(cdp, sessionId, playbackSessionId, states, timeoutMs = 20_000) {
+  const allowed = new Set(Array.isArray(states) ? states : [states])
+  return await waitFor(`session ${playbackSessionId} state ${[...allowed].join('/')}`, async () => {
+    const status = await queryStatus(cdp, sessionId)
+    return status?.sessionId === playbackSessionId && allowed.has(status.state) ? status : null
+  }, timeoutMs)
+}
+
+function normalizeSemanticText(value) {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function assertEventIntervals(events) {
+  let active = null
+  for (const event of events) {
+    if (event.event === 'accepted') {
+      assert(active === null, `Session ${event.status.sessionId} was accepted while ${active?.chunkId} remained active`)
+    }
+    if (event.event === 'chunk-started') {
+      assert(active === null, `Chunk ${event.chunkId} started while ${active?.chunkId} was active`)
+      active = { chunkId: event.chunkId, sessionId: event.status.sessionId }
+    }
+    if (event.event === 'chunk-ended') {
+      assert(active?.chunkId === event.chunkId, `Chunk ${event.chunkId} ended while ${active?.chunkId ?? 'none'} was active`)
+      active = null
+    }
+    if (['completed', 'cancelled', 'superseded', 'failed'].includes(event.event)
+      && active?.sessionId === event.status.sessionId) active = null
+  }
+  assert(active === null, `Diagnostic stream ended with ${active?.chunkId} active`)
+}
+
+function expectedGapMs(transition, rate) {
+  const base = { continuation: 60, sentence: 180, paragraph: 550 }
+  const minimum = { continuation: 35, sentence: 120, paragraph: 350 }
+  return Math.max(minimum[transition], Math.round(base[transition] / Math.sqrt(rate)))
+}
+
+function measuredTransitionGaps(events) {
+  const output = []
+  let ended = null
+  for (const event of events) {
+    if (event.event === 'chunk-ended') ended = event
+    if (event.event === 'chunk-started' && ended) {
+      output.push({
+        transition: ended.transition,
+        gapMs: event.atMs - ended.atMs,
+        fromChunk: ended.chunkId,
+        toChunk: event.chunkId,
+      })
+      ended = null
+    }
+  }
+  return output
+}
+
+function assertPlayerDelta(before, after, expectedChunks, label) {
+  assert(after.player.activePlayerCount === 0, `${label}: player remained active after terminal status`)
+  assert(after.player.maxActivePlayerCount <= 1, `${label}: max active players was ${after.player.maxActivePlayerCount}`)
+  assert(after.player.invariantViolationCount === 0, `${label}: player invariant violations were recorded`)
+  assert(after.player.playAttemptCount - before.player.playAttemptCount === expectedChunks, `${label}: play-attempt count mismatch`)
+  assert(after.player.successfulPlayStartCount - before.player.successfulPlayStartCount === expectedChunks, `${label}: successful-start count mismatch`)
+  assert(after.player.settlementCount - before.player.settlementCount === expectedChunks, `${label}: settlement count mismatch`)
+}
+
+function transitionFixture() {
+  const sentenceOne = `Sentence alpha ${'alpha '.repeat(45).trim()}.`
+  const sentenceTwo = `Sentence beta ${'beta '.repeat(45).trim()}.`
+  const oversized = `Oversized continuation begins; ${'continuation '.repeat(55).trim()}.`
+  return `${sentenceOne} ${sentenceTwo}\n\n${oversized}`
+}
+
+async function runCompletedSession({ cdp, pageSessionId, fakeTts, text, source, rate, label }) {
+  await setSettings(cdp, pageSessionId, { rate })
+  const diagnosticsBefore = await queryDiagnostics(cdp, pageSessionId)
+  const requestMarker = fakeTts.requests.length
+  const start = await sendExtensionMessage(cdp, pageSessionId, { kind: START_PLAYBACK, source, text })
+  assert(start?.ok === true, `${label}: playback was rejected: ${JSON.stringify(start)}`)
+  const terminal = await waitForState(cdp, pageSessionId, start.sessionId, 'completed', 30_000)
+  const diagnosticsAfter = await queryDiagnostics(cdp, pageSessionId)
+  const events = diagnosticsAfter.events.filter((event) => event.status.sessionId === start.sessionId)
+  const requests = fakeTts.requests.slice(requestMarker)
+
+  assertEventIntervals(events)
+  assert(requests.length === terminal.totalChunks, `${label}: synthesized ${requests.length}, expected ${terminal.totalChunks}`)
+  assertPlayerDelta(diagnosticsBefore, diagnosticsAfter, terminal.totalChunks, label)
+  return { start, terminal, events, requests, diagnosticsBefore, diagnosticsAfter }
+}
+
+async function verifyCanonicalFixture(context, fixture) {
+  const result = await runCompletedSession({
+    ...context,
+    text: fixture,
+    source: 'debug-fixture',
+    rate: 4,
+    label: 'canonical collision fixture',
+  })
+  assert(
+    normalizeSemanticText(result.requests.map((request) => request.text).join(' ')) === normalizeSemanticText(fixture),
+    'Canonical fixture text was dropped, duplicated, or reordered',
+  )
+  assert(result.requests.some((request) => request.text.includes('clause; it must not force another synthesis request.')), 'Semicolon clause was not preserved')
+  assert(result.requests.some((request) => request.text.includes('3.14') && request.text.includes('1.2.3')), 'Decimal/version text was damaged')
+  assert(result.requests.some((request) => request.text.includes('example.com') && request.text.includes('reader@example.com')), 'Domain/email text was damaged')
+}
+
+async function verifyPacingMatrix(context) {
+  const text = transitionFixture()
+  for (const rate of [0.5, 1, 2, 4, 10]) {
+    const result = await runCompletedSession({
+      ...context,
+      text,
+      source: 'debug-fixture',
+      rate,
+      label: `pacing rate ${rate}`,
+    })
+    const gaps = measuredTransitionGaps(result.events)
+    const observed = new Map()
+    for (const gap of gaps) {
+      if (!['continuation', 'sentence', 'paragraph'].includes(gap.transition)) continue
+      const required = expectedGapMs(gap.transition, rate)
+      assert(gap.gapMs >= required - 20, `Rate ${rate} ${gap.transition} gap ${gap.gapMs}ms was below ${required}ms`)
+      if (!observed.has(gap.transition)) observed.set(gap.transition, gap.gapMs)
+    }
+    for (const transition of ['continuation', 'sentence', 'paragraph']) {
+      assert(observed.has(transition), `Rate ${rate} did not exercise a ${transition} transition`)
+    }
+    assert(observed.get('paragraph') > observed.get('sentence'), `Rate ${rate}: paragraph gap did not exceed sentence gap`)
+    assert(observed.get('sentence') > observed.get('continuation'), `Rate ${rate}: sentence gap did not exceed continuation gap`)
+  }
+}
+
+async function verifyMixedSourceReplacement(context) {
+  const { cdp, pageSessionId } = context
+  await setSettings(cdp, pageSessionId, { rate: 0.5 })
+  const before = await queryDiagnostics(cdp, pageSessionId)
+  const starts = []
+  const sources = ['selection', 'popup-test', 'options-test', 'selection', 'debug-fixture']
+  for (let index = 0; index < sources.length; index += 1) {
+    const start = await sendExtensionMessage(cdp, pageSessionId, {
+      kind: START_PLAYBACK,
+      source: sources[index],
+      text: `Replacement ${index} paragraph one.\n\nReplacement ${index} paragraph two.\n\nReplacement ${index} paragraph three.`,
+    })
+    assert(start?.ok === true, `Replacement ${index} failed to start`)
+    starts.push(start)
+    await waitForState(cdp, pageSessionId, start.sessionId, ['synthesizing', 'playing', 'waiting'])
+  }
+  await waitForState(cdp, pageSessionId, starts.at(-1).sessionId, 'completed')
+  const after = await queryDiagnostics(cdp, pageSessionId)
+  const marker = before.events.length
+  const events = after.events.slice(marker)
+  assertEventIntervals(events)
+  assert(after.player.maxActivePlayerCount <= 1, 'Mixed replacement exceeded one active player')
+  assert(after.player.invariantViolationCount === 0, 'Mixed replacement recorded a player invariant violation')
+  for (const old of starts.slice(0, -1)) {
+    assert(events.some((event) => event.event === 'superseded' && event.status.sessionId === old.sessionId), `Session ${old.sessionId} lacked superseded event`)
+    assert(!events.some((event) => event.event === 'completed' && event.status.sessionId === old.sessionId), `Superseded session ${old.sessionId} completed`)
+  }
+}
+
+async function verifyInvalidAudioFailure(context) {
+  const { cdp, pageSessionId } = context
+  const before = await queryDiagnostics(cdp, pageSessionId)
+  const start = await sendExtensionMessage(cdp, pageSessionId, {
+    kind: START_PLAYBACK,
+    source: 'debug-fixture',
+    text: 'INVALID_AUDIO_FIXTURE.',
+  })
+  assert(start?.ok === true, 'Invalid-audio session was not accepted')
+  const failed = await waitForState(cdp, pageSessionId, start.sessionId, 'failed')
+  assert(['AUDIO_PLAYBACK_FAILED', 'INTERNAL_PLAYBACK_ERROR'].includes(failed.error?.code), `Unexpected invalid-audio error ${failed.error?.code}`)
+  const after = await queryDiagnostics(cdp, pageSessionId)
+  assert(after.player.activePlayerCount === 0, 'Invalid audio left a player active')
+  assert(after.player.maxActivePlayerCount <= 1, 'Invalid audio exceeded one active player')
+  assert(after.player.settlementCount - before.player.settlementCount === 1, 'Invalid audio was not settled exactly once')
+}
+
+async function terminateWorker(cdp, chromePort, extensionId) {
+  const worker = (await listTargets(chromePort)).find((target) => (
+    target.type === 'service_worker' && String(target.url).startsWith(`chrome-extension://${extensionId}/`)
+  ))
+  assert(worker, 'Unable to find the active service worker target')
+  const closed = await cdp.send('Target.closeTarget', { targetId: worker.id })
+  assert(closed.success === true, 'Chrome refused to terminate the extension service worker')
+}
+
+async function verifyWorkerRestartContinuation(context) {
+  const { cdp, pageSessionId, chrome, extensionId, fakeTts } = context
+  await setSettings(cdp, pageSessionId, { rate: 1 })
+  const marker = fakeTts.requests.length
+  const start = await sendExtensionMessage(cdp, pageSessionId, {
+    kind: START_PLAYBACK,
+    source: 'selection',
+    text: 'Restart paragraph one.\n\nRestart paragraph two.\n\nRestart paragraph three.',
+  })
+  assert(start?.ok === true, 'Restart continuation session failed to start')
+  await waitForState(cdp, pageSessionId, start.sessionId, 'playing')
+  await terminateWorker(cdp, chrome.port, extensionId)
+
+  const reopened = await createExtensionPage(cdp, extensionId)
+  const restored = await waitForState(cdp, reopened.sessionId, start.sessionId, ['playing', 'waiting', 'synthesizing', 'completed'])
+  assert(restored.sessionId === start.sessionId, 'Reopened popup did not recover the active session')
+  await waitForState(cdp, reopened.sessionId, start.sessionId, 'completed', 30_000)
+  assert(fakeTts.requests.slice(marker).length === 3, 'Offscreen queue did not finish after worker termination')
+  return reopened
+}
+
+async function verifyWorkerRestartControls(context, reopenedPage) {
+  const { cdp, chrome, extensionId } = context
+  await setSettings(cdp, reopenedPage.sessionId, { rate: 1 })
+  const start = await sendExtensionMessage(cdp, reopenedPage.sessionId, {
+    kind: START_PLAYBACK,
+    source: 'selection',
+    text: 'RESTART_CONTROL_FIXTURE paragraph one.\n\nRESTART_CONTROL_FIXTURE paragraph two.',
+  })
+  assert(start?.ok === true, 'Restart control session failed to start')
+  await waitForState(cdp, reopenedPage.sessionId, start.sessionId, 'playing')
+  await terminateWorker(cdp, chrome.port, extensionId)
+
+  const controlPage = await createExtensionPage(cdp, extensionId)
+  await waitForState(cdp, controlPage.sessionId, start.sessionId, 'playing')
+  const pause = await sendExtensionMessage(cdp, controlPage.sessionId, {
+    kind: PLAYBACK_CONTROL,
+    action: 'pause',
+    expectedSessionId: start.sessionId,
+  })
+  assert(pause?.ok === true && pause.state === 'paused', 'Pause failed after worker restart')
+  const paused = await waitForState(cdp, controlPage.sessionId, start.sessionId, 'paused')
+  await delay(200)
+  const stillPaused = await queryStatus(cdp, controlPage.sessionId)
+  assert(stillPaused.state === 'paused' && stillPaused.currentChunk === paused.currentChunk, 'Paused restart session advanced')
+
+  const resume = await sendExtensionMessage(cdp, controlPage.sessionId, {
+    kind: PLAYBACK_CONTROL,
+    action: 'resume',
+    expectedSessionId: start.sessionId,
+  })
+  assert(resume?.ok === true, 'Resume failed after worker restart')
+  await waitForState(cdp, controlPage.sessionId, start.sessionId, 'playing')
+
+  const cancel = await sendExtensionMessage(cdp, controlPage.sessionId, {
+    kind: PLAYBACK_CONTROL,
+    action: 'cancel',
+    expectedSessionId: start.sessionId,
+  })
+  assert(cancel?.ok === true && cancel.state === 'cancelled', 'Cancel failed after worker restart')
+  await waitForState(cdp, controlPage.sessionId, start.sessionId, 'cancelled')
+  const diagnostics = await queryDiagnostics(cdp, controlPage.sessionId)
+  assert(diagnostics.player.activePlayerCount === 0, 'Restart cancel left a player active')
+  assert(diagnostics.player.maxActivePlayerCount <= 1, 'Restart controls exceeded one active player')
+}
+
 async function main() {
+  const fixture = (await readFile(FIXTURE_PATH, 'utf8')).trim()
   const fakeTts = await startFakeTtsServer()
   const chrome = await launchChrome()
   const cdp = new CdpConnection(`ws://127.0.0.1:${chrome.port}${chrome.browserPath}`)
@@ -314,149 +595,45 @@ async function main() {
       () => findReadItWorkerTarget(cdp, chrome.port),
     )
     const extensionId = new URL(workerTarget.url).host
-
-    const workerAttached = await cdp.send('Target.attachToTarget', {
-      targetId: workerTarget.id,
-      flatten: true,
-    })
-    const workerSessionId = workerAttached.sessionId
-    await cdp.send('Runtime.enable', {}, workerSessionId)
+    const page = await createExtensionPage(cdp, extensionId)
     const ttsUrl = `http://127.0.0.1:${fakeTts.port}/api/tts`
-    await evaluate(cdp, workerSessionId, `chrome.storage.sync.set(${JSON.stringify({
-      ttsUrl,
-      voice: 'p225',
-      rate: 10,
-    })})`)
-    await cdp.send('Target.detachFromTarget', { sessionId: workerSessionId })
+    await setSettings(cdp, page.sessionId, { ttsUrl, voice: 'p225', rate: 1 })
 
-    const created = await cdp.send('Target.createTarget', {
-      url: `chrome-extension://${extensionId}/src/popup.html`,
-    })
-    const attached = await cdp.send('Target.attachToTarget', {
-      targetId: created.targetId,
-      flatten: true,
-    })
-    const sessionId = attached.sessionId
-    await cdp.send('Runtime.enable', {}, sessionId)
-    await waitFor('extension test page', async () => (
-      await evaluate(cdp, sessionId, 'document.readyState') === 'complete'
-    ))
+    const context = {
+      cdp,
+      pageSessionId: page.sessionId,
+      fakeTts,
+      chrome,
+      extensionId,
+    }
+    await verifyCanonicalFixture(context, fixture)
+    await verifyPacingMatrix(context)
+    await verifyMixedSourceReplacement(context)
+    await verifyInvalidAudioFailure(context)
+    const reopened = await verifyWorkerRestartContinuation(context)
+    await verifyWorkerRestartControls(context, reopened)
 
-    const initialRequestCount = fakeTts.requests.length
-    const packedStart = await sendExtensionMessage(cdp, sessionId, {
-      kind: 'READ_TEXT',
-      source: 'debug-fixture',
-      text: 'Short one. Short two. A semicolon joins this clause; it stays together.\n\nSecond paragraph.',
-    })
-    assert(packedStart?.ok === true, `Packed playback was rejected: ${JSON.stringify(packedStart)}`)
-
-    await waitFor('packed playback completion', async () => {
-      const status = await sendExtensionMessage(cdp, sessionId, { kind: 'SPEECH_STATUS' })
-      return status?.sessionId === packedStart.sessionId && status.state === 'completed'
-    }, 15_000)
-
-    const packedRequests = fakeTts.requests.slice(initialRequestCount)
-    assert(packedRequests.length === 2, `Expected two packed paragraph requests, received ${packedRequests.length}`)
-    assert(packedRequests[0].text.includes('Short one. Short two.'), 'Short sentences were not packed together')
-    assert(packedRequests[0].text.includes('clause; it stays together.'), 'Semicolon text was split incorrectly')
-
-    const packedDiagnostics = await sendExtensionMessage(cdp, sessionId, { kind: 'PLAYBACK_DIAGNOSTICS' })
-    assert(packedDiagnostics?.ok === true, 'Playback diagnostics were unavailable in the test build')
-    const packedEvents = packedDiagnostics.events.filter((event) => event.status.sessionId === packedStart.sessionId)
-    assertNoOverlappingChunks(packedEvents)
-    const firstEnd = packedEvents.find((event) => event.event === 'chunk-ended')
-    const secondStart = packedEvents.filter((event) => event.event === 'chunk-started')[1]
-    assert(firstEnd && secondStart, 'Expected two chunk intervals in diagnostics')
-    assert(secondStart.atMs - firstEnd.atMs >= 300, 'Paragraph pacing collapsed below the bounded minimum')
-
-    const replacementMarker = packedDiagnostics.events.length
-    const oldStart = await sendExtensionMessage(cdp, sessionId, {
-      kind: 'READ_TEXT',
-      source: 'selection',
-      text: 'Old paragraph one.\n\nOld paragraph two.\n\nOld paragraph three.',
-    })
-    assert(oldStart?.ok === true, 'Old replacement session failed to start')
-    await waitFor('old replacement session playback', async () => {
-      const status = await sendExtensionMessage(cdp, sessionId, { kind: 'SPEECH_STATUS' })
-      return status?.sessionId === oldStart.sessionId && status.state === 'playing'
-    })
-
-    const replacementStart = await sendExtensionMessage(cdp, sessionId, {
-      kind: 'READ_TEXT',
-      source: 'popup-test',
-      text: 'Replacement wins.',
-    })
-    assert(replacementStart?.ok === true, 'Replacement session failed to start')
-    assert(replacementStart.sessionId !== oldStart.sessionId, 'Replacement reused a session ID')
-    await waitFor('replacement completion', async () => {
-      const status = await sendExtensionMessage(cdp, sessionId, { kind: 'SPEECH_STATUS' })
-      return status?.sessionId === replacementStart.sessionId && status.state === 'completed'
-    })
-
-    const replacementDiagnostics = await sendExtensionMessage(cdp, sessionId, { kind: 'PLAYBACK_DIAGNOSTICS' })
-    const replacementEvents = replacementDiagnostics.events.slice(replacementMarker)
-    assertNoOverlappingChunks(replacementEvents)
-    assert(
-      replacementEvents.some((event) => event.event === 'completed' && event.status.sessionId === replacementStart.sessionId),
-      'Replacement session did not complete',
-    )
-    assert(
-      !replacementEvents.some((event) => event.event === 'completed' && event.status.sessionId === oldStart.sessionId),
-      'Superseded session completed after replacement',
-    )
-
-    const restartRequestMarker = fakeTts.requests.length
-    const restartStart = await sendExtensionMessage(cdp, sessionId, {
-      kind: 'READ_TEXT',
-      source: 'selection',
-      text: 'Restart paragraph one.\n\nRestart paragraph two.\n\nRestart paragraph three.',
-    })
-    assert(restartStart?.ok === true, 'Restart session failed to start')
-    await waitFor('restart session playback', async () => {
-      const status = await sendExtensionMessage(cdp, sessionId, { kind: 'SPEECH_STATUS' })
-      return status?.sessionId === restartStart.sessionId && status.state === 'playing'
-    })
-
-    const currentWorker = (await listTargets(chrome.port)).find((target) => (
-      target.type === 'service_worker' && String(target.url).startsWith(`chrome-extension://${extensionId}/`)
-    ))
-    assert(currentWorker, 'Unable to find the active service worker target')
-    const closed = await cdp.send('Target.closeTarget', { targetId: currentWorker.id })
-    assert(closed.success === true, 'Chrome refused to terminate the extension service worker')
-
-    await waitFor('playback completion after worker restart', async () => {
-      const status = await sendExtensionMessage(cdp, sessionId, { kind: 'SPEECH_STATUS' })
-      return status?.sessionId === restartStart.sessionId && status.state === 'completed'
-    }, 15_000)
-    assert(
-      fakeTts.requests.slice(restartRequestMarker).length === 3,
-      'Offscreen queue did not finish all chunks after service-worker termination',
-    )
-
-    const afterRestart = await sendExtensionMessage(cdp, sessionId, {
-      kind: 'READ_TEXT',
-      source: 'options-test',
-      text: 'After restart.',
-    })
-    assert(afterRestart?.ok === true, 'New playback failed after service-worker restart')
-    assert(afterRestart.sessionId !== restartStart.sessionId, 'Session ID collided across service-worker restart')
-    await waitFor('post-restart playback completion', async () => {
-      const status = await sendExtensionMessage(cdp, sessionId, { kind: 'SPEECH_STATUS' })
-      return status?.sessionId === afterRestart.sessionId && status.state === 'completed'
-    })
+    const finalDiagnostics = await queryDiagnostics(cdp, reopened.sessionId)
+    assert(finalDiagnostics.player.activePlayerCount === 0, 'Final active-player count was not zero')
+    assert(finalDiagnostics.player.maxActivePlayerCount <= 1, 'Final max active-player count exceeded one')
+    assert(finalDiagnostics.player.invariantViolationCount === 0, 'Final player diagnostics contained violations')
 
     console.log(JSON.stringify({
       ok: true,
       extensionId,
       synthesizedRequests: fakeTts.requests.length,
+      player: finalDiagnostics.player,
       verified: [
-        'sentence-packing',
-        'semicolon-preservation',
-        'bounded-paragraph-pacing',
-        'single-chunk-interval',
-        'stop-before-replace',
-        'service-worker-restart',
-        'restart-safe-session-ids',
+        'canonical-collision-fixture',
+        'semantic-text-integrity',
+        'rate-matrix-0.5-1-2-4-10',
+        'continuation-sentence-paragraph-gaps',
+        'direct-active-player-instrumentation',
+        'mixed-source-rapid-replacement',
+        'invalid-audio-terminal-failure',
+        'service-worker-restart-continuation',
+        'reopened-popup-status',
+        'post-restart-pause-resume-cancel',
       ],
     }, null, 2))
   } catch (error) {
