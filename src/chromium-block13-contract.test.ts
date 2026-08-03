@@ -46,10 +46,32 @@ describe('Chromium Block 13 matrix contract', () => {
     expect(matrix).toContain('HTMLMediaElement.prototype')
     expect(matrix).toContain("chrome.runtime.onMessage.addListener(listener)")
     expect(matrix).toContain('Target.closeTarget')
-    expect(matrix).toContain('Input.dispatchKeyEvent')
     expect(offscreen).not.toContain('__readitBlock13FaultState')
     expect(worker).not.toContain('__readitBlock13FaultState')
     expect(worker).not.toContain('BLOCK13_')
+  })
+
+  it('proves registered keyboard shortcuts use session-global control routing', () => {
+    const matrix = read('scripts/chromium-block13-e2e.mjs')
+    const manifest = read('src/manifest.ts')
+    const worker = read('src/background/service-worker.ts')
+
+    expect(matrix).toContain('chrome.commands.getAll()')
+    expect(matrix).toContain("['pause-speech', 'Alt+Shift+P']")
+    expect(matrix).toContain("['resume-speech', 'Alt+Shift+U']")
+    expect(matrix).toContain("['cancel-speech', 'Alt+Shift+C']")
+    expect(matrix).toContain("kind: PLAYBACK_CONTROL,\n    action: 'pause',\n  })")
+    expect(matrix).toContain("kind: PLAYBACK_CONTROL,\n    action: 'resume',\n  })")
+    expect(matrix).toContain("kind: PLAYBACK_CONTROL,\n    action: 'cancel',\n  })")
+    expect(manifest).toContain("'pause-speech'")
+    expect(manifest).toContain("default: 'Alt+Shift+P'")
+    expect(manifest).toContain("'resume-speech'")
+    expect(manifest).toContain("default: 'Alt+Shift+U'")
+    expect(manifest).toContain("'cancel-speech'")
+    expect(manifest).toContain("default: 'Alt+Shift+C'")
+    expect(worker).toContain("if (command === 'pause-speech') await routeControl('pause')")
+    expect(worker).toContain("if (command === 'resume-speech') await routeControl('resume')")
+    expect(worker).toContain("if (command === 'cancel-speech') await routeControl('cancel')")
   })
 
   it('retains fail-closed player and recovery assertions', () => {
