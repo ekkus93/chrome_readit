@@ -61,6 +61,20 @@ jobs:
           }
           NODE
 
+      - name: Build diagnostic extension bundle
+        run: npm run build:e2e
+
+      - name: Setup Chrome
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+
+      - name: Run real Chromium extension tests
+        env:
+          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: xvfb-run -a npm run test:chromium
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
