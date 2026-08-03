@@ -88,6 +88,10 @@ class InvalidVoiceError(ValueError):
     pass
 
 
+class BackendNotReadyError(RuntimeError):
+    pass
+
+
 ModelLoader = Callable[[ServiceConfig], TTSBackend]
 
 
@@ -285,7 +289,7 @@ class SynthesisRuntime:
         backend = self._backend
         executor = self._executor
         if not self.ready or backend is None or executor is None:
-            raise RuntimeError("TTS backend is not ready")
+            raise BackendNotReadyError("TTS backend is not ready")
 
         selected_voice = self._resolve_voice(voice)
         self._acquire_slot()
@@ -417,8 +421,11 @@ def create_app(
             raise_api_error(400, "INVALID_VOICE", str(error))
         except OverflowError:
             raise_api_error(429, "QUEUE_FULL", "The synthesis queue is full.")
-        except RuntimeError:
+        except BackendNotReadyError:
             raise_api_error(503, "NOT_READY", "The TTS model is not ready.")
+        except Exception:
+            LOGGER.exception("Synthesis submission failed")
+            raise_api_error(500, "INTERNAL_ERROR", "The TTS service failed unexpectedly.")
 
         try:
             completed_path = future.result(timeout=service_config.synthesis_timeout_seconds)
