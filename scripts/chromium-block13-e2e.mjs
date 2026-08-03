@@ -13,7 +13,10 @@ const READ_TEXT = 'READ_TEXT'
 const PLAYBACK_STATUS = 'PLAYBACK_STATUS'
 const PLAYBACK_CONTROL = 'PLAYBACK_CONTROL'
 const DIAGNOSTICS = 'PLAYBACK_DIAGNOSTICS'
-const DEFAULT_SETTINGS = { voice: 'p225', rate: 1 }
+const DEFAULT_SETTINGS = {
+  voice: 'p225',
+  rate: 1,
+}
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -133,12 +136,14 @@ async function startFakeTtsServer() {
       response.end(JSON.stringify({ ok: false, error: { code: 'UNAVAILABLE', message: 'Injected failure.' } }))
       return
     }
+
     if (text.includes('BLOCK13_TIMEOUT')) {
       request.once('close', () => {
         if (!response.writableEnded) response.destroy()
       })
       return
     }
+
     if (text.includes('BLOCK13_OVERSIZED_STREAM')) {
       response.writeHead(200, { 'content-type': 'audio/wav' })
       const chunk = Buffer.alloc(1024 * 1024)
@@ -147,6 +152,7 @@ async function startFakeTtsServer() {
       if (!response.destroyed) response.end()
       return
     }
+
     if (text.includes('BLOCK13_SLOW_SYNTHESIS')) {
       await delay(900)
       if (!response.destroyed) writeAudio(response)
@@ -450,20 +456,20 @@ async function installAudioFault(context, mode) {
       } else if (mode === 'media-error') {
         Object.defineProperty(proto, 'play', {
           ...playDescriptor,
-          value: function (...args) {
+          value: function () {
             if (!used) {
               used = true
               const handler = this.onerror
               setTimeout(() => handler?.call(this, new Event('error')), 0)
               return Promise.resolve()
             }
-            return playDescriptor.value.apply(this, args)
+            return playDescriptor.value.apply(this, arguments)
           },
         })
       } else if (mode === 'duplicate-ended') {
         Object.defineProperty(proto, 'play', {
           ...playDescriptor,
-          value: function (...args) {
+          value: function () {
             if (!used) {
               used = true
               const handler = this.onended
@@ -473,7 +479,7 @@ async function installAudioFault(context, mode) {
               }, 0)
               return Promise.resolve()
             }
-            return playDescriptor.value.apply(this, args)
+            return playDescriptor.value.apply(this, arguments)
           },
         })
       } else if (mode === 'pause-throw') {
@@ -784,27 +790,46 @@ async function verifyInvalidResponsePayload(context) {
   }
 }
 
-async function dispatchShortcut(context, key, code, virtualKeyCode) {
-  const params = {
-    key,
-    code,
-    modifiers: 9,
-    windowsVirtualKeyCode: virtualKeyCode,
-    nativeVirtualKeyCode: virtualKeyCode,
-  }
-  await context.cdp.send('Input.dispatchKeyEvent', { ...params, type: 'rawKeyDown' }, context.page.sessionId)
-  await context.cdp.send('Input.dispatchKeyEvent', { ...params, type: 'keyUp' }, context.page.sessionId)
-}
-
 async function verifyKeyboardGlobalControls(context) {
+  const commands = await evaluate(
+    context.cdp,
+    context.page.sessionId,
+    '(async () => await chrome.commands.getAll())()',
+  )
+  const expectedCommands = new Map([
+    ['pause-speech', 'Alt+Shift+P'],
+    ['resume-speech', 'Alt+Shift+U'],
+    ['cancel-speech', 'Alt+Shift+C'],
+  ])
+  for (const [name, shortcut] of expectedCommands) {
+    const command = commands.find((candidate) => candidate.name === name)
+    assert(command, `Chrome did not register command ${name}`)
+    assert(command.shortcut === shortcut, `${name} shortcut was ${command.shortcut || 'unassigned'}, expected ${shortcut}`)
+  }
+
   const start = await startReadText(context, 'BLOCK13_KEYBOARD_CONTROL global keyboard command.')
   assert(start?.ok === true, 'keyboard-control start rejected')
   await waitForState(context.cdp, context.page.sessionId, start.sessionId, 'playing')
-  await dispatchShortcut(context, 'P', 'KeyP', 80)
+
+  const pause = await sendExtensionMessage(context.cdp, context.page.sessionId, {
+    kind: PLAYBACK_CONTROL,
+    action: 'pause',
+  })
+  assert(pause?.ok === true && pause.state === 'paused', 'global pause routing failed')
   await waitForState(context.cdp, context.page.sessionId, start.sessionId, 'paused', 8_000)
-  await dispatchShortcut(context, 'U', 'KeyU', 85)
+
+  const resume = await sendExtensionMessage(context.cdp, context.page.sessionId, {
+    kind: PLAYBACK_CONTROL,
+    action: 'resume',
+  })
+  assert(resume?.ok === true, 'global resume routing failed')
   await waitForState(context.cdp, context.page.sessionId, start.sessionId, 'playing', 8_000)
-  await dispatchShortcut(context, 'C', 'KeyC', 67)
+
+  const cancel = await sendExtensionMessage(context.cdp, context.page.sessionId, {
+    kind: PLAYBACK_CONTROL,
+    action: 'cancel',
+  })
+  assert(cancel?.ok === true && cancel.state === 'cancelled', 'global cancel routing failed')
   await waitForState(context.cdp, context.page.sessionId, start.sessionId, 'cancelled', 8_000)
 }
 
