@@ -1,8 +1,8 @@
 # Chrome Read It FIX2 Real Coqui Validation Request
 
 **Requested:** 2026-08-03  
-**Request sequence:** 12  
-**Purpose:** Validate the normalized Popup/Options supersession contract and the complete real-Coqui evidence matrix on one exact final candidate.  
+**Request sequence:** 13  
+**Purpose:** Validate the complete Chromium Block 13 fault, restart, pacing, global-control, and offscreen-recovery matrix together with the real-Coqui evidence matrix on one exact final candidate.  
 **Ordinary CI:** The same commit must also pass `.github/workflows/ci.yml`.  
 **Runtime status:** GitHub issue `#3` is overwritten at workflow start and completion.
 
@@ -26,7 +26,15 @@ The same exact candidate must validate:
 
 - direct active-player instrumentation with a maximum count of one;
 - canonical fixture and rate-matrix playback;
-- service-worker restart and control routing;
+- rejected and synchronously thrown `audio.play()` calls;
+- media-error and duplicate-ended settlement;
+- fail-closed cleanup-failure injection and recovery;
+- TTS HTTP failure, timeout, and oversized streamed-response handling;
+- invalid offscreen response rejection;
+- service-worker restart during synthesis, paused playback, and transition waits;
+- pause/resume preservation of the remaining transition delay;
+- registered keyboard shortcuts and session-global control routing;
+- offscreen destruction, interruption classification, and unique-session recovery;
 - real foreground popup and Options interactions;
 - selection → popup → Options → selection → selection replacement;
 - explicit terminal `SESSION_SUPERSEDED` event normalization on Popup and Options;
