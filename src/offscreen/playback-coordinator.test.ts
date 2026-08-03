@@ -1,10 +1,25 @@
 import { describe, expect, it, vi } from 'vitest'
-import { START_PLAYBACK, type PlaybackEvent, type StartPlaybackRequest } from '../lib/playback-protocol'
-import { PlaybackCoordinator } from './playback-coordinator'
+import { createPlaybackError, START_PLAYBACK, type PlaybackEvent, type StartPlaybackRequest } from '../lib/playback-protocol'
+import { TtsClientError } from '../lib/tts-client'
+import { createBrowserPlaybackCoordinator, PlaybackCoordinator } from './playback-coordinator'
 
 class FakeAudio {
-  src = ''
-  playbackRate = 1
+  private source = ''
+  private rate = 1
+  sourceAssignmentFailure: Error | null = null
+  playbackRateAssignmentFailure: Error | null = null
+
+  get src(): string { return this.source }
+  set src(value: string) {
+    if (this.sourceAssignmentFailure) throw this.sourceAssignmentFailure
+    this.source = value
+  }
+
+  get playbackRate(): number { return this.rate }
+  set playbackRate(value: number) {
+    if (this.playbackRateAssignmentFailure) throw this.playbackRateAssignmentFailure
+    this.rate = value
+  }
   preload = ''
   onended: (() => void) | null = null
   onerror: (() => void) | null = null
@@ -18,15 +33,16 @@ class FakeAudio {
   synchronousPlayFailure: Error | null = null
   rejectedPlayFailure: Error | null = null
 
-  async play(): Promise<void> {
+  play(): Promise<void> {
     this.trace.push(`play:${this.src}`)
     if (this.synchronousPlayFailure) throw this.synchronousPlayFailure
-    if (this.rejectedPlayFailure) return await Promise.reject(this.rejectedPlayFailure)
+    if (this.rejectedPlayFailure) return Promise.reject(this.rejectedPlayFailure)
     if (!this.playing) {
       this.playing = true
       this.activeSources += 1
       this.maxActiveSources = Math.max(this.maxActiveSources, this.activeSources)
     }
+    return Promise.resolve()
   }
 
   pause(): void {
@@ -84,6 +100,7 @@ function lastIndexMatching(values: string[], predicate: (value: string) => boole
 }
 
 function harness(options: {
+  createObjectUrl?: (blob: Blob) => string
   revokeObjectUrl?: (url: string) => void
   fetchAudio?: () => Promise<{ bytes: ArrayBuffer; mime: string }>
 } = {}) {
@@ -96,7 +113,7 @@ function harness(options: {
   const revokeObjectUrl = vi.fn(options.revokeObjectUrl ?? (() => undefined))
   const coordinator = new PlaybackCoordinator({
     createAudio: () => audio as unknown as HTMLAudioElement,
-    createObjectUrl: () => `blob:test-${++urlCounter}`,
+    createObjectUrl: options.createObjectUrl ?? (() => `blob:test-${++urlCounter}`),
     revokeObjectUrl,
     fetchAudio,
     createSessionId: () => `session-${++sessionCounter}`,
@@ -409,5 +426,252 @@ describe('PlaybackCoordinator', () => {
       error: { code: 'SESSION_NOT_FOUND' },
     })
     expect(coordinator.getStatus()).toMatchObject({ sessionId: second.sessionId, state: 'playing' })
+  })
+})
+
+describe('PlaybackCoordinator additional failure coverage', () => {
+  it('rejects invalid text and unusable TTS endpoints before creating a session', async () => {
+    const { coordinator, fetchAudio } = harness()
+
+    await expect(coordinator.start(request('   ', 'empty'))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'NO_TEXT' },
+    })
+    await expect(coordinator.start({
+      ...request('Hello.', 'invalid-url'),
+      settings: { ...request('Hello.', 'invalid-url').settings, ttsUrl: 'not a url' },
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_TTS_URL' },
+    })
+    await expect(coordinator.start({
+      ...request('Hello.', 'host-play'),
+      settings: { ...request('Hello.', 'host-play').settings, ttsUrl: 'http://localhost:5002/api/tts/play' },
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'HOST_PLAY_ENDPOINT_FORBIDDEN' },
+    })
+    expect(fetchAudio).not.toHaveBeenCalled()
+    expect(coordinator.getStatus().state).toBe('idle')
+    expect(coordinator.getDiagnosticEvents()).toEqual([])
+  })
+
+  it.each(['object-url', 'source', 'rate'] as const)('fails closed when %s setup throws and permits recovery', async (stage) => {
+    let failObjectUrl = stage === 'object-url'
+    const { audio, coordinator } = harness({
+      createObjectUrl: () => {
+        if (failObjectUrl) throw new Error('object url failed')
+        return 'blob:recovered'
+      },
+    })
+    if (stage === 'source') audio.sourceAssignmentFailure = new Error('source failed')
+    if (stage === 'rate') audio.playbackRateAssignmentFailure = new Error('rate failed')
+
+    await coordinator.start(request('First.', `setup-${stage}`))
+    await vi.waitFor(() => expect(coordinator.getStatus().state).toBe('failed'))
+    expect(coordinator.getStatus().error).toMatchObject({
+      code: stage === 'source' ? 'AUDIO_CLEANUP_FAILED' : 'AUDIO_PLAYBACK_FAILED',
+      ...(stage === 'source' ? { stage: 'clear-source' } : {}),
+    })
+    expect(coordinator.getPlayerDiagnostics()).toMatchObject({
+      activePlayerCount: 0,
+      maxActivePlayerCount: 0,
+      invariantViolationCount: 0,
+    })
+
+    failObjectUrl = false
+    audio.sourceAssignmentFailure = null
+    audio.playbackRateAssignmentFailure = null
+    const recovered = await coordinator.start(request('Recovered.', `recovered-${stage}`))
+    expect(recovered.ok).toBe(true)
+    await waitForPlay(audio, 1)
+    audio.finish()
+    await vi.waitFor(() => expect(coordinator.getStatus().state).toBe('completed'))
+  })
+
+
+  it('accepts HTTPS synthesis endpoints through the same browser-owned path', async () => {
+    const { audio, coordinator, fetchAudio } = harness()
+    const httpsRequest = request('Secure endpoint.', 'https-request')
+    httpsRequest.settings.ttsUrl = 'https://tts.example.test/api/tts'
+
+    await expect(coordinator.start(httpsRequest)).resolves.toMatchObject({ ok: true, accepted: true })
+    await waitForPlay(audio, 1)
+    expect(fetchAudio).toHaveBeenCalledWith(expect.objectContaining({
+      url: 'https://tts.example.test/api/tts',
+    }))
+    audio.finish()
+    await vi.waitFor(() => expect(coordinator.getStatus().state).toBe('completed'))
+  })
+
+  it('preserves structured TTS client failures without reclassifying them', async () => {
+    const expected = createPlaybackError('TTS_HTTP_ERROR', 'The TTS service returned HTTP 503.', 503)
+    const { coordinator } = harness({
+      fetchAudio: async () => { throw new TtsClientError(expected) },
+    })
+
+    await coordinator.start(request('Hello.', 'structured-tts-error'))
+    await vi.waitFor(() => expect(coordinator.getStatus().state).toBe('failed'))
+    expect(coordinator.getStatus().error).toEqual(expected)
+  })
+
+  it('fails closed on pause cleanup failure and recovers only after cleanup succeeds', async () => {
+    const { audio, coordinator } = harness()
+    const started = await coordinator.start(request('Pause failure.', 'pause-failure'))
+    if (!started.ok) throw new Error('start failed')
+    await waitForPlay(audio, 1)
+    await waitForStartedPlayer(coordinator)
+    audio.pauseFailure = new Error('pause failed')
+
+    await expect(coordinator.control('pause', started.sessionId)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'AUDIO_CLEANUP_FAILED', stage: 'pause' },
+    })
+    expect(coordinator.getPlayerDiagnostics()).toMatchObject({
+      activePlayerCount: 1,
+      cleanupFailureCount: 2,
+      lastCleanupFailureStage: 'pause',
+    })
+
+    audio.pauseFailure = null
+    const recovered = await coordinator.start(request('Recovered.', 'pause-recovered'))
+    expect(recovered.ok).toBe(true)
+    await waitForPlay(audio, 2)
+    expect(coordinator.getPlayerDiagnostics().activePlayerCount).toBe(1)
+    audio.finish()
+    await vi.waitFor(() => expect(coordinator.getStatus().state).toBe('completed'))
+  })
+
+  it('fails a paused session when audio cannot resume and leaves no active player', async () => {
+    const { audio, coordinator } = harness()
+    const started = await coordinator.start(request('Resume failure.', 'resume-failure'))
+    if (!started.ok) throw new Error('start failed')
+    await waitForPlay(audio, 1)
+    await waitForStartedPlayer(coordinator)
+    await coordinator.control('pause', started.sessionId)
+    audio.rejectedPlayFailure = new Error('resume rejected')
+
+    await expect(coordinator.control('resume', started.sessionId)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'AUDIO_PLAYBACK_FAILED' },
+    })
+    expect(coordinator.getStatus().state).toBe('failed')
+    expect(coordinator.getPlayerDiagnostics().activePlayerCount).toBe(0)
+  })
+
+  it('pauses a transition wait, resumes it, and ignores the stale timeout completion', async () => {
+    const audio = new FakeAudio()
+    const sleepResolvers: Array<() => void> = []
+    const coordinator = new PlaybackCoordinator({
+      createAudio: () => audio as unknown as HTMLAudioElement,
+      createObjectUrl: (() => {
+        let index = 0
+        return () => `blob:transition-${++index}`
+      })(),
+      revokeObjectUrl: vi.fn(),
+      fetchAudio: vi.fn(async () => ({ bytes: new Uint8Array([1]).buffer, mime: 'audio/wav' })),
+      createSessionId: () => 'session-transition',
+      now: () => 0,
+      sleep: () => new Promise<void>((resolve) => sleepResolvers.push(resolve)),
+      emit: vi.fn(),
+    })
+
+    const started = await coordinator.start(request('First paragraph.\n\nSecond paragraph.', 'transition-wait'))
+    if (!started.ok) throw new Error('start failed')
+    await waitForPlay(audio, 1)
+    audio.finish()
+    await vi.waitFor(() => expect(coordinator.getStatus().state).toBe('waiting'))
+    await vi.waitFor(() => expect(sleepResolvers).toHaveLength(1))
+
+    await coordinator.control('pause', started.sessionId)
+    expect(coordinator.getStatus().state).toBe('paused')
+    await coordinator.control('resume', started.sessionId)
+    await vi.waitFor(() => expect(sleepResolvers).toHaveLength(2))
+
+    sleepResolvers[0]()
+    sleepResolvers[1]()
+    await waitForPlay(audio, 2)
+    audio.finish()
+    await vi.waitFor(() => expect(coordinator.getStatus().state).toBe('completed'))
+  })
+
+  it('bounds retained diagnostic events to the most recent 200 entries', async () => {
+    const { audio, coordinator } = harness()
+    for (let index = 0; index < 35; index += 1) {
+      await coordinator.start(request(`Diagnostic ${index}.`, `diagnostic-${index}`))
+      await waitForPlay(audio, index + 1)
+      audio.finish()
+      await vi.waitFor(() => expect(coordinator.getStatus().state).toBe('completed'))
+    }
+
+    expect(coordinator.getDiagnosticEvents()).toHaveLength(200)
+    expect(coordinator.getDiagnosticEvents().at(-1)?.event).toBe('completed')
+  })
+
+  it('aborts an active synthesis fetch during replacement and never starts stale bytes', async () => {
+    const audio = new FakeAudio()
+    const firstSignals: AbortSignal[] = []
+    let resolveFirst: ((value: { bytes: ArrayBuffer; mime: string }) => void) | undefined
+    const fetchAudio = vi.fn(({ signal, text }: { signal?: AbortSignal; text: string }) => {
+      if (text.includes('First')) {
+        if (signal) firstSignals.push(signal)
+        return new Promise<{ bytes: ArrayBuffer; mime: string }>((resolve) => { resolveFirst = resolve })
+      }
+      return Promise.resolve({ bytes: new Uint8Array([9]).buffer, mime: 'audio/wav' })
+    })
+    let session = 0
+    const coordinator = new PlaybackCoordinator({
+      createAudio: () => audio as unknown as HTMLAudioElement,
+      createObjectUrl: () => 'blob:replacement',
+      revokeObjectUrl: vi.fn(),
+      fetchAudio: fetchAudio as never,
+      createSessionId: () => `session-abort-${++session}`,
+      now: () => 0,
+      sleep: async () => undefined,
+      emit: vi.fn(),
+    })
+
+    await coordinator.start(request('First fetch.', 'first-fetch'))
+    await vi.waitFor(() => expect(resolveFirst).toBeTypeOf('function'))
+    await coordinator.start(request('Second replacement.', 'second-fetch'))
+    expect(firstSignals[0]?.aborted).toBe(true)
+    resolveFirst?.({ bytes: new Uint8Array([1]).buffer, mime: 'audio/wav' })
+    await waitForPlay(audio, 1)
+    expect(audio.src).toBe('blob:replacement')
+    expect(coordinator.getStatus().requestId).toBe('second-fetch')
+  })
+
+  it('constructs the browser coordinator with the browser-owned audio path', async () => {
+    const audio = new FakeAudio()
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:browser')
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    vi.stubGlobal('Audio', vi.fn(() => audio))
+    vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'browser-session') })
+    vi.stubGlobal('performance', { now: vi.fn(() => 123) })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]))
+          controller.close()
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'audio/wav' } },
+    )))
+
+    try {
+      const events: PlaybackEvent[] = []
+      const coordinator = createBrowserPlaybackCoordinator((event) => events.push(event))
+
+      await coordinator.start(request('Browser path.', 'browser-request'))
+      await waitForPlay(audio, 1)
+      audio.finish()
+      await vi.waitFor(() => expect(coordinator.getStatus().state).toBe('completed'))
+      expect(createObjectUrl).toHaveBeenCalledTimes(1)
+      expect(revokeObjectUrl).toHaveBeenCalledTimes(1)
+      expect(events.some((event) => event.event === 'completed')).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.restoreAllMocks()
+    }
   })
 })

@@ -106,3 +106,54 @@ describe('playback runtime client', () => {
     })
   })
 })
+
+it('accepts a valid selection start response', async () => {
+  installSendMessage(async () => ({
+    ok: true,
+    accepted: true,
+    requestId: 'selection-request',
+    sessionId: 'selection-session',
+  }))
+
+  await expect(requestReadSelection()).resolves.toEqual({
+    ok: true,
+    accepted: true,
+    requestId: 'selection-request',
+    sessionId: 'selection-session',
+  })
+})
+
+it('rejects an invalid text start response', async () => {
+  installSendMessage(async () => ({ accepted: true, sessionId: 42 }))
+  await expect(requestReadText('Hello.', 'popup-test')).resolves.toMatchObject({
+    ok: false,
+    error: { code: 'OFFSCREEN_INTERRUPTED' },
+  })
+})
+
+it('converts control transport failure to a structured response', async () => {
+  installSendMessage(async () => { throw new Error('receiver disappeared') })
+  await expect(sendPlaybackControl('resume')).resolves.toMatchObject({
+    ok: false,
+    error: { code: 'OFFSCREEN_INTERRUPTED' },
+  })
+})
+
+it('converts status transport failure to a structured response', async () => {
+  installSendMessage(async () => { throw new Error('receiver disappeared') })
+  await expect(queryPlaybackStatus()).resolves.toMatchObject({
+    ok: false,
+    error: { code: 'OFFSCREEN_INTERRUPTED' },
+  })
+})
+
+it('omits expectedSessionId when no session guard is supplied', async () => {
+  const sendMessage = installSendMessage(async () => ({
+    ok: true,
+    sessionId: 'session-1',
+    state: 'cancelled',
+  }))
+
+  await sendPlaybackControl('cancel')
+  expect(sendMessage).toHaveBeenCalledWith({ kind: PLAYBACK_CONTROL, action: 'cancel' })
+})

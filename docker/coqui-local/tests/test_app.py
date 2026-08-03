@@ -349,3 +349,170 @@ def test_host_play_and_debug_endpoints_do_not_exist() -> None:
         assert client.get("/api/playing").status_code == 404
         assert client.post("/api/tts/cancel").status_code == 404
         assert client.get("/api/debug").status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("attribute", "value", "expected"),
+    [
+        ("speakers", {" p225 ": object(), "p226": object()}, ["p225", "p226"]),
+        ("available_speakers", ["p225", " p226 ", "p225"], ["p225", "p226"]),
+        ("voices", ("p225", "p226"), ["p225", "p226"]),
+        ("available_voices", {"p226", "p225"}, ["p225", "p226"]),
+    ],
+)
+def test_voice_discovery_supports_backend_shapes(
+    attribute: str,
+    value: object,
+    expected: list[str],
+) -> None:
+    backend = type("Backend", (), {attribute: value})()
+    assert sorted(app_module.discover_voices(backend)) == sorted(expected)
+
+
+def test_voice_discovery_empty_and_forced_override() -> None:
+    backend = type("Backend", (), {"speakers": []})()
+    assert app_module.discover_voices(backend) == []
+    assert app_module.discover_voices(backend, ("forced-a", "forced-b")) == ["forced-a", "forced-b"]
+
+
+def test_runtime_without_discovered_voices_uses_backend_default(tmp_path: Path) -> None:
+    backend = FakeTTS()
+    backend.speakers = []
+    runtime = SynthesisRuntime(config(), lambda _config: backend)
+    runtime.start()
+    future, output_path = runtime.submit("Hello", None)
+    assert future.result(timeout=2) == output_path
+    assert backend.calls == [{"text": "Hello", "speaker": None}]
+    runtime.cleanup_path(output_path)
+    runtime.shutdown()
+
+
+def test_readiness_voices_and_synthesis_are_not_ready_before_startup() -> None:
+    application = create_app(config=config(), model_loader=lambda _config: FakeTTS())
+    client = TestClient(application)
+    assert client.get("/api/ready").json()["error"]["code"] == "NOT_READY"
+    assert client.get("/api/voices").json()["error"]["code"] == "NOT_READY"
+    assert client.post("/api/tts", json={"text": "Hello"}).json()["error"]["code"] == "NOT_READY"
+
+
+def test_model_loader_failure_aborts_startup() -> None:
+    application = create_app(
+        config=config(),
+        model_loader=lambda _config: (_ for _ in ()).throw(RuntimeError("model load failed")),
+    )
+    with pytest.raises(RuntimeError, match="model load failed"):
+        with TestClient(application):
+            pass
+
+
+class MissingOutputTTS(FakeTTS):
+    def tts_to_file(self, *, text: str, file_path: str, speaker: str | None = None) -> None:
+        Path(file_path).unlink(missing_ok=True)
+
+
+class EmptyOutputTTS(FakeTTS):
+    def tts_to_file(self, *, text: str, file_path: str, speaker: str | None = None) -> None:
+        Path(file_path).write_bytes(b"")
+
+
+@pytest.mark.parametrize("backend", [MissingOutputTTS(), EmptyOutputTTS()])
+def test_missing_or_empty_backend_output_is_generic_and_cleaned(backend: FakeTTS) -> None:
+    application = create_app(config=config(), model_loader=lambda _config: backend)
+    with TestClient(application) as client:
+        response = client.post("/api/tts", json={"text": "Hello", "voice": "p225"})
+        assert response.status_code == 500
+        assert response.json()["error"] == {
+            "code": "SYNTHESIS_FAILED",
+            "message": "Speech synthesis failed.",
+        }
+        assert application.state.runtime.tracked_temp_paths() == ()
+
+
+@pytest.mark.parametrize(
+    "request_kwargs",
+    [
+        {"content": b"{", "headers": {"content-type": "application/json"}},
+        {"json": {}},
+        {"json": {"text": 3}},
+        {"json": {"text": "Hello", "voice": 3}},
+    ],
+)
+def test_invalid_request_shapes_use_stable_envelope(request_kwargs: dict[str, object]) -> None:
+    application = create_app(config=config(), model_loader=lambda _config: FakeTTS())
+    with TestClient(application) as client:
+        response = client.post("/api/tts", **request_kwargs)
+        assert response.status_code == 422
+        assert response.json() == {
+            "ok": False,
+            "error": {"code": "INVALID_REQUEST", "message": "The request body is invalid."},
+        }
+
+
+def test_generic_http_exception_uses_stable_http_error_envelope() -> None:
+    application = create_app(config=config(), model_loader=lambda _config: FakeTTS())
+
+    @application.get("/test-generic-http-error")
+    def generic_http_error() -> None:
+        raise app_module.HTTPException(status_code=418, detail="teapot")
+
+    with TestClient(application) as client:
+        response = client.get("/test-generic-http-error")
+        assert response.status_code == 418
+        assert response.json() == {
+            "ok": False,
+            "error": {"code": "HTTP_ERROR", "message": "teapot"},
+        }
+
+
+def test_cleanup_while_path_is_active_returns_without_unlinking() -> None:
+    backend = BlockingTTS()
+    runtime = SynthesisRuntime(config(queue_capacity=1), lambda _config: backend)
+    runtime.start()
+    future, output_path = runtime.submit("Hello", "p225")
+    assert backend.started.wait(timeout=2)
+    assert runtime.cleanup_path(output_path) is False
+    assert output_path in runtime.tracked_temp_paths()
+    backend.release.set()
+    assert future.result(timeout=2) == output_path
+    assert runtime.cleanup_path(output_path) is True
+    runtime.shutdown()
+
+
+def test_shutdown_cancels_queued_future_and_eventually_releases_all_slots() -> None:
+    backend = BlockingTTS()
+    runtime = SynthesisRuntime(config(queue_capacity=2), lambda _config: backend)
+    runtime.start()
+    first, first_path = runtime.submit("First", "p225")
+    assert backend.started.wait(timeout=2)
+    second, second_path = runtime.submit("Second", "p225")
+    assert runtime.metrics().queued_futures == 1
+
+    runtime.shutdown()
+    wait_until(second.cancelled)
+    wait_until(lambda: second_path not in runtime.tracked_temp_paths())
+    assert runtime.metrics().slots_in_use == 1
+
+    backend.release.set()
+    assert first.result(timeout=2) == first_path
+    runtime.cleanup_path(first_path)
+    wait_until(lambda: runtime.metrics().slots_in_use == 0)
+    assert runtime.tracked_temp_paths() == ()
+
+
+def test_accounting_invariants_fail_closed() -> None:
+    runtime = SynthesisRuntime(config(queue_capacity=1), lambda _config: FakeTTS())
+    runtime.start()
+
+    runtime._slots_in_use = runtime.config.queue_capacity
+    with pytest.raises(RuntimeError, match="exceeded capacity"):
+        runtime._acquire_slot()
+    assert runtime._slots_in_use == runtime.config.queue_capacity
+
+    runtime._slots_in_use = 0
+    with pytest.raises(RuntimeError, match="became negative"):
+        runtime._release_slot()
+
+    runtime._queued_futures = 0
+    with pytest.raises(RuntimeError, match="Queued synthesis accounting became negative"):
+        runtime._run_synthesis(FakeTTS(), "Hello", "p225", "/tmp/unused.wav")
+    runtime.shutdown()

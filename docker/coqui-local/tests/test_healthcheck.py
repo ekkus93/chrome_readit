@@ -62,3 +62,40 @@ def test_healthcheck_rejects_not_ready_and_transport_failures(monkeypatch: Any) 
 
     monkeypatch.setattr(healthcheck.urllib.request, "urlopen", unavailable)
     assert healthcheck.main() == 1
+
+
+def test_healthcheck_rejects_incomplete_success_payload(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        healthcheck.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: JsonResponse({"ok": True, "ready": False}),
+    )
+    assert healthcheck.main() == 1
+
+
+def test_healthcheck_rejects_invalid_http_error_payload(monkeypatch: Any) -> None:
+    def invalid_json(*_args: object, **_kwargs: object) -> object:
+        raise urllib.error.HTTPError(
+            healthcheck.URL,
+            503,
+            "failure",
+            hdrs=None,
+            fp=io.BytesIO(b"not-json"),
+        )
+
+    monkeypatch.setattr(healthcheck.urllib.request, "urlopen", invalid_json)
+    assert healthcheck.main() == 1
+
+
+def test_healthcheck_rejects_non_object_queue_error(monkeypatch: Any) -> None:
+    def non_object(*_args: object, **_kwargs: object) -> object:
+        raise urllib.error.HTTPError(
+            healthcheck.URL,
+            503,
+            "failure",
+            hdrs=None,
+            fp=io.BytesIO(b"[]"),
+        )
+
+    monkeypatch.setattr(healthcheck.urllib.request, "urlopen", non_object)
+    assert healthcheck.main() == 1

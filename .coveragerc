@@ -1,0 +1,13 @@
+[run]
+branch = True
+source =
+    docker/coqui-local
+omit =
+    docker/coqui-local/tests/*
+
+[report]
+show_missing = True
+skip_covered = False
+
+[json]
+pretty_print = True

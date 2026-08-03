@@ -2,3 +2,5 @@ fastapi==0.115.6
 pydantic==2.10.4
 httpx==0.28.1
 pytest==8.3.4
+pytest-cov==7.0.0
+coverage==7.13.3

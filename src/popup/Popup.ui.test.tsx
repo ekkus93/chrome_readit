@@ -154,4 +154,49 @@ describe('Popup playback control buttons', () => {
     await userEvent.click(await screen.findByRole('button', { name: /Read selected text/i }))
     expect(await screen.findByText(message)).toBeTruthy()
   })
+
+  it('surfaces settings load failure and repaired-setting warnings', async () => {
+    installChrome()
+    const chromeObject = (globalThis as unknown as {
+      chrome: { storage: { sync: { get: ReturnType<typeof vi.fn>; set: ReturnType<typeof vi.fn> } } }
+    }).chrome
+    chromeObject.storage.sync.get.mockRejectedValueOnce(new Error('storage unavailable'))
+    const first = render(<Popup />)
+    expect(await screen.findByText('Settings could not be loaded. Reload the extension and try again.')).toBeTruthy()
+    first.unmount()
+
+    chromeObject.storage.sync.get.mockResolvedValueOnce({ rate: 'not-a-number' })
+    render(<Popup />)
+    expect(await screen.findByText(/stored playback rate was invalid/i)).toBeTruthy()
+    expect(chromeObject.storage.sync.set).toHaveBeenCalledWith({ rate: 1 })
+  })
+
+  it('keeps a failed rate edit visible and permits a later retry', async () => {
+    installChrome()
+    const chromeObject = (globalThis as unknown as {
+      chrome: { storage: { sync: { set: ReturnType<typeof vi.fn> } } }
+    }).chrome
+    chromeObject.storage.sync.set
+      .mockRejectedValueOnce(new Error('quota exceeded'))
+      .mockResolvedValueOnce(undefined)
+    render(<Popup />)
+    const rate = await screen.findByLabelText(/^Rate/i)
+
+    fireEvent.change(rate, { target: { value: '1.7' } })
+    expect(await screen.findByText('The playback rate could not be saved. Change it again to retry.')).toBeTruthy()
+
+    fireEvent.change(rate, { target: { value: '1.8' } })
+    await waitFor(() => expect(chromeObject.storage.sync.set).toHaveBeenLastCalledWith({ rate: 1.8 }))
+    await waitFor(() => expect(screen.queryByText('The playback rate could not be saved. Change it again to retry.')).toBeNull())
+  })
+
+  it('renders voice discovery failure without replacing the configured voice', async () => {
+    installChrome()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 503 })))
+    render(<Popup />)
+
+    expect(await screen.findByText(/voice endpoint returned HTTP 503/i)).toBeTruthy()
+    expect((screen.getByLabelText(/^Voice$/i) as HTMLSelectElement).value).toBe('p225')
+  })
+
 })

@@ -5,9 +5,9 @@ import { describe, expect, it } from 'vitest'
 const workflowDirectory = resolve(import.meta.dirname, '..', '.github', 'workflows')
 
 describe('repository workflow hygiene', () => {
-  it('contains no temporary FIX2 patch workflows', () => {
+  it('contains no temporary patch or source-export workflows', () => {
     const temporary = readdirSync(workflowDirectory)
-      .filter((name) => name.startsWith('fix2-one-shot-'))
+      .filter((name) => name.startsWith('fix2-one-shot-') || name === 'export-source.yml')
       .sort()
 
     expect(temporary).toEqual([])

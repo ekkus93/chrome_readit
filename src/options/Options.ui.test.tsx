@@ -131,4 +131,69 @@ describe('Options playback control buttons', () => {
     await waitFor(() => expect(chromeObject.storage.sync.set).toHaveBeenCalledWith({ rate: 1.35 }))
     expect(await screen.findByText(/Speech rate:\s*1\.35/)).toBeTruthy()
   })
+
+  it('surfaces settings load failure and repaired-setting warnings', async () => {
+    installChrome()
+    const chromeObject = (globalThis as unknown as {
+      chrome: { storage: { sync: { get: ReturnType<typeof vi.fn>; set: ReturnType<typeof vi.fn> } } }
+    }).chrome
+    chromeObject.storage.sync.get.mockRejectedValueOnce(new Error('storage unavailable'))
+    const first = render(<Options />)
+    expect(await screen.findByText('Settings could not be loaded. Reload the extension and try again.')).toBeTruthy()
+    first.unmount()
+
+    chromeObject.storage.sync.get.mockResolvedValueOnce({ voice: '' })
+    render(<Options />)
+    expect(await screen.findByText(/stored voice was invalid/i)).toBeTruthy()
+    expect(chromeObject.storage.sync.set).toHaveBeenCalledWith({ voice: 'p225' })
+  })
+
+  it('retains an endpoint save error and succeeds when the user retries', async () => {
+    installChrome()
+    const chromeObject = (globalThis as unknown as {
+      chrome: { storage: { sync: { set: ReturnType<typeof vi.fn> } } }
+    }).chrome
+    chromeObject.storage.sync.set
+      .mockRejectedValueOnce(new Error('quota exceeded'))
+      .mockResolvedValueOnce(undefined)
+    render(<Options />)
+    const endpoint = await screen.findByLabelText(/TTS synthesis endpoint/i)
+    fireEvent.change(endpoint, { target: { value: 'https://tts.example.test/api/tts' } })
+
+    await userEvent.click(screen.getByRole('button', { name: /Save endpoint/i }))
+    expect(await screen.findByText('The TTS endpoint could not be saved. Try again.')).toBeTruthy()
+    expect(screen.getByText(/Saved endpoint: http:\/\/localhost:5002\/api\/tts/)).toBeTruthy()
+
+    await userEvent.click(screen.getByRole('button', { name: /Save endpoint/i }))
+    await waitFor(() => expect(chromeObject.storage.sync.set).toHaveBeenLastCalledWith({
+      ttsUrl: 'https://tts.example.test/api/tts',
+    }))
+    expect(await screen.findByText('Saved endpoint: https://tts.example.test/api/tts')).toBeTruthy()
+    expect(screen.queryByText('The TTS endpoint could not be saved. Try again.')).toBeNull()
+  })
+
+  it('does not trigger discovery for an invalid endpoint draft and preserves the saved endpoint', async () => {
+    installChrome()
+    const fetchMock = vi.mocked(fetch)
+    render(<Options />)
+    await screen.findByLabelText(/TTS synthesis endpoint/i)
+    const callsBeforeDraft = fetchMock.mock.calls.length
+
+    fireEvent.change(screen.getByLabelText(/TTS synthesis endpoint/i), { target: { value: 'not a URL' } })
+    await userEvent.click(screen.getByRole('button', { name: /Save endpoint/i }))
+
+    expect(await screen.findByText('Enter a valid HTTP or HTTPS synthesis endpoint.')).toBeTruthy()
+    expect(fetchMock.mock.calls).toHaveLength(callsBeforeDraft)
+    expect(screen.getByText(/Saved endpoint: http:\/\/localhost:5002\/api\/tts/)).toBeTruthy()
+  })
+
+  it('renders voice discovery failure while retaining the configured voice', async () => {
+    installChrome()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 503 })))
+    render(<Options />)
+
+    expect(await screen.findByText(/voice endpoint returned HTTP 503/i)).toBeTruthy()
+    expect((screen.getByLabelText(/^Voice$/i) as HTMLSelectElement).value).toBe('p225')
+  })
+
 })

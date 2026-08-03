@@ -196,3 +196,172 @@ describe('fetchTtsAudio', () => {
     expect(clearTimeoutSpy).toHaveBeenCalled()
   })
 })
+
+describe('fetchTtsAudio validation and abort edge cases', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  it.each([
+    ['not a url', 'INVALID_TTS_URL'],
+    ['file:///tmp/audio', 'INVALID_TTS_URL'],
+    ['ftp://example.com/audio', 'INVALID_TTS_URL'],
+  ])('rejects unusable endpoint %s before fetch', async (url, code) => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    await expectCode(fetchTtsAudio({ url, text: 'Hello', voice: 'p225' }), code)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['maxResponseBytes', 0],
+    ['maxResponseBytes', -1],
+    ['maxResponseBytes', 1.5],
+    ['maxResponseBytes', Number.NaN],
+    ['maxResponseBytes', Number.POSITIVE_INFINITY],
+    ['timeoutMs', 0],
+    ['timeoutMs', -1],
+    ['timeoutMs', Number.NaN],
+    ['timeoutMs', Number.POSITIVE_INFINITY],
+  ])('rejects invalid %s value %#', async (key, value) => {
+    const options = {
+      url: 'http://localhost/tts',
+      text: 'Hello',
+      voice: 'p225',
+      [key]: value,
+    }
+    await expect(fetchTtsAudio(options)).rejects.toThrow()
+  })
+
+  it('distinguishes cancellation before response headers', async () => {
+    const external = new AbortController()
+    vi.stubGlobal('fetch', vi.fn((_url: unknown, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+    })))
+
+    const pending = fetchTtsAudio({
+      url: 'http://localhost/tts',
+      text: 'Hello',
+      voice: 'p225',
+      signal: external.signal,
+      timeoutMs: 1_000,
+    })
+    external.abort()
+    await expectCode(pending, 'CANCELLED')
+  })
+
+  it('handles an already-aborted external signal', async () => {
+    const external = new AbortController()
+    external.abort('cancelled-before-call')
+    vi.stubGlobal('fetch', vi.fn((_url: unknown, init?: RequestInit) => {
+      expect(init?.signal?.aborted).toBe(true)
+      return Promise.reject(new DOMException('aborted', 'AbortError'))
+    }))
+    await expectCode(fetchTtsAudio({
+      url: 'http://localhost/tts',
+      text: 'Hello',
+      voice: 'p225',
+      signal: external.signal,
+    }), 'CANCELLED')
+  })
+
+  it('times out before response headers', async () => {
+    vi.stubGlobal('fetch', vi.fn((_url: unknown, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('timed out', 'AbortError')), { once: true })
+    })))
+    await expectCode(fetchTtsAudio({
+      url: 'http://localhost/tts',
+      text: 'Hello',
+      voice: 'p225',
+      timeoutMs: 5,
+    }), 'TTS_TIMEOUT')
+  })
+
+  it('classifies a network failure before headers', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network down')))
+    await expectCode(fetchTtsAudio({
+      url: 'http://localhost/tts',
+      text: 'Hello',
+      voice: 'p225',
+    }), 'TTS_FETCH_FAILED')
+  })
+
+  it('rejects a missing audio MIME type', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse({ mime: null }).response))
+    await expectCode(fetchTtsAudio({ url: 'http://localhost/tts', text: 'Hello', voice: 'p225' }), 'TTS_NON_AUDIO_RESPONSE')
+  })
+
+  it.each(['garbage', '-5', '1.5'])('ignores malformed Content-Length %s and enforces streamed bytes', async (contentLength) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse({
+      contentLength,
+      chunks: [new Uint8Array([1, 2, 3])],
+    }).response))
+    const result = await fetchTtsAudio({
+      url: 'http://localhost/tts',
+      text: 'Hello',
+      voice: 'p225',
+      maxResponseBytes: 3,
+    })
+    expect(result.bytes.byteLength).toBe(3)
+  })
+
+  it('accepts an exact-size stream and skips empty chunks', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse({
+      contentLength: '3',
+      chunks: [new Uint8Array(), new Uint8Array([1]), new Uint8Array(), new Uint8Array([2, 3])],
+    }).response))
+    const result = await fetchTtsAudio({
+      url: 'http://localhost/tts',
+      text: 'Hello',
+      voice: 'p225',
+      maxResponseBytes: 3,
+    })
+    expect([...new Uint8Array(result.bytes)]).toEqual([1, 2, 3])
+  })
+
+  it('classifies reader rejection and releases the lock', async () => {
+    const releaseLock = vi.fn()
+    const cancel = vi.fn()
+    const response = {
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'audio/wav' }),
+      body: {
+        getReader: () => ({
+          read: vi.fn().mockRejectedValue(new Error('read failed')),
+          cancel,
+          releaseLock,
+        }),
+      },
+    } as unknown as Response
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
+    await expectCode(fetchTtsAudio({ url: 'http://localhost/tts', text: 'Hello', voice: 'p225' }), 'TTS_FETCH_FAILED')
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(releaseLock).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the terminal oversize error when reader cancellation rejects', async () => {
+    const releaseLock = vi.fn()
+    const response = {
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'audio/wav' }),
+      body: {
+        getReader: () => ({
+          read: vi.fn().mockResolvedValueOnce({ done: false, value: new Uint8Array(2) }),
+          cancel: vi.fn().mockRejectedValue(new Error('cancel failed')),
+          releaseLock,
+        }),
+      },
+    } as unknown as Response
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
+    await expectCode(fetchTtsAudio({
+      url: 'http://localhost/tts',
+      text: 'Hello',
+      voice: 'p225',
+      maxResponseBytes: 1,
+    }), 'TTS_RESPONSE_TOO_LARGE')
+    expect(releaseLock).toHaveBeenCalledTimes(1)
+  })
+})

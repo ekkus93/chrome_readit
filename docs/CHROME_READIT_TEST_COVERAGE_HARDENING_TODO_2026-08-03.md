@@ -1,10 +1,12 @@
 # Chrome Read It Test Coverage Hardening TODO
 
-**Status:** NOT STARTED  
+**Status:** PARTIAL — candidate implementation complete; hosted exact-SHA gates pending
 **Date:** 2026-08-03  
-**Governing specification:** `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_SPEC_2026-08-03.md`  
-**Repository:** `ekkus93/chrome_readit`  
-**Baseline exact SHA:** `2a7abaa61d67412daeaf02465224304ab31f5e4f`
+**Governing specification:** `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_SPEC_2026-08-03.md`
+**Repository:** `ekkus93/chrome_readit`
+**Original FIX2 baseline SHA:** `2a7abaa61d67412daeaf02465224304ab31f5e4f`
+**Coverage-hardening implementation base SHA:** `b1ce1cdcaa438a238378534dafd99b11d24cf9ad`
+**Implementation report:** `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_IMPLEMENTATION_REPORT_2026-08-03.md`
 
 ---
 
@@ -29,14 +31,14 @@ Do not mark a checkbox complete because code was written. Mark it complete only 
 
 ### 0.2 Truthfulness requirements
 
-- [ ] Do not describe the current six-file coverage percentage as repository-wide coverage.
-- [ ] Do not claim Block 16 human listening is complete.
-- [ ] Do not use an E2E pass as a substitute for a missing deterministic unit test when the behavior can be isolated.
-- [ ] Do not use unit coverage as a substitute for real Chromium or real-Coqui validation.
-- [ ] Do not convert incomplete harness execution into a pass.
-- [ ] Do not hide production files through broad exclusions.
-- [ ] Do not lower thresholds without recording the exact reason and a bounded restoration task.
-- [ ] Do not add meaningless tests solely to increase percentages.
+- [x] Do not describe the current six-file coverage percentage as repository-wide coverage.
+- [x] Do not claim Block 16 human listening is complete.
+- [x] Do not use an E2E pass as a substitute for a missing deterministic unit test when the behavior can be isolated.
+- [x] Do not use unit coverage as a substitute for real Chromium or real-Coqui validation.
+- [x] Do not convert incomplete harness execution into a pass.
+- [x] Do not hide production files through broad exclusions.
+- [x] Do not lower thresholds without recording the exact reason and a bounded restoration task.
+- [x] Do not add meaningless tests solely to increase percentages.
 
 ### 0.3 Required evidence format
 
@@ -55,6 +57,31 @@ Known limitations:
 ### 0.4 Final status rule
 
 This TODO remains `PARTIAL` until all required blocks pass on one final exact SHA. It remains independent of Block 16, which may still leave the broader FIX2 project `PARTIAL` after this TODO is complete.
+
+## 0.5 Current execution snapshot
+
+| Block | Status | Evidence state |
+|---|---|---|
+| 1 — Baseline inventory | COMPLETE | Baseline and inventory recorded in the implementation report |
+| 2 — Widen measurement | COMPLETE | 17 measured implementation files, 2 approved exclusions |
+| 3 — Surface guard | COMPLETE | Positive and negative policy tests pass |
+| 4 — Coordinator | COMPLETE | 96.36% lines / 86.12% branches |
+| 5 — Service worker | COMPLETE | 89.46% lines / 80.58% branches |
+| 6 — Offscreen adapter | COMPLETE | 98.52% lines / 96.15% branches |
+| 7 — Libraries/runtime client | COMPLETE | All critical floors pass |
+| 8 — Popup and Options | COMPLETE | Popup 91.13/77.96; Options 93.52/82.70 |
+| 9 — Python infrastructure | PARTIAL | Local branch coverage passes; hosted artifacts pending |
+| 10 — Python gap closure | COMPLETE | 57 tests; 97.44% statements / 89.19% branches |
+| 11 — Threshold enforcement | COMPLETE | Global and per-file fail-closed checkers pass |
+| 12 — CI artifacts/reporting | PARTIAL | Workflow implemented; hosted artifact evidence pending |
+| 13 — Flakiness/leak audit | COMPLETE | 20/20 Vitest and 20/20 Python repetitions pass |
+| 14 — Full local validation | PARTIAL | All deterministic local gates pass; non-headless Chromium is hosted-only in this environment |
+| 15 — Hosted CI | PENDING | Requires candidate exact SHA |
+| 16 — Real Coqui | PENDING | Must pass on same final exact SHA |
+| 17 — Documentation reconciliation | PENDING | Requires hosted evidence |
+| 18 — Final sign-off | PENDING | Requires Blocks 15–17 |
+
+The broader FIX2 human listening block remains not executed and is not replaced by this work.
 
 ---
 

@@ -518,4 +518,5 @@ export const __testing = {
   readLastPlaybackStatus,
   writeLastPlaybackStatus,
   shouldAcceptStatus,
+  getPersistenceDegraded: () => persistenceDegraded,
 }

@@ -258,6 +258,8 @@ tts-client.ts                 branches >= 90%, lines >= 95%
 storage.ts                    branches >= 90%, lines >= 95%
 voices.ts                     branches >= 90%, lines >= 95%
 playback-runtime-client.ts    branches >= 85%, lines >= 90%
+Popup.tsx                      branches >= 75%, lines >= 85%
+Options.tsx                    branches >= 75%, lines >= 85%
 ```
 
 The exact implementation mechanism may use Vitest per-file thresholds, a post-processing script over `coverage-final.json`, or both. The selected mechanism must be deterministic and fail closed.
@@ -485,11 +487,13 @@ Add `pytest-cov` to the test requirements and run the service tests with branch 
 
 ```bash
 python -m pytest \
-  --cov=docker/coqui-local/app.py \
+  --cov=docker/coqui-local \
+  --cov-config=.coveragerc \
   --cov-branch \
   --cov-report=term-missing \
   --cov-report=xml:reports/coqui-coverage.xml \
   --cov-report=json:reports/coqui-coverage.json \
+  --junitxml=reports/coqui-junit.xml \
   docker/coqui-local/tests
 ```
 
