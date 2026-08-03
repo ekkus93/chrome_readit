@@ -58,12 +58,6 @@ function installChrome() {
   return { sendMessage, getListener: () => listener }
 }
 
-function expectRuntimeCall(sendMessage: ReturnType<typeof vi.fn>, expected: Record<string, unknown>) {
-  expect(sendMessage.mock.calls.some(([message]) => (
-    JSON.stringify(message) === JSON.stringify(expected)
-  ))).toBe(true)
-}
-
 describe('Options playback control buttons', () => {
   beforeEach(() => {
     vi.resetAllMocks()
@@ -97,11 +91,11 @@ describe('Options playback control buttons', () => {
       })
     })
     await userEvent.click(screen.getByRole('button', { name: /^Pause$/i }))
-    expectRuntimeCall(sendMessage, {
-      kind: PLAYBACK_CONTROL,
-      action: 'pause',
-      expectedSessionId: 'session-active',
-    })
+    expect(sendMessage.mock.calls.some(([message]) => (
+      message.kind === PLAYBACK_CONTROL
+      && message.action === 'pause'
+      && message.expectedSessionId === 'session-active'
+    ))).toBe(true)
 
     act(() => {
       getListener()?.({
@@ -112,17 +106,18 @@ describe('Options playback control buttons', () => {
       })
     })
     await userEvent.click(screen.getByRole('button', { name: /^Resume$/i }))
-    expectRuntimeCall(sendMessage, {
-      kind: PLAYBACK_CONTROL,
-      action: 'resume',
-      expectedSessionId: 'session-active',
-    })
+    expect(sendMessage.mock.calls.some(([message]) => (
+      message.kind === PLAYBACK_CONTROL
+      && message.action === 'resume'
+      && message.expectedSessionId === 'session-active'
+    ))).toBe(true)
+
     await userEvent.click(screen.getByRole('button', { name: /^Stop$/i }))
-    expectRuntimeCall(sendMessage, {
-      kind: PLAYBACK_CONTROL,
-      action: 'cancel',
-      expectedSessionId: 'session-active',
-    })
+    expect(sendMessage.mock.calls.some(([message]) => (
+      message.kind === PLAYBACK_CONTROL
+      && message.action === 'cancel'
+      && message.expectedSessionId === 'session-active'
+    ))).toBe(true)
   })
 
   it('persists updated speech rate only after storage succeeds', async () => {
