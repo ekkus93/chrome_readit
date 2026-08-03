@@ -106,6 +106,32 @@ const PLAYBACK_STATES = new Set<PlaybackState>([
   'cancelled',
   'failed',
 ])
+const PLAYBACK_EVENT_NAMES = new Set<PlaybackEventName>([
+  'accepted',
+  'state-changed',
+  'chunk-started',
+  'chunk-ended',
+  'completed',
+  'cancelled',
+  'failed',
+])
+const PLAYBACK_ERROR_CODES = new Set<PlaybackErrorCode>([
+  'INVALID_REQUEST',
+  'NO_TEXT',
+  'TEXT_TOO_LONG',
+  'INVALID_TTS_URL',
+  'HOST_PLAY_ENDPOINT_FORBIDDEN',
+  'TTS_HTTP_ERROR',
+  'TTS_NON_AUDIO_RESPONSE',
+  'TTS_EMPTY_RESPONSE',
+  'TTS_RESPONSE_TOO_LARGE',
+  'TTS_FETCH_FAILED',
+  'AUDIO_PLAYBACK_FAILED',
+  'OFFSCREEN_INTERRUPTED',
+  'SESSION_SUPERSEDED',
+  'SESSION_NOT_FOUND',
+  'CANCELLED',
+])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -127,6 +153,12 @@ export function isPlaybackSource(value: unknown): value is PlaybackSource {
   return typeof value === 'string' && PLAYBACK_SOURCES.has(value as PlaybackSource)
 }
 
+export function isPlaybackError(value: unknown): value is PlaybackError {
+  if (!isRecord(value) || typeof value.code !== 'string' || !PLAYBACK_ERROR_CODES.has(value.code as PlaybackErrorCode)) return false
+  if (typeof value.message !== 'string') return false
+  return value.status === undefined || (typeof value.status === 'number' && Number.isInteger(value.status))
+}
+
 export function isStartPlaybackRequest(value: unknown): value is StartPlaybackRequest {
   if (!isRecord(value)) return false
   return value.kind === START_PLAYBACK
@@ -136,11 +168,29 @@ export function isStartPlaybackRequest(value: unknown): value is StartPlaybackRe
     && isPlaybackSettingsSnapshot(value.settings)
 }
 
+export function isStartPlaybackResponse(value: unknown): value is StartPlaybackResponse {
+  if (!isRecord(value) || typeof value.ok !== 'boolean' || typeof value.accepted !== 'boolean') return false
+  if (value.ok && value.accepted) return isNonEmptyString(value.requestId) && isNonEmptyString(value.sessionId)
+  return !value.ok && !value.accepted
+    && (value.requestId === undefined || typeof value.requestId === 'string')
+    && isPlaybackError(value.error)
+}
+
 export function isPlaybackControlRequest(value: unknown): value is PlaybackControlRequest {
   if (!isRecord(value)) return false
   if (value.kind !== PLAYBACK_CONTROL || typeof value.action !== 'string') return false
   if (!CONTROL_ACTIONS.has(value.action as PlaybackControlAction)) return false
   return value.expectedSessionId === undefined || isNonEmptyString(value.expectedSessionId)
+}
+
+export function isPlaybackControlResponse(value: unknown): value is PlaybackControlResponse {
+  if (!isRecord(value) || typeof value.ok !== 'boolean') return false
+  if (value.ok) {
+    return (value.sessionId === null || isNonEmptyString(value.sessionId))
+      && typeof value.state === 'string'
+      && PLAYBACK_STATES.has(value.state as PlaybackState)
+  }
+  return isPlaybackError(value.error)
 }
 
 export function isPlaybackStatusRequest(value: unknown): value is PlaybackStatusRequest {
@@ -153,8 +203,16 @@ export function isPlaybackStatus(value: unknown): value is PlaybackStatus {
   if (value.sessionId !== null && !isNonEmptyString(value.sessionId)) return false
   if (value.requestId !== null && !isNonEmptyString(value.requestId)) return false
   if (value.source !== null && !isPlaybackSource(value.source)) return false
+  if (value.error !== undefined && !isPlaybackError(value.error)) return false
   return [value.currentChunk, value.totalChunks, value.currentParagraph, value.totalParagraphs]
     .every((entry) => typeof entry === 'number' && Number.isInteger(entry) && entry >= 0)
+}
+
+export function isPlaybackEvent(value: unknown): value is PlaybackEvent {
+  if (!isRecord(value) || value.kind !== PLAYBACK_EVENT) return false
+  if (typeof value.event !== 'string' || !PLAYBACK_EVENT_NAMES.has(value.event as PlaybackEventName)) return false
+  if (typeof value.atMs !== 'number' || !Number.isFinite(value.atMs)) return false
+  return isPlaybackStatus(value.status)
 }
 
 export function createPlaybackError(code: PlaybackErrorCode, message: string, status?: number): PlaybackError {
