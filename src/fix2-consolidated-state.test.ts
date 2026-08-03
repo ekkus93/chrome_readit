@@ -52,7 +52,11 @@ describe('consolidated FIX2 source state', () => {
 
     expect(compose).toContain('image: chrome-readit-coqui-local:fix2')
     expect(script).toContain('dc down -v --remove-orphans')
-    expect(script).toContain('dc images -q coqui-local')
+    expect(script).toContain('mapfile -t image_refs < <(dc config --images)')
+    expect(script).toContain('expected exactly one configured Compose image')
+    expect(script).toContain('image-ref.txt')
+    expect(script).toContain("docker image inspect --format '{{.Id}}' \"${image_ref}\"")
+    expect(script).not.toContain('dc images -q coqui-local')
     expect(script).toContain('PREFERRED_VOICE="${REAL_COQUI_VOICE:-p225}"')
     expect(script).toContain('if preferred in voices:')
     expect(script).toContain('selected-voice.txt')
