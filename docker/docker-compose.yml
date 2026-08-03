@@ -1,5 +1,6 @@
 services:
   coqui-local:
+    image: chrome-readit-coqui-local:fix2
     build:
       context: ./coqui-local
       dockerfile: Dockerfile
