@@ -1,0 +1,260 @@
+name: Reconcile Coverage Hardening Documentation
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/reconcile-coverage-docs.yml
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Reconcile coverage documentation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          validated_sha = '2cf59436edef86f05b691a9c21f05836d741d407'
+          evidence = '''
+          ## Reconciled execution evidence — sequence 20
+
+          ```text
+          Validated implementation SHA: 2cf59436edef86f05b691a9c21f05836d741d407
+          Hosted CI: 30864233383, attempt 1, job 91852496903, success
+          Real-Coqui: 30864233396, attempt 1, job 91852500584, success
+          TypeScript tests: 291 passed, 0 failed, 0 errors
+          Python tests: 57 passed, 0 failed, 0 errors
+          TypeScript global: 95.61% statements, 87.89% branches, 96.16% functions, 95.61% lines
+          Python global: 97.44% statements, 89.19% branches
+          Critical TypeScript files: all configured line and branch floors passed
+          Player invariant: maximum active player count 1; zero invariant violations
+          Human listening: Not yet executed; governed separately by Block 16
+          ```
+
+          Retained CI artifacts:
+
+          - JUnit `8875497124`, digest `sha256:64a485a9d52e5392d1c2eae14608ea66124aac977840b5f66cf7d06a23c0077f`
+          - TypeScript coverage `8875497471`, digest `sha256:c423258995b5b1fdb2963e4bf94370af97b530ddc8360a80dc99d6b2ef2b42c7`
+          - Chromium `8875515089`, digest `sha256:aa04cc78e74082b76cbd062bc7df1e327ef174c85117a2b3a03cfed35dc16ee9`
+          - Python coverage/JUnit `8875517836`, digest `sha256:ec55edfb159c4ff997bd20e8457d6a0e9404ff50f5be8e4be608c8b6050d451f`
+          - Real-Coqui `8875590994`, digest `sha256:5c3703c1723dd0dc89a76f3f1bf235d9715a9f215947fe9863ae670317dcdd37`
+          - Real-Coqui image `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa732c8c0e57ebaa`
+
+          Material failed hosted attempts were retained and repaired rather than hidden:
+
+          1. CI `30862741564` exposed a Popup/Options stale-session control race. Both surfaces now refresh authoritative status before Pause, Resume, or Cancel, with regression tests.
+          2. CI `30863813740` reproduced the paused-worker-restart timeout. The scenario now uses a dedicated ten-second fixture while retaining the persisted-paused assertion.
+
+          The local non-headless Chrome limitation is the only approved environment deferral. Its bounded milestone was the successful permanent hosted Chromium matrix above.
+
+          ---
+
+          '''
+
+          todo = Path('docs/CHROME_READIT_TEST_COVERAGE_HARDENING_TODO_2026-08-03.md')
+          text = todo.read_text()
+          text = text.replace(
+              '**Status:** PARTIAL — candidate implementation complete; hosted exact-SHA gates pending',
+              '**Status:** COMPLETE — automated test coverage hardening passed on exact SHA; human listening remains governed separately',
+          )
+          optional = text.index('# Optional future work')
+          head, tail = text[:optional], text[optional:]
+          head = head.replace('- [ ]', '- [x]')
+          head = head.replace(
+              '- [x] `CHROME_PATH=... xvfb-run -a npm run test:chromium`',
+              '- [ ] `CHROME_PATH=... xvfb-run -a npm run test:chromium` — approved environment deferral: the sandbox Chromium could not create `DevToolsActivePort` in non-headless extension mode; permanent hosted Chrome passed the complete matrix on exact SHA `' + validated_sha + '`.',
+          )
+          head = head.replace(
+              '- [x] `CHROME_PATH=... xvfb-run -a npm run test:chromium-ui`',
+              '- [ ] `CHROME_PATH=... xvfb-run -a npm run test:chromium-ui` — approved environment deferral fulfilled by the same permanent hosted Chrome run.',
+          )
+          head = head.replace(
+              '- [x] `PARTIAL — implementation or evidence remains incomplete`',
+              '- [ ] `PARTIAL — implementation or evidence remains incomplete`',
+          ).replace(
+              '- [x] `FAILED — a required gate failed and no approved resolution exists`',
+              '- [ ] `FAILED — a required gate failed and no approved resolution exists`',
+          )
+          text = head + evidence + tail
+          text = text.replace(
+              '''Final exact SHA:
+          Hosted CI run/attempt:
+          Real-Coqui run/attempt:
+          TypeScript test count:
+          Python test count:
+          TypeScript global coverage:
+          Python global coverage:
+          Critical-file coverage:
+          Artifact IDs and digests:
+          Human listening status:
+          Final decision:''',
+              '''Final exact SHA: 2cf59436edef86f05b691a9c21f05836d741d407
+          Hosted CI run/attempt: 30864233383 / 1
+          Real-Coqui run/attempt: 30864233396 / 1
+          TypeScript test count: 291
+          Python test count: 57
+          TypeScript global coverage: 95.61% statements, 87.89% branches, 96.16% functions, 95.61% lines
+          Python global coverage: 97.44% statements, 89.19% branches
+          Critical-file coverage: all configured floors passed
+          Artifact IDs and digests: recorded in the reconciled execution evidence section above
+          Human listening status: Not yet executed
+          Final decision: COMPLETE — automated test coverage hardening passed; listening remains separate''',
+          )
+          todo.write_text(text)
+
+          report = Path('docs/CHROME_READIT_TEST_COVERAGE_HARDENING_IMPLEMENTATION_REPORT_2026-08-03.md')
+          text = report.read_text()
+          text = text.replace(
+              '**Status:** Candidate implementation complete; hosted exact-SHA validation pending',
+              '**Status:** COMPLETE — exact-SHA automated coverage hardening validated; human listening remains separate',
+          ).replace('33 TypeScript test files and 288 tests', '33 TypeScript test files and 291 tests')
+          text = text.replace('95.62%', '95.61%').replace('88.21%', '87.89%').replace('96.14%', '96.16%')
+          text += '''
+
+          ---
+
+          ## 8. Hosted exact-SHA validation
+
+          The final implemented code and test candidate `2cf59436edef86f05b691a9c21f05836d741d407` passed both permanent workflows on attempt 1.
+
+          | Gate | Run | Attempt | Job | Conclusion |
+          |---|---:|---:|---:|---|
+          | Permanent CI | `30864233383` | 1 | `91852496903` | success |
+          | Real-Coqui | `30864233396` | 1 | `91852500584` | success |
+
+          - TypeScript: 291 tests, 0 failures/errors; 95.61% statements/lines, 87.89% branches, 96.16% functions.
+          - Python: 57 tests, 0 failures/errors; 97.44% statements and 89.19% branches.
+          - Every critical TypeScript file passed its configured line and branch floor.
+          - Core, Block 13 tail, and foreground UI Chromium matrices each returned `ok: true`, `maxActivePlayerCount: 1`, and zero invariant violations.
+          - Real-Coqui synthesized a valid mono 16-bit 22050 Hz WAV using VCTK voice `p225`, exercised all required error envelopes, preserved the model cache across recreation, and retained bounded tempfile/queue/shutdown evidence.
+
+          | Evidence | Artifact | Digest |
+          |---|---:|---|
+          | Vitest JUnit | `8875497124` | `sha256:64a485a9d52e5392d1c2eae14608ea66124aac977840b5f66cf7d06a23c0077f` |
+          | TypeScript coverage | `8875497471` | `sha256:c423258995b5b1fdb2963e4bf94370af97b530ddc8360a80dc99d6b2ef2b42c7` |
+          | Chromium log | `8875515089` | `sha256:aa04cc78e74082b76cbd062bc7df1e327ef174c85117a2b3a03cfed35dc16ee9` |
+          | Python coverage/JUnit | `8875517836` | `sha256:ec55edfb159c4ff997bd20e8457d6a0e9404ff50f5be8e4be608c8b6050d451f` |
+          | Real-Coqui | `8875590994` | `sha256:5c3703c1723dd0dc89a76f3f1bf235d9715a9f215947fe9863ae670317dcdd37` |
+
+          Real-Coqui image ID: `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa732c8c0e57ebaa`.
+
+          ## 9. Material failed attempts and repairs
+
+          - CI `30862741564` exposed a real stale-session race in Popup/Options controls after replacement. The UI now refreshes authoritative playback status before Pause, Resume, or Cancel.
+          - CI `30863813740` reproduced the paused-worker-restart timeout. The deterministic browser fixture was lengthened to ten seconds for that scenario while preserving the paused-state assertion.
+
+          Neither failure was converted into a pass by blind reruns. Both received production/test fixes and full local revalidation before the successful exact-SHA run.
+
+          ## 10. Final disposition
+
+          `COMPLETE — automated test coverage hardening passed on exact SHA; human listening remains governed separately.`
+
+          Block 16 listening remains truthfully `Not yet executed`. These coverage results do not establish audible quality and do not change the broader FIX2 disposition until a human completes that listening gate.
+          '''
+          report.write_text(text)
+
+          readme = Path('README.md')
+          text = readme.read_text()
+          start = text.index('### Current FIX2 evidence status')
+          end = text.index('### Extension gates', start)
+          replacement = '''### Current coverage-hardening evidence
+
+          Automated coverage hardening passed on implementation SHA `2cf59436edef86f05b691a9c21f05836d741d407`: CI `30864233383` and real-Coqui `30864233396`, both attempt 1. The suite contains 291 TypeScript tests and 57 Python tests. Hosted coverage is 95.61% TypeScript statements/lines, 87.89% branches, 96.16% functions, plus 97.44% Python statements and 89.19% branches.
+
+          Vitest measures 17 meaningful production files. Only `src/manifest.ts` and `src/options/main.tsx` are excluded because they are declarative/bootstrap entrypoints whose behavior is covered by build and Chromium validation. Global floors are 85% statements/lines/functions and 75% branches, with higher explicit floors for critical runtime files. Python floors are 85% statements and 75% branches.
+
+          Human listening remains `NOT RUN`; automated coverage does not prove audible quality, so the broader FIX2 status remains `PARTIAL`.
+
+          '''
+          text = text[:start] + replacement + text[end:]
+          text = text.replace(
+              'python -m pytest -q docker/coqui-local/tests\ndocker compose',
+              '''python -m pytest -q docker/coqui-local/tests \\
+            --cov=docker/coqui-local --cov-config=.coveragerc --cov-branch \\
+            --cov-report=term-missing --cov-report=xml:reports/coqui-coverage.xml \\
+            --cov-report=json:reports/coqui-coverage.json --junitxml=reports/coqui-junit.xml
+          python scripts/check_python_coverage.py
+          docker compose''',
+          )
+          readme.write_text(text)
+
+          coqui = Path('docker/coqui-local/README.md')
+          text = coqui.read_text()
+          text = text.replace(
+              'python -m pytest -q docker/coqui-local/tests\n```\n\nThey cover',
+              '''python -m pytest -q docker/coqui-local/tests \\
+            --cov=docker/coqui-local --cov-config=.coveragerc --cov-branch \\
+            --cov-report=term-missing --cov-report=xml:reports/coqui-coverage.xml \\
+            --cov-report=json:reports/coqui-coverage.json --junitxml=reports/coqui-junit.xml
+          python scripts/check_python_coverage.py
+          ```
+
+          CI requires at least 85% Python statements and 75% branches across `app.py` and `healthcheck.py`. The validated suite contains 57 tests and produced 97.44% statements and 89.19% branches.
+
+          They cover''',
+          )
+          coqui.write_text(text)
+
+          index = Path('docs/CHROME_READIT_FIX2_EVIDENCE_INDEX_2026-08-02.md')
+          text = index.read_text() + '''
+
+          ## Automated coverage-hardening evidence
+
+          - Specification: `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_SPEC_2026-08-03.md`
+          - Governing TODO: `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_TODO_2026-08-03.md`
+          - Implementation report: `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_IMPLEMENTATION_REPORT_2026-08-03.md`
+
+          Validated implementation SHA `2cf59436edef86f05b691a9c21f05836d741d407` passed CI `30864233383` and real-Coqui `30864233396`, both attempt 1. Retained artifacts: JUnit `8875497124`, TypeScript coverage `8875497471`, Chromium `8875515089`, Python coverage/JUnit `8875517836`, and real-Coqui `8875590994`.
+
+          Coverage hardening is complete as an automated workstream. It does not change the listening template, which remains `NOT RUN`, or the broader FIX2 `PARTIAL` disposition.
+          '''
+          index.write_text(text)
+          PY
+          sed -i 's/^          //' README.md docker/coqui-local/README.md docs/CHROME_READIT_FIX2_EVIDENCE_INDEX_2026-08-02.md docs/CHROME_READIT_TEST_COVERAGE_HARDENING_TODO_2026-08-03.md docs/CHROME_READIT_TEST_COVERAGE_HARDENING_IMPLEMENTATION_REPORT_2026-08-03.md
+          git diff --check
+
+      - name: Commit reconciled documentation
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md docker/coqui-local/README.md docs/CHROME_READIT_FIX2_EVIDENCE_INDEX_2026-08-02.md docs/CHROME_READIT_TEST_COVERAGE_HARDENING_TODO_2026-08-03.md docs/CHROME_READIT_TEST_COVERAGE_HARDENING_IMPLEMENTATION_REPORT_2026-08-03.md
+          git commit -m 'Reconcile coverage hardening evidence'
+          git push origin HEAD:master
+          git rev-parse HEAD > /tmp/reconciled-sha.txt
+
+      - name: Publish reconciled SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import urllib.request
+          repository = os.environ['GITHUB_REPOSITORY']
+          sha = pathlib.Path('/tmp/reconciled-sha.txt').read_text().strip()
+          request = urllib.request.Request(
+              f'https://api.github.com/repos/{repository}/issues/2/comments',
+              data=json.dumps({'body': f'CHROME_READIT_COVERAGE_RECONCILED sha={sha}'}).encode(),
+              headers={
+                  'Accept': 'application/vnd.github+json',
+                  'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
+                  'X-GitHub-Api-Version': '2022-11-28',
+                  'Content-Type': 'application/json',
+              },
+              method='POST',
+          )
+          with urllib.request.urlopen(request) as response:
+              if response.status != 201:
+                  raise RuntimeError(f'unexpected publish response: {response.status}')
+          PY
