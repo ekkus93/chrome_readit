@@ -35,13 +35,11 @@ describe('FIX2 workflow contracts', () => {
     expect(workflow).toContain('node scripts/check-coverage-thresholds.mjs')
     expect(workflow).toContain('python scripts/check_python_coverage.py')
     expect(workflow).toContain('--cov-branch')
-    expect(workflow).toContain('typescript-coverage-${{ github.run_id }}-${{ github.run_attempt }}')
-    expect(workflow).toContain('python-coverage-${{ github.run_id }}-${{ github.run_attempt }}')
-    expect(workflow).toContain('vitest-junit-${{ github.run_id }}-${{ github.run_attempt }}')
-    expect(workflow).toContain('chromium-e2e-${{ github.run_id }}-${{ github.run_attempt }}')
     expect(workflow).toContain('flags: typescript-unit')
     expect(workflow).toContain('flags: python-coqui')
-    expect(workflow.match(/if-no-files-found:\s*error/g)).toHaveLength(4)
+    expect(workflow).toContain('bash -n scripts/package-tagged-release.sh')
+    expect(workflow).not.toContain('actions/upload-artifact@')
+    expect(workflow).not.toContain('retention-days:')
     expect(workflow).toContain("minimum_chrome_version is missing")
   })
 
@@ -59,8 +57,9 @@ describe('FIX2 workflow contracts', () => {
     expect(publisher).toContain("Ignoring stale attempt {run_attempt}")
   })
 
-  it('keeps real-model execution explicitly requested and retains evidence', () => {
+  it('keeps real-model execution explicitly requested without retaining artifacts', () => {
     const workflow = read('.github/workflows/real-coqui-validation.yml')
+    const publisher = read('scripts/publish-real-coqui-status.py')
 
     expect(workflow).toContain('workflow_dispatch:')
     expect(workflow).toContain('\n  push:')
@@ -70,7 +69,10 @@ describe('FIX2 workflow contracts', () => {
     expect(workflow).toContain('scripts/validate-real-coqui.sh')
     expect(workflow).toContain('scripts/publish-real-coqui-status.py --phase in_progress')
     expect(workflow).toContain('image-inspect.json')
-    expect(workflow).toContain('real-coqui-${{ github.run_id }}-${{ github.run_attempt }}')
-    expect(workflow).toContain('if-no-files-found: error')
+    expect(workflow).not.toContain('actions/upload-artifact@')
+    expect(workflow).not.toContain('retention-days:')
+    expect(publisher).toContain('"artifact_retention": "tagged-releases-only"')
+    expect(publisher).toContain('not retained for non-tag runs')
+    expect(publisher).not.toContain('artifact_for_run')
   })
 })
