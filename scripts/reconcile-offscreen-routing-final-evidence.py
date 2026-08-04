@@ -1,9 +1,10 @@
 from pathlib import Path
 import subprocess
 
-script_path = Path(__file__)
+script_path = Path(__file__).resolve()
+relative_path = script_path.relative_to(Path.cwd()).as_posix()
 previous = subprocess.run(
-    ['git', 'show', f'HEAD^:{script_path.as_posix()}'],
+    ['git', 'show', f'HEAD^:{relative_path}'],
     check=True,
     capture_output=True,
     text=True,
