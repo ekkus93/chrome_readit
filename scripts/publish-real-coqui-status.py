@@ -5,7 +5,6 @@ import argparse
 import json
 import os
 import subprocess
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -47,28 +46,6 @@ def is_current_attempt(repo: str, run_id: int, attempt: int) -> bool:
     return True
 
 
-def artifact_for_run(repo: str, run_id: int, artifact_name: str) -> dict[str, Any] | None:
-    for _ in range(6):
-        payload = gh_json(f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100")
-        artifacts = payload.get("artifacts") if isinstance(payload, dict) else None
-        if isinstance(artifacts, list):
-            artifact = next(
-                (
-                    item
-                    for item in artifacts
-                    if isinstance(item, dict) and item.get("name") == artifact_name
-                ),
-                None,
-            )
-            if artifact is not None:
-                workflow_run = artifact.get("workflow_run")
-                if isinstance(workflow_run, dict) and workflow_run.get("id") not in (None, run_id):
-                    raise RuntimeError("Runtime artifact belongs to a different workflow run.")
-                return artifact
-        time.sleep(2)
-    return None
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--phase", choices=("in_progress", "completed"), required=True)
@@ -84,16 +61,6 @@ def main() -> None:
     if not is_current_attempt(repo, run_id, attempt):
         return
 
-    artifact_name = f"real-coqui-{run_id}-{attempt}"
-    artifact = (
-        artifact_for_run(repo, run_id, artifact_name)
-        if args.phase == "completed"
-        else None
-    )
-
-    artifact_id = artifact.get("id") if artifact else None
-    artifact_digest = artifact.get("digest") if artifact else None
-    artifact_size = artifact.get("size_in_bytes") if artifact else None
     conclusion = args.conclusion if args.phase == "completed" else "pending"
     observed = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -108,12 +75,7 @@ def main() -> None:
             "conclusion": conclusion,
             "run_url": f"https://github.com/{repo}/actions/runs/{run_id}",
         },
-        "artifact": {
-            "name": artifact_name,
-            "id": artifact_id,
-            "digest": artifact_digest,
-            "size_in_bytes": artifact_size,
-        },
+        "artifact_retention": "tagged-releases-only",
     }
 
     body = "\n".join(
@@ -126,10 +88,7 @@ def main() -> None:
             f"- **Run:** `{run_id}`",
             f"- **Attempt:** `{attempt}`",
             f"- **Commit:** `{sha}`",
-            f"- **Artifact:** `{artifact_name}`",
-            f"- **Artifact ID:** `{artifact_id if artifact_id is not None else 'pending'}`",
-            f"- **Artifact digest:** `{artifact_digest if artifact_digest is not None else 'pending'}`",
-            f"- **Artifact bytes:** `{artifact_size if artifact_size is not None else 'pending'}`",
+            "- **Artifacts:** `not retained for non-tag runs`",
             f"- **Observed:** `{observed}`",
             "",
             "## Machine-readable status",
