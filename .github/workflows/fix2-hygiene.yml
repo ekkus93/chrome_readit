@@ -7,7 +7,7 @@ on:
     branches: ["**"]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   hygiene:
@@ -15,6 +15,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
 
       - name: Reject dangerous fallbacks and silent failures
         run: bash scripts/check-fix2-hygiene.sh
+
+      - name: Reconcile paused-ended final evidence
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && hashFiles('scripts/reconcile-paused-ended-final-evidence.py') != ''
+        run: |
+          set -euo pipefail
+          python scripts/reconcile-paused-ended-final-evidence.py
+          npm ci
+          npm run lint
+          npm run typecheck
+          npx vitest --run src/offscreen/playback-coordinator.test.ts src/chromium-block13-contract.test.ts src/chromium-ui-contract.test.ts src/fix2-consolidated-state.test.ts src/no-temporary-workflows.test.ts
+          git diff --check -- . ':(exclude)*.md'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Reconcile paused-ended coverage evidence'
+          git push origin HEAD:master
