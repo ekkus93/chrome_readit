@@ -72,15 +72,6 @@ jobs:
               > reports/real-coqui/workflow-final-container.log 2>&1 || true
           fi
 
-      - name: Upload real Coqui evidence
-        if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: real-coqui-${{ github.run_id }}-${{ github.run_attempt }}
-          path: reports/real-coqui
-          if-no-files-found: error
-          retention-days: 14
-
       - name: Publish runtime completion
         if: ${{ always() }}
         env:
