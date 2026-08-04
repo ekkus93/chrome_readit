@@ -4,7 +4,7 @@ export default defineManifest({
   manifest_version: 3,
   minimum_chrome_version: '116',
   name: 'Read It – Reader',
-  version: '0.0.1',
+  version: '0.1.0',
   description: 'Reads selected text aloud with keyboard-first accessible UI.',
 
   action: { default_popup: 'src/popup.html', default_title: 'Read It' },
