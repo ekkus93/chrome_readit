@@ -325,18 +325,30 @@ async function queryDiagnostics(cdp, sessionId) {
 }
 
 async function waitForActiveSource(cdp, sessionId, source, previousSessionId = null) {
-  return await waitFor(`active ${source} session`, async () => {
-    const status = await queryStatus(cdp, sessionId)
-    if (status?.source !== source || status.sessionId === previousSessionId) return null
-    return ['starting', 'synthesizing', 'playing', 'waiting', 'paused'].includes(status.state) ? status : null
-  })
+  let lastStatus = null
+  try {
+    return await waitFor(`active ${source} session`, async () => {
+      const status = await queryStatus(cdp, sessionId)
+      lastStatus = status
+      if (status?.source !== source || status.sessionId === previousSessionId) return null
+      return ['starting', 'synthesizing', 'playing', 'waiting', 'paused'].includes(status.state) ? status : null
+    })
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}; last status: ${JSON.stringify(lastStatus)}`)
+  }
 }
 
 async function waitForState(cdp, sessionId, playbackSessionId, state) {
-  return await waitFor(`session ${playbackSessionId} state ${state}`, async () => {
-    const status = await queryStatus(cdp, sessionId)
-    return status?.sessionId === playbackSessionId && status.state === state ? status : null
-  })
+  let lastStatus = null
+  try {
+    return await waitFor(`session ${playbackSessionId} state ${state}`, async () => {
+      const status = await queryStatus(cdp, sessionId)
+      lastStatus = status
+      return status?.sessionId === playbackSessionId && status.state === state ? status : null
+    })
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}; last status: ${JSON.stringify(lastStatus)}`)
+  }
 }
 
 async function setReactValue(cdp, sessionId, selector, value) {
@@ -468,22 +480,21 @@ async function main() {
     await waitForBodyText(cdp, options.sessionId, 'Test speech was superseded by another playback request.')
     await waitFor('Options test button recovery', () => buttonEnabled(cdp, options.sessionId, 'Test speech'))
 
-    await setSelection(cdp, selectionSessionId, `${UI_CONTROL_AUDIO_MARKER} selection three.`)
-    await cdp.send('Target.activateTarget', { targetId: selectionTarget.id })
-    await clickSelector(cdp, popup.sessionId, 'button[aria-label="Read selected text"]', false)
-    const selectionThree = await waitForActiveSource(cdp, popup.sessionId, 'selection', selectionTwo.sessionId)
-    sessions.push(selectionThree.sessionId)
+    await setReactValue(cdp, popup.sessionId, '#tryText', `${UI_CONTROL_AUDIO_MARKER} Popup control surface.`)
+    await clickButton(cdp, popup.sessionId, 'Try speech')
+    const popupControls = await waitForActiveSource(cdp, popup.sessionId, 'popup-test', selectionTwo.sessionId)
+    sessions.push(popupControls.sessionId)
 
     await clickButton(cdp, popup.sessionId, 'Pause')
-    await waitForState(cdp, popup.sessionId, selectionThree.sessionId, 'paused')
+    await waitForState(cdp, popup.sessionId, popupControls.sessionId, 'paused')
     await clickButton(cdp, popup.sessionId, 'Resume')
-    await waitForState(cdp, popup.sessionId, selectionThree.sessionId, 'playing')
+    await waitForState(cdp, popup.sessionId, popupControls.sessionId, 'playing')
     await clickButton(cdp, popup.sessionId, 'Cancel')
-    await waitForState(cdp, popup.sessionId, selectionThree.sessionId, 'cancelled')
+    await waitForState(cdp, popup.sessionId, popupControls.sessionId, 'cancelled')
 
     await setReactValue(cdp, options.sessionId, '#test', `${UI_CONTROL_AUDIO_MARKER} Options control surface.`)
     await clickButton(cdp, options.sessionId, 'Test speech')
-    const optionsControls = await waitForActiveSource(cdp, options.sessionId, 'options-test', selectionThree.sessionId)
+    const optionsControls = await waitForActiveSource(cdp, options.sessionId, 'options-test', popupControls.sessionId)
     await clickButton(cdp, options.sessionId, 'Pause')
     await waitForState(cdp, options.sessionId, optionsControls.sessionId, 'paused')
     await clickButton(cdp, options.sessionId, 'Resume')
@@ -513,7 +524,7 @@ async function main() {
         'popup-read-selection-button',
         'popup-test-speech-button',
         'options-test-speech-button',
-        'selection-popup-options-selection-selection-replacement',
+        'selection-popup-options-selection-popup-replacement',
         'popup-supersession-ui-recovery',
         'options-supersession-ui-recovery',
         'popup-pause-resume-cancel-buttons',

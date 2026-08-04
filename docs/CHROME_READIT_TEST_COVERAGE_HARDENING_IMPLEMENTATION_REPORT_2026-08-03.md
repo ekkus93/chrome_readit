@@ -303,6 +303,7 @@ Immutable image ID: `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa73
 - CI `30862741564` exposed a stale-session race in Popup/Options controls after replacement. Both surfaces now refresh authoritative playback status before Pause, Resume, or Cancel, with focused regression tests.
 - CI `30863813740` reproduced the paused-worker-restart timeout. The deterministic scenario now uses a dedicated ten-second fixture while retaining the persisted-paused assertion.
 - CI `30874522986` exposed the same lifetime class in the foreground UI Pause scenario. Popup and Options control sessions now use a dedicated ten-second UI fixture, protected by `src/chromium-ui-contract.test.ts`.
+- CI `30875225926` showed that the control phase still repeated active-tab selection capture after that workflow had already been validated. The control phase now uses a long-lived Popup test session, while selection capture remains covered by the earlier selection scenarios; timeout errors now include the last observed status.
 
 Neither failure was converted into success through a blind rerun. Each received a root-cause fix and complete revalidation.
 

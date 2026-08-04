@@ -1165,6 +1165,7 @@ The core, command/offscreen tail, and foreground UI matrices returned `ok: true`
 1. CI `30862741564` exposed a stale Popup/Options control-session race after replacement. Both surfaces now query authoritative status before Pause, Resume, or Cancel.
 2. CI `30863813740` reproduced the paused-worker-restart timeout. The scenario now uses a dedicated ten-second fixture while preserving the persisted-paused assertion.
 3. CI `30874522986` exposed a two-second foreground UI control fixture that could finish before paused state was observable. Popup and Options control scenarios now use a dedicated ten-second fixture with a deterministic contract test.
+4. CI `30875225926` showed that the control phase still depended on a second active-tab selection capture. That phase now uses Popup test speech because the selection button and selection replacement path are already validated earlier; browser timeout diagnostics include the last observed status.
 
 Neither failure was hidden by a blind rerun. Each received a bounded fix and complete revalidation.
 
