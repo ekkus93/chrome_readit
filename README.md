@@ -454,14 +454,3 @@ Final coverage-hardening validation passed on exact SHA `3b308d016153b372d247945
 - all hosted Chromium matrices passed.
 
 Automated validation does not establish subjective audio quality. The separate human listening gate has not been executed, so the broader FIX2 disposition remains `PARTIAL`.
-
-## Project documents
-
-- `docs/CHROME_READIT_PLAYBACK_HARDENING_SPEC_2026-08-02.md`
-- `docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_SPEC_2026-08-02.md`
-- `docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_TODO_2026-08-02.md`
-- `docs/CHROME_READIT_FIX2_LISTENING_EVIDENCE_TEMPLATE_2026-08-02.md`
-- `docs/CHROME_READIT_FIX2_EVIDENCE_INDEX_2026-08-02.md`
-- `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_SPEC_2026-08-03.md`
-- `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_TODO_2026-08-03.md`
-- `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_IMPLEMENTATION_REPORT_2026-08-03.md`
