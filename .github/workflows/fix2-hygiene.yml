@@ -7,7 +7,7 @@ on:
     branches: ["**"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   hygiene:
@@ -15,25 +15,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          fetch-depth: 0
 
       - name: Reject dangerous fallbacks and silent failures
         run: bash scripts/check-fix2-hygiene.sh
-
-      - name: Apply and validate UI control source fix
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && hashFiles('scripts/apply-ui-control-source-fix.py') != ''
-        run: |
-          set -euo pipefail
-          python scripts/apply-ui-control-source-fix.py
-          npm ci
-          node --check scripts/chromium-ui-e2e.mjs
-          npm run lint
-          npm run typecheck
-          npx vitest --run src/chromium-ui-contract.test.ts
-          git diff --check -- . ':(exclude)*.md'
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m 'Decouple foreground controls from active-tab selection'
-          git push origin HEAD:master
