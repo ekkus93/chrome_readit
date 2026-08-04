@@ -37,6 +37,7 @@ describe('tagged release contracts', () => {
     expect(workflow).toContain("grep -q 'host_ip: 127.0.0.1'")
     expect(workflow).toContain('process.env.GITHUB_REF_NAME !== expectedTag')
     expect(workflow).toContain('bash scripts/package-tagged-release.sh "${GITHUB_REF_NAME}" release')
+    expect(workflow.match(/actions\/upload-artifact@/g)).toHaveLength(1)
     expect(workflow).toContain('tagged-release-assets-${{ github.ref_name }}')
     expect(workflow).toContain('retention-days: 90')
     expect(workflow).toContain('if-no-files-found: error')
@@ -46,6 +47,12 @@ describe('tagged release contracts', () => {
     expect(workflow).toContain('gh release create "${tag}" release/*')
     expect(workflow).toContain('--verify-tag')
     expect(workflow).toContain('--generate-notes')
+  })
+
+  it('forbids artifact retention in non-tag workflows', () => {
+    expect(read('.github/workflows/ci.yml')).not.toContain('actions/upload-artifact@')
+    expect(read('.github/workflows/real-coqui-validation.yml')).not.toContain('actions/upload-artifact@')
+    expect(read('.github/workflows/fix2-hygiene.yml')).not.toContain('actions/upload-artifact@')
   })
 
   it('packages version-matched extension and Docker assets with checksums', () => {
