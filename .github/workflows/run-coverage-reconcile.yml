@@ -1,4 +1,5 @@
 name: Run Coverage Documentation Reconciliation
+# retrigger: 1
 
 on:
   push:
