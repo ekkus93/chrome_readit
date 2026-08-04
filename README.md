@@ -3,115 +3,219 @@
 [![CI](https://github.com/ekkus93/chrome_readit/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/ekkus93/chrome_readit/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/ekkus93/chrome_readit/branch/master/graph/badge.svg)](https://codecov.io/gh/ekkus93/chrome_readit)
 
-Read It is a Manifest V3 Chrome extension that reads selected text through a local or user-configured synthesis endpoint. It provides keyboard-accessible controls, configurable voices and rates, sentence-aware chunking, and explicit paragraph pacing.
+Read It is a Manifest V3 Chrome extension that reads selected text aloud. This repository contains:
 
-## Automated coverage-hardening status
+- the Chrome extension;
+- a Dockerized local Coqui TTS service; and
+- the test and validation tooling for both components.
 
-The automated coverage-hardening workstream passed permanent CI and real-Coqui validation on final exact SHA `3b308d016153b372d247945f0932ae98a4c91142`. The suite contains **294 TypeScript tests** and **57 Python tests**. TypeScript coverage is **95.52% statements/lines**, **87.61% branches**, and **96.15% functions** across 17 measured production files. Python coverage is **97.44% statements** and **89.19% branches**.
+## Install
 
-Only `src/manifest.ts` and `src/options/main.tsx` are excluded because they are declarative/trivial bootstrap entrypoints whose behavior is covered by manifest, build, and Chromium validation. Global TypeScript floors are 85% statements/lines/functions and 75% branches, with higher critical-file floors. Python floors are 85% statements and 75% branches.
+### Requirements
 
-Automated coverage does not establish audible quality. The separate FIX2 human listening gate remains **Not yet executed**, so the broader FIX2 disposition remains `PARTIAL`.
+- Git
+- Chrome 116 or newer
+- Node.js 22.12.0 or newer
+- npm
+- Docker Engine or Docker Desktop with the Compose plugin
 
-## Architecture
+The repository pins the tested Node version in `.nvmrc`.
 
-Read It has one production playback owner:
+### 1. Clone the repository
 
-```text
-Popup / Options / keyboard / context menu
-                    │
-                    ▼
-        Manifest V3 service worker
-       selection capture + typed routing
-                    │
-                    ▼
-        Extension offscreen document
-     normalization → segmentation → packing
-       bounded synthesis → one Audio element
-                    │
-                    ▼
-       Local Coqui FastAPI service
+```bash
+git clone https://github.com/ekkus93/chrome_readit.git
+cd chrome_readit
 ```
 
-### Extension responsibilities
-
-- `src/background/service-worker.ts`
-  - captures the active-page selection;
-  - loads and repairs validated settings;
-  - ensures a supported offscreen document exists;
-  - is the sole request owner for typed start, status, pause, resume, and cancel requests from extension documents;
-  - serializes restart-safe status persistence;
-  - does **not** own the playback queue or fetch audio.
-- `src/offscreen/playback-coordinator.ts`
-  - owns the active session and queue;
-  - synthesizes the current chunk and at most one prefetched chunk;
-  - uses one persistent `HTMLAudioElement`;
-  - fails closed when the old source cannot be proven stopped and neutralized;
-  - continues queue progression independently of service-worker memory;
-  - emits typed status, supersession, failure, and diagnostic events;
-  - maintains direct test-build counters for active players, starts, settlements, and invariant violations.
-- `src/lib/text-normalization.ts`
-  - normalizes line endings, whitespace, and paragraph boundaries;
-  - enforces the selected-text length limit.
-- `src/lib/text-segmentation.ts`
-  - handles decimals, versions, domains, URLs, email addresses, abbreviations, quotes, ellipses, sentence punctuation, and tested uppercase/non-ASCII continuation cases;
-  - does not treat semicolons as sentence endings.
-- `src/lib/chunk-packing.ts`
-  - packs adjacent complete sentences instead of making one request per sentence;
-  - never crosses paragraph boundaries;
-  - uses 280/400/500-character target, soft, and hard limits.
-- `src/lib/playback-pacing.ts`
-  - preserves bounded continuation, sentence, and paragraph pauses at high rates.
-- `src/lib/playback-protocol.ts`
-  - defines and validates cross-context messages, monotonic status sequences, structured failures, and cleanup stages.
-- `src/lib/tts-client.ts`
-  - reads audio as a bounded stream;
-  - enforces declared and actual response limits;
-  - distinguishes timeout, cancellation, HTTP, MIME, empty-body, and playback failures.
-
-Popup test speech, Options test speech, selection reading, keyboard commands, and context-menu reading all use the same offscreen coordinator. Popup, Options, and other extension documents route playback through the service worker; the offscreen listener rejects direct document-originated start, control, and status broadcasts so two contexts cannot answer the same request. There is no UI-local, content-script, WebAudio, browser-speech, or host-audio fallback.
-
-## Requirements
-
-- Chrome 116 or newer
-- Node.js 22.12 or newer
-- npm
-- Docker with the Compose plugin for the bundled Coqui service
-
-The tested Node version is recorded in `.nvmrc`. The extension manifest declares Chrome 116 as its minimum version because the playback router depends on the supported offscreen/context APIs instead of process-local existence guesses.
-
-## Start the local TTS service
+### 2. Build and start the Docker TTS service
 
 From the repository root:
 
 ```bash
-docker compose -f docker/docker-compose.yml up --build
+docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-The default Compose configuration:
+This command builds the local Coqui image and starts the service in the background.
 
-- publishes the API only on `127.0.0.1:5002`;
-- uses `tts_models/en/vctk/vits` unless overridden;
-- persists the Coqui model cache in the `coqui_models` volume;
-- runs one inference worker behind a bounded active-plus-queued capacity;
-- rejects empty, oversized, overloaded, invalid-voice, and timed-out requests;
-- keeps timed-out inference visible until the underlying in-process work actually ends;
-- retains failed tempfile cleanup for retry and diagnostics;
-- runs as a non-root container user;
-- exposes no host-audio playback or debug endpoint.
+The first startup downloads `tts_models/en/vctk/vits` into the persistent `coqui_models` Docker volume. The API may start responding before the model is ready.
 
-The first startup may take several minutes while the configured model is downloaded into the persistent volume.
+Watch the startup log:
 
-### Service endpoints
+```bash
+docker compose -f docker/docker-compose.yml logs -f coqui-local
+```
 
-- `GET /api/ping` — process liveness
-- `GET /api/ready` — model readiness and current ability to accept another bounded request
-- `GET /api/voices` — voices exposed by the active model
-- `POST /api/tts` — synthesize one bounded text chunk and return `audio/wav`
+Check the container state:
 
-`/api/ready` returns `503` while the model is unavailable or the configured queue is full. Normal extension playback uses only `POST /api/tts`. Legacy stored URLs ending in `/api/tts/play` are migrated to `/api/tts`; the host-play endpoint does not exist.
+```bash
+docker compose -f docker/docker-compose.yml ps
+```
 
-### Service configuration
+Verify the service:
+
+```bash
+curl http://127.0.0.1:5002/api/ping
+curl --fail http://127.0.0.1:5002/api/ready
+curl http://127.0.0.1:5002/api/voices
+```
+
+`/api/ready` returns HTTP 503 while the model is loading or while the synthesis queue is full. Continue only after it returns HTTP 200.
+
+Default extension settings:
+
+```text
+TTS endpoint: http://localhost:5002/api/tts
+Voice: p225
+Speech rate: 1.0
+```
+
+### 3. Build the Chrome extension
+
+Install the pinned Node version with `nvm`, when available:
+
+```bash
+nvm install
+nvm use
+```
+
+Install dependencies and build the extension:
+
+```bash
+npm ci
+npm run build
+```
+
+The unpacked extension is written to:
+
+```text
+dist/
+```
+
+### 4. Load the extension in Chrome
+
+1. Open `chrome://extensions/`.
+2. Enable **Developer mode**.
+3. Click **Load unpacked**.
+4. Select the repository's `dist/` directory.
+
+This repository does not currently provide a Chrome Web Store package. Install it as an unpacked extension.
+
+### 5. Verify the extension
+
+1. Open the extension's **Options** page.
+2. Confirm **TTS synthesis endpoint** is `http://localhost:5002/api/tts`.
+3. Click **Test server**.
+4. Confirm the page reports **Server accepting requests**.
+5. Select voice `p225` if it is not already selected.
+6. Click **Test speech**.
+
+The Docker service and extension are installed when the server test succeeds and the test sentence plays.
+
+## Use
+
+Read selected text with any of these methods:
+
+- Select text and press `Alt+Shift+R`.
+- Right-click selected text and choose **Read selection aloud**.
+- Open the popup and use its controls.
+
+Playback controls:
+
+| Action | Shortcut |
+| --- | --- |
+| Read selection | `Alt+Shift+R` |
+| Pause | `Alt+Shift+P` |
+| Resume | `Alt+Shift+U` |
+| Cancel | `Alt+Shift+C` |
+
+Voice, playback rate, endpoint, server testing, and test speech are available on the Options page.
+
+## Update or rebuild
+
+Pull repository changes:
+
+```bash
+git pull
+```
+
+Rebuild and restart the Docker service:
+
+```bash
+docker compose -f docker/docker-compose.yml up -d --build
+```
+
+Rebuild the extension:
+
+```bash
+npm ci
+npm run build
+```
+
+Then open `chrome://extensions/` and click **Reload** on the Read It extension card.
+
+Chrome does not automatically reload an unpacked extension when `dist/` changes.
+
+## Docker service operations
+
+### Start
+
+```bash
+docker compose -f docker/docker-compose.yml up -d
+```
+
+### Stop
+
+```bash
+docker compose -f docker/docker-compose.yml down
+```
+
+This keeps the downloaded model in the `coqui_models` volume.
+
+### Stop and delete the model cache
+
+```bash
+docker compose -f docker/docker-compose.yml down -v
+```
+
+Use `-v` only when you intend to delete the downloaded model. The next startup will download it again.
+
+### Rebuild without Docker layer cache
+
+```bash
+docker compose -f docker/docker-compose.yml build --no-cache
+docker compose -f docker/docker-compose.yml up -d
+```
+
+### Show logs
+
+```bash
+docker compose -f docker/docker-compose.yml logs -f coqui-local
+```
+
+### Show the effective Compose configuration
+
+```bash
+docker compose -f docker/docker-compose.yml config
+```
+
+The default configuration binds the service only to `127.0.0.1` and mounts `coqui_models` at `/home/readit/.local/share/tts`.
+
+### Build and run without Compose
+
+From `docker/coqui-local/`:
+
+```bash
+docker build -t chrome-readit-coqui .
+docker run --rm \
+  -p 127.0.0.1:5002:5002 \
+  -v chrome_readit_coqui_models:/home/readit/.local/share/tts \
+  chrome-readit-coqui
+```
+
+## TTS service configuration
+
+Compose reads these environment variables:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -120,60 +224,145 @@ The first startup may take several minutes while the configured model is downloa
 | `COQUI_VOICES` | empty | Optional comma-separated voice override |
 | `MAX_TEXT_CHARS` | `500` | Maximum characters per synthesis request |
 | `SYNTH_QUEUE_CAPACITY` | `4` | Active plus queued synthesis jobs |
-| `SYNTH_TIMEOUT_SECONDS` | `120` | HTTP wait limit for one request |
+| `SYNTH_TIMEOUT_SECONDS` | `120` | Request wait timeout |
 
-Invalid numeric or empty model configuration fails startup instead of silently clamping to another value.
+Example:
 
-To expose the service beyond the local machine, edit the Compose port binding explicitly and add appropriate authentication, TLS, firewall, and threat controls. Remote exposure is not the default security posture.
+```bash
+COQUI_PORT=5003 SYNTH_QUEUE_CAPACITY=2 \
+  docker compose -f docker/docker-compose.yml up -d --build
+```
 
-## Build and load the extension
+When changing `COQUI_PORT`, also change the extension endpoint on the Options page, for example:
+
+```text
+http://localhost:5003/api/tts
+```
+
+Invalid numeric values and an empty model name fail startup.
+
+### API endpoints
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/api/ping` | Process liveness |
+| GET | `/api/ready` | Model readiness and queue availability |
+| GET | `/api/voices` | Available voices or speakers |
+| POST | `/api/tts` | Synthesize WAV audio |
+
+Example synthesis request:
+
+```bash
+curl --fail \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"This is a test.","voice":"p225"}' \
+  http://127.0.0.1:5002/api/tts \
+  --output test.wav
+```
+
+The service does not provide host-audio playback endpoints. Audio playback is owned by the Chrome extension.
+
+## Extension settings
+
+The default stored settings are:
+
+| Setting | Default |
+| --- | --- |
+| Voice | `p225` |
+| Speech rate | `1.0` |
+| TTS endpoint | `http://localhost:5002/api/tts` |
+
+On the Options page:
+
+- **Save endpoint** stores the current HTTP or HTTPS URL.
+- **Use local default** restores `http://localhost:5002/api/tts`.
+- **Test server** checks whether the configured service is ready.
+- **Test speech** sends the text in the test box through the normal playback path.
+
+Malformed stored settings are repaired to safe values. Legacy URLs ending in `/api/tts/play` are migrated to `/api/tts`.
+
+## Troubleshooting
+
+### `/api/ready` returns HTTP 503
+
+Check logs:
+
+```bash
+docker compose -f docker/docker-compose.yml logs -f coqui-local
+```
+
+Common causes:
+
+- the model is still downloading;
+- the model is still loading; or
+- every synthesis queue slot is occupied.
+
+`/api/ping` can succeed before `/api/ready` succeeds.
+
+### The Options page says the server is unavailable
+
+Check the service directly:
+
+```bash
+curl --fail http://127.0.0.1:5002/api/ready
+```
+
+Then confirm the saved endpoint is:
+
+```text
+http://localhost:5002/api/tts
+```
+
+If Docker is running on another computer, `localhost` is wrong. Set the endpoint to the address of that computer and secure the service before exposing it to the network.
+
+### Chrome cannot load `dist/`
+
+Rebuild it:
 
 ```bash
 npm ci
 npm run build
 ```
 
-Then:
+Confirm `dist/manifest.json` exists, then load the `dist/` directory—not the repository root.
 
-1. Open `chrome://extensions/`.
-2. Enable **Developer mode**.
-3. Select **Load unpacked**.
-4. Choose this repository's `dist/` directory.
+### Changes do not appear in Chrome
 
-## Use the extension
+Run:
 
-- Select text and press `Alt+Shift+R`.
-- Right-click selected text and choose **Read selection aloud**.
-- Use the popup or Options page to choose a voice and playback rate.
-- Pause with `Alt+Shift+P`.
-- Resume with `Alt+Shift+U`.
-- Cancel with `Alt+Shift+C`.
+```bash
+npm run build
+```
 
-A new read or test request supersedes the active session only after old audio cleanup succeeds. If pause, source clearing, object-URL revocation, or player accounting is uncertain, the replacement is rejected with a structured error rather than risking overlapping speech.
+Then click **Reload** for the extension on `chrome://extensions/`.
 
-Popup and Options controls include the displayed session ID. A stale UI therefore cannot accidentally control a newer replacement session. Global keyboard commands intentionally target the current global session.
+### No voices appear
 
-## Settings behavior
+Check the API:
 
-Stored settings are treated as untrusted data:
+```bash
+curl http://127.0.0.1:5002/api/voices
+```
 
-- malformed voices, rates, and URLs are repaired to safe values;
-- rates are finite and clamped to the supported range;
-- endpoints must be HTTP or HTTPS;
-- legacy host-play URLs are migrated;
-- repairs are reported to the UI;
-- a failed save remains visible and is not marked persisted optimistically;
-- the Options endpoint field is a draft until **Save endpoint** succeeds.
+Voice availability depends on the configured model. The default VCTK model exposes multiple speakers and uses `p225` as the default.
 
-Voice discovery returns structured errors. An empty voice list from a valid single-speaker model is distinct from a network, timeout, HTTP, JSON, or schema failure.
+### The model downloads again
 
-## Validation
+Confirm the Compose volume is present:
 
-### Current FIX2 evidence status
+```bash
+docker volume ls | grep coqui_models
+```
 
-Sequence 28 passed permanent CI run `30881863828`, attempt 1, job `91904770337`, and real-Coqui run `30881863836`, attempt 1, on the same exact SHA `3b308d016153b372d247945f0932ae98a4c91142`. The final matrix contains 294 clean TypeScript tests, 57 clean Python tests, all configured coverage floors, and all three Chromium matrices. Human listening remains `NOT RUN`, so the broader FIX2 release is still `PARTIAL`.
+Do not run `docker compose down -v` unless you intend to delete the model cache.
 
-### Extension gates
+### Playback reports a cleanup failure
+
+Playback cleanup is fail-closed. A new session is rejected when the previous audio source cannot be proven stopped and released. Reload the extension and inspect the browser extension logs rather than repeatedly starting new speech.
+
+## Development and validation
+
+### Extension checks
 
 ```bash
 npm run lint
@@ -185,8 +374,6 @@ npm run build
 npm run build:e2e
 ```
 
-Hosted CI also validates the generated manifest/assets, executes the extension in real Chromium, scans full Git history for secret patterns, validates Compose security defaults, and uploads TypeScript and Python coverage to Codecov.
-
 ### Coqui service tests
 
 ```bash
@@ -197,12 +384,11 @@ python -m pytest -q docker/coqui-local/tests \
   --cov-branch \
   --cov-report=term-missing
 python scripts/check_python_coverage.py
-docker compose -f docker/docker-compose.yml config
 ```
 
-The normal server tests use deterministic fake backends and injected failures; they do not download the real Coqui model.
+The normal Python test suite uses injected fake TTS backends and does not download the real model.
 
-### Real Chromium topology test
+### Chromium extension tests
 
 ```bash
 npm run build:e2e
@@ -210,93 +396,71 @@ CHROME_PATH=/path/to/chrome xvfb-run -a npm run test:chromium
 CHROME_PATH=/path/to/chrome xvfb-run -a npm run test:chromium-ui
 ```
 
-The harness uses Chrome DevTools Protocol, the canonical `fixtures/playback-collision.txt`, and a deterministic local WAV server. It validates:
-
-- exact semantic text preservation;
-- short-sentence packing and semicolon preservation;
-- continuation, sentence, and paragraph pacing at rates `0.5`, `1`, `2`, `4`, and `10`;
-- direct production active-player counters with maximum `1` and terminal count `0`;
-- rapid mixed-source replacement and explicit supersession;
-- invalid-audio terminal failure;
-- offscreen continuation after forced service-worker termination;
-- popup status recovery after worker restart;
-- Pause, Resume, and Cancel through the restarted worker.
-
-### Real Coqui model validation
-
-Run the real container harness from the repository root:
+### Real-model validation
 
 ```bash
 bash scripts/validate-real-coqui.sh
 ```
 
-Evidence is written under `reports/real-coqui/` by default. This is intentionally separate from fake-backend CI because it downloads and initializes the real model, synthesizes WAV audio, inspects loopback publication and temporary files, recreates the service, and verifies that the persistent model volume remains populated.
+This builds and starts the real container, loads the actual model, synthesizes WAV audio, checks queue and timeout behavior, recreates the service, and verifies model-cache reuse.
 
-Final real-model evidence is run `30881863836`, attempt 1, on exact SHA `3b308d016153b372d247945f0932ae98a4c91142`. The retained artifact is `8881678383` with digest `sha256:58f6ebe580f81920cf15b896a8eb9d9aed232f7cec9c5579837452d72c02cd80`. Script existence alone is never evidence; later candidates require their own exact-SHA record.
-
-### Structured listening validation
-
-Use:
+## Architecture
 
 ```text
-docs/CHROME_READIT_FIX2_LISTENING_EVIDENCE_TEMPLATE_2026-08-02.md
+Chrome popup / Options / keyboard / context menu
+                         │
+                         ▼
+              Manifest V3 service worker
+             selection capture and routing
+                         │
+                         ▼
+                Offscreen document
+       text processing, synthesis queue, Audio
+                         │
+                         ▼
+              Coqui FastAPI service
 ```
 
-Human listening remains a separate release gate. Automated completion and timing evidence cannot establish naturalness, audible seams, clipping, omissions, or repetition.
+The service worker is the sole request owner for extension-document start, status, pause, resume, and cancel messages. The offscreen document owns the playback coordinator and the single persistent `HTMLAudioElement`.
 
-## Troubleshooting
+Important files:
 
-### The popup says the server is unavailable
-
-```bash
-docker compose -f docker/docker-compose.yml ps
-docker compose -f docker/docker-compose.yml logs coqui-local
-curl --fail http://127.0.0.1:5002/api/ready
-```
-
-`/api/ping` can succeed while the model is still loading. `/api/ready` can also return `503` when every bounded queue slot is occupied.
-
-### A voice cannot be loaded or is rejected
-
-```bash
-curl http://127.0.0.1:5002/api/voices
-```
-
-The UI now distinguishes discovery failure from a valid empty list. Voice availability depends on `COQUI_MODEL`; a single-speaker model may legitimately expose no selectable voices.
-
-### Playback reports cleanup failure
-
-A cleanup failure is fail-closed. Start requests remain rejected until the old source can be proven paused, cleared, and released. Record the cleanup stage and diagnostic counters rather than repeatedly clicking Start.
-
-### The model downloads again
-
-Confirm the effective Compose configuration includes:
-
-```text
-source: coqui_models
-target: /home/readit/.local/share/tts
-```
-
-Then run `scripts/validate-real-coqui.sh` and preserve both startup logs.
-
-### Chrome cannot load the bundle
-
-Run `npm run build` again. The build fails if the CRXJS extension plugin is unavailable, and CI verifies the generated background, popup, Options, and offscreen entries plus the declared minimum Chrome version.
+| Path | Purpose |
+| --- | --- |
+| `src/background/service-worker.ts` | Selection capture, command handling, offscreen lifecycle, status persistence |
+| `src/offscreen.ts` | Offscreen runtime message adapter |
+| `src/offscreen/playback-coordinator.ts` | Playback session, queue, cleanup, pacing, and replacement logic |
+| `src/lib/tts-client.ts` | Bounded HTTP audio client |
+| `src/lib/storage.ts` | Settings validation, defaults, repair, and migration |
+| `docker/coqui-local/app.py` | FastAPI TTS service and bounded synthesis runtime |
+| `docker/docker-compose.yml` | Default local container configuration |
 
 ## Security and privacy
 
-Selected text is sent only to the configured synthesis endpoint. The default endpoint is loopback-only. Read It does not intentionally log selected text or audio payloads, and user-visible errors do not include URL credentials, raw response bodies, local paths, or stack traces.
+Selected text is sent to the configured synthesis endpoint. The default endpoint is local and the Docker service binds only to `127.0.0.1`.
 
-The extension currently declares `<all_urls>` because users may configure arbitrary HTTP(S) synthesis endpoints. Selection capture itself is user-invoked through `activeTab`. Converting endpoint access to optional host permissions remains recommended before Chrome Web Store publication.
+The extension declares `<all_urls>` because users can configure arbitrary HTTP or HTTPS TTS endpoints. Do not expose the Docker service beyond the local machine without authentication, TLS, firewall rules, and an explicit network design.
 
-## Design and implementation documents
+## Current validation status
+
+Final coverage-hardening validation passed on exact SHA `3b308d016153b372d247945f0932ae98a4c91142`:
+
+- CI run `30881863828`, attempt 1;
+- real-Coqui run `30881863836`, attempt 1;
+- 294 TypeScript tests;
+- 57 Python tests;
+- TypeScript coverage: 95.52% statements/lines, 87.61% branches, 96.15% functions;
+- Python coverage: 97.44% statements, 89.19% branches; and
+- all hosted Chromium matrices passed.
+
+Automated validation does not establish subjective audio quality. The separate human listening gate has not been executed, so the broader FIX2 disposition remains `PARTIAL`.
+
+## Project documents
 
 - `docs/CHROME_READIT_PLAYBACK_HARDENING_SPEC_2026-08-02.md`
-- `docs/CHROME_READIT_PLAYBACK_HARDENING_TODO_2026-08-02.md`
 - `docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_SPEC_2026-08-02.md`
 - `docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_TODO_2026-08-02.md`
 - `docs/CHROME_READIT_FIX2_LISTENING_EVIDENCE_TEMPLATE_2026-08-02.md`
-- `docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_BLOCK17_RECONCILIATION_2026-08-03.md`
 - `docs/CHROME_READIT_FIX2_EVIDENCE_INDEX_2026-08-02.md`
 - `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_SPEC_2026-08-03.md`
 - `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_TODO_2026-08-03.md`
