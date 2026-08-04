@@ -7,7 +7,7 @@ on:
     branches: ["**"]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   hygiene:
@@ -15,6 +15,22 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
 
       - name: Reject dangerous fallbacks and silent failures
         run: bash scripts/check-fix2-hygiene.sh
+
+      - name: Finalize coverage-hardening reconciliation
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && hashFiles('scripts/finalize-coverage-hardening.py') != ''
+        run: |
+          set -euo pipefail
+          python scripts/finalize-coverage-hardening.py
+          npm ci
+          npx vitest --run src/no-temporary-workflows.test.ts
+          git diff --check -- . ':(exclude)*.md'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Reconcile coverage hardening evidence and cleanup'
+          git push origin HEAD:master
