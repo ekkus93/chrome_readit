@@ -2,7 +2,7 @@
 
 **Requested:** 2026-08-03  
 **Request sequence:** 22  
-**Purpose:** Validate the clean, documentation-reconciled coverage-hardening head after removal of all temporary workflows, including all 291 TypeScript tests, all 57 Python tests, global and critical-file coverage gates, the complete hosted Chromium matrix, and the real-Coqui runtime matrix.  
+**Purpose:** Validate the clean, documentation-reconciled coverage-hardening head after removal of all temporary workflows, including all 292 TypeScript tests, all 57 Python tests, global and critical-file coverage gates, the complete hosted Chromium matrix, and the real-Coqui runtime matrix.  
 **Ordinary CI:** The same commit must also pass `.github/workflows/ci.yml`.  
 **Runtime status:** GitHub issue `#3` is overwritten at workflow start and completion.
 

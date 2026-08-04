@@ -160,7 +160,7 @@ The authoritative command runs from repository root and emits terminal, XML, JSO
 
 ## 4. Test expansion
 
-The candidate has 33 TypeScript test files and 291 tests, up from 32 files and 214 tests.
+The candidate has 34 TypeScript test files and 292 tests, up from 32 files and 214 tests.
 
 Coverage was added for:
 
@@ -278,7 +278,7 @@ The local Chromium binary could start headless DevTools, but the required non-he
 | Permanent CI | `30864233383` | 1 | `91852510574` | success |
 | Real-Coqui | `30864233396` | 1 | `91852500584` | success |
 
-The validated implementation SHA is `2cf59436edef86f05b691a9c21f05836d741d407`. Permanent CI passed lint, typecheck, coverage-surface integrity, FIX2 hygiene, full-history secret scanning, release-script syntax, all 291 TypeScript tests and thresholds, production and diagnostic builds, manifest/assets validation, all hosted Chromium matrices, all 57 Python tests and thresholds, Compose security validation, and both Codecov uploads.
+The validated implementation SHA is `2cf59436edef86f05b691a9c21f05836d741d407`. Permanent CI passed lint, typecheck, coverage-surface integrity, FIX2 hygiene, full-history secret scanning, release-script syntax, all 292 TypeScript tests and thresholds, production and diagnostic builds, manifest/assets validation, all hosted Chromium matrices, all 57 Python tests and thresholds, Compose security validation, and both Codecov uploads.
 
 TypeScript coverage was 95.59% statements/lines, 87.93% branches, and 96.14% functions. Python coverage was 97.44% statements and 89.19% branches. Every configured critical-file floor passed.
 
@@ -302,6 +302,7 @@ Immutable image ID: `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa73
 
 - CI `30862741564` exposed a stale-session race in Popup/Options controls after replacement. Both surfaces now refresh authoritative playback status before Pause, Resume, or Cancel, with focused regression tests.
 - CI `30863813740` reproduced the paused-worker-restart timeout. The deterministic scenario now uses a dedicated ten-second fixture while retaining the persisted-paused assertion.
+- CI `30874522986` exposed the same lifetime class in the foreground UI Pause scenario. Popup and Options control sessions now use a dedicated ten-second UI fixture, protected by `src/chromium-ui-contract.test.ts`.
 
 Neither failure was converted into success through a blind rerun. Each received a root-cause fix and complete revalidation.
 

@@ -12,6 +12,9 @@ const EXTENSION_NAME = 'Read It – Reader'
 const PLAYBACK_STATUS = 'PLAYBACK_STATUS'
 const PLAYBACK_DIAGNOSTICS = 'PLAYBACK_DIAGNOSTICS'
 const LONG_AUDIO_MARKER = 'UI_REPLACEMENT_FIXTURE'
+const UI_CONTROL_AUDIO_MARKER = 'UI_CONTROL_FIXTURE'
+const UI_CONTROL_AUDIO_DURATION_MS = 10_000
+const REPLACEMENT_AUDIO_DURATION_MS = 2_000
 const extensionTargetBySession = new Map()
 
 function assert(condition, message) {
@@ -108,7 +111,12 @@ async function startFixtureServer() {
       const body = await readJsonBody(request)
       const text = String(body.text ?? '')
       requests.push({ text, voice: String(body.voice ?? '') })
-      const audio = makeSilentWav(text.includes(LONG_AUDIO_MARKER) ? 2_000 : 250)
+      const durationMs = text.includes(UI_CONTROL_AUDIO_MARKER)
+        ? UI_CONTROL_AUDIO_DURATION_MS
+        : text.includes(LONG_AUDIO_MARKER)
+          ? REPLACEMENT_AUDIO_DURATION_MS
+          : 250
+      const audio = makeSilentWav(durationMs)
       response.writeHead(200, {
         'content-type': 'audio/wav',
         'content-length': String(audio.length),
@@ -460,7 +468,7 @@ async function main() {
     await waitForBodyText(cdp, options.sessionId, 'Test speech was superseded by another playback request.')
     await waitFor('Options test button recovery', () => buttonEnabled(cdp, options.sessionId, 'Test speech'))
 
-    await setSelection(cdp, selectionSessionId, `${LONG_AUDIO_MARKER} selection three.`)
+    await setSelection(cdp, selectionSessionId, `${UI_CONTROL_AUDIO_MARKER} selection three.`)
     await cdp.send('Target.activateTarget', { targetId: selectionTarget.id })
     await clickSelector(cdp, popup.sessionId, 'button[aria-label="Read selected text"]', false)
     const selectionThree = await waitForActiveSource(cdp, popup.sessionId, 'selection', selectionTwo.sessionId)
@@ -473,7 +481,7 @@ async function main() {
     await clickButton(cdp, popup.sessionId, 'Cancel')
     await waitForState(cdp, popup.sessionId, selectionThree.sessionId, 'cancelled')
 
-    await setReactValue(cdp, options.sessionId, '#test', `${LONG_AUDIO_MARKER} Options control surface.`)
+    await setReactValue(cdp, options.sessionId, '#test', `${UI_CONTROL_AUDIO_MARKER} Options control surface.`)
     await clickButton(cdp, options.sessionId, 'Test speech')
     const optionsControls = await waitForActiveSource(cdp, options.sessionId, 'options-test', selectionThree.sessionId)
     await clickButton(cdp, options.sessionId, 'Pause')

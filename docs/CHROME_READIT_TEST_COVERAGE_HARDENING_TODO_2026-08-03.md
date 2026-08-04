@@ -1107,7 +1107,7 @@ Record:
 Final exact SHA: 2cf59436edef86f05b691a9c21f05836d741d407
 Hosted CI run/attempt: 30864233383 / 1
 Real-Coqui run/attempt: 30864233396 / 1
-TypeScript test count: 291
+TypeScript test count: 292
 Python test count: 57
 TypeScript global coverage: 95.59% statements, 87.93% branches, 96.14% functions, 95.59% lines
 Python global coverage: 97.44% statements, 89.19% branches
@@ -1129,7 +1129,7 @@ Final decision: COMPLETE — automated test coverage hardening passed on exact S
 
 | Surface | Tests | Statements/lines | Branches | Functions |
 |---|---:|---:|---:|---:|
-| TypeScript | 291 | 95.59% | 87.93% | 96.14% |
+| TypeScript | 292 | 95.59% | 87.93% | 96.14% |
 | Python | 57 | 97.44% statements | 89.19% | n/a |
 
 ## Critical TypeScript files
@@ -1164,6 +1164,7 @@ The core, command/offscreen tail, and foreground UI matrices returned `ok: true`
 
 1. CI `30862741564` exposed a stale Popup/Options control-session race after replacement. Both surfaces now query authoritative status before Pause, Resume, or Cancel.
 2. CI `30863813740` reproduced the paused-worker-restart timeout. The scenario now uses a dedicated ten-second fixture while preserving the persisted-paused assertion.
+3. CI `30874522986` exposed a two-second foreground UI control fixture that could finish before paused state was observable. Popup and Options control scenarios now use a dedicated ten-second fixture with a deterministic contract test.
 
 Neither failure was hidden by a blind rerun. Each received a bounded fix and complete revalidation.
 
