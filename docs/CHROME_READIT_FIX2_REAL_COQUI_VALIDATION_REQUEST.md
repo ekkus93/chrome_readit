@@ -1,8 +1,8 @@
 # Chrome Read It FIX2 Real Coqui Validation Request
 
 **Requested:** 2026-08-03  
-**Request sequence:** 19  
-**Purpose:** Validate the comprehensive test-coverage hardening implementation, the stale Popup/Options playback-control session-race fix, all 290 TypeScript tests, all 57 Python tests, expanded TypeScript and Python branch-coverage gates, permanent attempt-specific evidence artifacts, complete Chromium Block 13 matrix, and real-Coqui runtime matrix together on one exact final candidate.  
+**Request sequence:** 20  
+**Purpose:** Validate the comprehensive test-coverage hardening implementation, the stale Popup/Options playback-control session-race fix, the deterministic ten-second paused-worker-restart fixture, all 291 TypeScript tests, all 57 Python tests, expanded TypeScript and Python branch-coverage gates, permanent attempt-specific evidence artifacts, complete Chromium Block 13 matrix, and real-Coqui runtime matrix together on one exact final candidate.  
 **Ordinary CI:** The same commit must also pass `.github/workflows/ci.yml`.  
 **Runtime status:** GitHub issue `#3` is overwritten at workflow start and completion.
 
@@ -25,7 +25,7 @@ The runtime workflow must retain evidence for:
 The same exact candidate must validate:
 
 - the complete intended TypeScript production coverage surface and exact approved exclusions;
-- all 290 TypeScript tests and all 57 Python tests;
+- all 291 TypeScript tests and all 57 Python tests;
 - global TypeScript statement, line, function, and branch thresholds;
 - critical-file TypeScript line and branch floors;
 - Python statement and branch thresholds for the Coqui service and healthcheck;
@@ -38,6 +38,7 @@ The same exact candidate must validate:
 - TTS HTTP failure, timeout, and oversized streamed-response handling;
 - invalid offscreen response rejection;
 - service-worker restart during synthesis, paused playback, and transition waits;
+- the paused-worker-restart scenario retaining an observable paused state through a dedicated ten-second audio fixture before the worker is terminated;
 - pause/resume preservation of the remaining transition delay;
 - Chrome registration of the playback command names and exact manifest shortcut suggestions;
 - recording of active runtime shortcut assignment, including a valid unassigned result caused by collision or environment state;
