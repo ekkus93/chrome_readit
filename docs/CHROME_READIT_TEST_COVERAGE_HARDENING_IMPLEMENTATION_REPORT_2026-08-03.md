@@ -6,13 +6,13 @@
 **Governing specification:** `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_SPEC_2026-08-03.md`  
 **Execution TODO:** `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_TODO_2026-08-03.md`  
 **Implementation base SHA:** `b1ce1cdcaa438a238378534dafd99b11d24cf9ad`  
-**Validated implementation SHA:** `50c823c8c01b8ec4d556f21b9849aca3a77e59f4`
+**Validated implementation SHA:** `740a86e2912615ba1b1868feb9709d82d78aafd6`
 
 ---
 
 ## 1. Disposition
 
-The coverage-hardening implementation is complete. All deterministic local unit, static-analysis, build, coverage, and repetition gates passed, and permanent hosted CI plus real-Coqui validation passed on exact SHA `50c823c8c01b8ec4d556f21b9849aca3a77e59f4`. The permanent hosted Chrome job remains the authoritative browser gate because the local Debian Chromium binary could start headless DevTools but could not create `DevToolsActivePort` in the non-headless extension configuration required by the E2E harness.
+The coverage-hardening implementation is complete. All deterministic local unit, static-analysis, build, coverage, and repetition gates passed, and permanent hosted CI passed on implementation SHA `740a86e2912615ba1b1868feb9709d82d78aafd6`. Final same-SHA CI plus real-Coqui validation is delegated to request sequence 28 and authoritative issues `#2` and `#3`. The permanent hosted Chrome job remains the authoritative browser gate because the local Debian Chromium binary could start headless DevTools but could not create `DevToolsActivePort` in the non-headless extension configuration required by the E2E harness.
 
 The automated coverage-hardening workstream is `COMPLETE`. This does not complete FIX2 human listening Block 16; human listening remains a separate release gate and is still **Not yet executed**.
 
@@ -180,17 +180,17 @@ The candidate has 57 Python tests, up from 30.
 
 | Metric | Final |
 |---|---:|
-| Statements | 95.59% |
-| Branches | 87.88% |
-| Functions | 96.14% |
-| Lines | 95.59% |
+| Statements | 95.52% |
+| Branches | 87.61% |
+| Functions | 96.15% |
+| Lines | 95.52% |
 
 Critical files:
 
 | File | Lines | Branches |
 |---|---:|---:|
 | `src/background/service-worker.ts` | 89.46% | 80.58% |
-| `src/offscreen.ts` | 98.52% | 96.15% |
+| `src/offscreen.ts` | 96.62% | 83.87% |
 | `src/offscreen/playback-coordinator.ts` | 96.37% | 85.82% |
 | `src/lib/tts-client.ts` | 99.16% | 98.98% |
 | `src/lib/storage.ts` | 100.00% | 96.00% |
@@ -273,13 +273,13 @@ The local Chromium binary could start headless DevTools, but the required non-he
 
 | Gate | Run | Attempt | Job | Conclusion |
 |---|---:|---:|---:|---|
-| Permanent CI | `30877657282` | 1 | `91892294226` | success |
-| Prior real-Coqui proof | `30877268439` | 1 | `91891167170` | success before coordinator-only repair |
-| Final repository validation | request sequence 27 | authoritative issues `#2` / `#3` | same-SHA result maintained externally |
+| Permanent CI | `30879304676` | 1 | `91897029491` | success |
+| Prior real-Coqui proof | `30878123712` | 1 | `91893596715` | success before sender-routing repair |
+| Final repository validation | request sequence 28 | authoritative issues `#2` / `#3` | same-SHA result maintained externally |
 
-The validated implementation SHA is `50c823c8c01b8ec4d556f21b9849aca3a77e59f4`. Permanent CI passed lint, typecheck, coverage-surface integrity, FIX2 hygiene, full-history secret scanning, release-script syntax, all 293 TypeScript tests and thresholds, production and diagnostic builds, manifest/assets validation, all hosted Chromium matrices, all 57 Python tests and thresholds, Compose security validation, and both Codecov uploads.
+The validated implementation SHA is `740a86e2912615ba1b1868feb9709d82d78aafd6`. Permanent CI passed lint, typecheck, coverage-surface integrity, FIX2 hygiene, full-history secret scanning, release-script syntax, all 294 TypeScript tests and thresholds, production and diagnostic builds, manifest/assets validation, all hosted Chromium matrices, all 57 Python tests and thresholds, Compose security validation, and both Codecov uploads.
 
-TypeScript coverage was 95.59% statements/lines, 87.88% branches, and 96.14% functions. Python coverage was 97.44% statements and 89.19% branches. Every configured critical-file floor passed.
+TypeScript coverage was 95.52% statements/lines, 87.61% branches, and 96.15% functions. Python coverage was 97.44% statements and 89.19% branches. Every configured critical-file floor passed.
 
 The core, command/offscreen tail, and foreground UI Chromium matrices each returned `ok: true`; `maxActivePlayerCount` remained `1`, with zero cleanup failures and zero invariant violations.
 
@@ -291,11 +291,11 @@ Immutable image ID: `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa73
 
 | Evidence | Artifact ID | Digest |
 |---|---:|---|
-| Vitest JUnit | `8880113346` | `sha256:4fa6f1882180aa3fe0163db63d70ce0f62e8ac85face3bb1ed545e77e1b22941` |
-| TypeScript coverage | `8880113636` | `sha256:8d496ff17425ba89a6c5a0f02778295ef11e9f35657dfa8849651ff3fc7e6300` |
-| Chromium E2E | `8880128677` | `sha256:8f90eee82e2219d73a9dd60c53742bf541e972015c339a315c46499aaf9170df` |
-| Python coverage/JUnit | `8880131864` | `sha256:13d4c5a2d307a08f8cd34773c5539cf26560e88fed51b8f1610dba30bcdab8c7` |
-| Prior sequence-26 Real Coqui | `8880052635` | `sha256:65a7ac2f50ebb2835dcc70dee0c30420745cc5fe45453927cd6d5264f6800c18` |
+| Vitest JUnit | `8880674994` | `sha256:13d8e9dfbb4b73b092d5b2ef50d38de94d27758232fe801517cb4527c8163933` |
+| TypeScript coverage | `8880675234` | `sha256:3618dc22ae92fac0ac89d0a855610198db71cf6d414ccb2912b211c387a43008` |
+| Chromium E2E | `8880691561` | `sha256:cbe8adc1e657fa106b96475ffdc3cbac3acafef8d9b7740fc86d987745297133` |
+| Python coverage/JUnit | `8880694881` | `sha256:1b0f3fa351988b303f0710771dff15e7fef6af3a8480059f54af516c21d70336` |
+| Prior sequence-27 Real Coqui | `8880334638` | `sha256:164dbf11a39b91a682c0e5519b67db1bb0786dec3689cf9868844feeba0b5254` |
 
 ## 10. Material failed attempts and repairs
 
@@ -305,6 +305,9 @@ Immutable image ID: `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa73
 - CI `30875225926` showed that the control phase still repeated active-tab selection capture after that workflow had already been validated. The control phase now uses a long-lived Popup test session, while selection capture remains covered by the earlier selection scenarios; timeout errors now include the last observed status.
 - CI `30875551199` caught a stale consolidated source-state assertion that still required the old selection-selection replacement label. The assertion now matches the decoupled selection-popup replacement contract; permanent CI `30875639074` then passed the complete 292-test, Chromium, Python, build, security, and upload matrix.
 - CI `30877268445` exposed a coordinator race in which a late audio `ended` callback could overwrite a successfully returned paused state with completion before the worker-restart poll observed it. The run loop now waits behind `waitWhilePaused()` after audio settlement, and a regression test proves completion remains blocked until Resume. Permanent CI `30877657282` passed all 293 tests and all Chromium matrices on attempt 1.
+
+- CI `30878123726` showed that document-originated status broadcasts could be claimed by both the service worker and offscreen document, returning a competing idle response after a successful Pause. The offscreen listener now rejects document-originated playback requests by inspecting the runtime sender `documentId`, making the service worker the single request owner.
+- CI `30879229362` caught type-definition lag for `MessageSender.documentId`. The implementation now uses a structural record check plus the same runtime string predicate. Permanent CI `30879304676` passed all 294 TypeScript tests and the complete hosted matrix on attempt 1.
 
 None of these failures were converted into success through a blind rerun. Each received a root-cause fix and complete revalidation.
 

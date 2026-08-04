@@ -172,7 +172,7 @@ Voice discovery returns structured errors. An empty voice list from a valid sing
 
 ### Current FIX2 evidence status
 
-Automated coverage hardening passed permanent CI `30877657282`, attempt 1, on implementation SHA `50c823c8c01b8ec4d556f21b9849aca3a77e59f4`, with 293 clean TypeScript tests, 57 clean Python tests, and all three Chromium matrices. Final same-SHA CI plus real-Coqui proof is maintained by issues `#2` and `#3` for request sequence 27. Human listening remains `NOT RUN`, so the broader FIX2 release is still `PARTIAL`.
+Automated coverage hardening passed permanent CI `30879304676`, attempt 1, on implementation SHA `740a86e2912615ba1b1868feb9709d82d78aafd6`, with 294 clean TypeScript tests, 57 clean Python tests, and all three Chromium matrices. Final same-SHA CI plus real-Coqui proof is maintained by issues `#2` and `#3` for request sequence 28. Human listening remains `NOT RUN`, so the broader FIX2 release is still `PARTIAL`.
 
 ### Extension gates
 
@@ -224,7 +224,7 @@ bash scripts/validate-real-coqui.sh
 
 Evidence is written under `reports/real-coqui/` by default. This is intentionally separate from fake-backend CI because it downloads and initializes the real model, synthesizes WAV audio, inspects loopback publication and temporary files, recreates the service, and verifies that the persistent model volume remains populated.
 
-Current real-model evidence is run `30875845769`, attempt 1, on exact SHA `50c823c8c01b8ec4d556f21b9849aca3a77e59f4`, artifact `8879576839`, image `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa732c8c0e57ebaa`. Script existence alone is never evidence; later candidates require their own exact-SHA record.
+Prior real-model evidence is run `30878123712`, attempt 1, on SHA `c8ded4193054a2bd19161debd4c485c49285f8a3`, artifact `8880334638`, image `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa732c8c0e57ebaa`. Final same-SHA runtime evidence for the sender-routing candidate is maintained by issue `#3` for request sequence 28. Script existence alone is never evidence.
 
 ### Structured listening validation
 
