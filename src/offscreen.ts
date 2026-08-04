@@ -18,6 +18,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+function isDocumentPlaybackRequest(message: unknown, sender: chrome.runtime.MessageSender): boolean {
+  if (typeof sender.documentId !== 'string') return false
+  return isStartPlaybackRequest(message)
+    || isPlaybackControlRequest(message)
+    || isPlaybackStatusRequest(message)
+}
+
 function getRuntimeState(): OffscreenRuntimeState {
   const globalState = globalThis as typeof globalThis & {
     __readitOffscreenRuntimeState?: OffscreenRuntimeState
@@ -64,7 +71,12 @@ const runtimeState = getRuntimeState()
 
 if (!runtimeState.initialized) {
   runtimeState.initialized = true
-  chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
+    // Popup, Options, and other extension documents must route playback through
+    // the service worker. Otherwise both the worker and offscreen document can
+    // answer the same runtime broadcast and expose divergent session state.
+    if (isDocumentPlaybackRequest(message, sender)) return false
+
     if (isStartPlaybackRequest(message)) {
       void runtimeState.coordinator.start(message)
         .then(sendResponse)
