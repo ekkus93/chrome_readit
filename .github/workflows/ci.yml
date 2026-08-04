@@ -52,6 +52,7 @@ jobs:
           bash -n scripts/check-fix2-hygiene.sh
           bash -n scripts/check-secret-patterns.sh
           bash -n scripts/validate-real-coqui.sh
+          bash -n scripts/package-tagged-release.sh
           python -m py_compile scripts/publish-real-coqui-status.py scripts/check_python_coverage.py
           node --check scripts/check-coverage-surface.mjs
           node --check scripts/check-coverage-thresholds.mjs
@@ -65,33 +66,8 @@ jobs:
             --coverage.thresholds.lines=85 \
             --coverage.thresholds.functions=85 \
             --coverage.thresholds.statements=85 \
-            --coverage.thresholds.branches=75 \
-            --reporter=default \
-            --reporter=junit \
-            --outputFile.junit=reports/vitest-junit.xml
+            --coverage.thresholds.branches=75
           node scripts/check-coverage-thresholds.mjs
-
-      - name: Upload Vitest JUnit report
-        if: ${{ always() && hashFiles('reports/vitest-junit.xml') != '' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: vitest-junit-${{ github.run_id }}-${{ github.run_attempt }}
-          path: reports/vitest-junit.xml
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload TypeScript coverage evidence
-        if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: typescript-coverage-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            coverage/coverage-final.json
-            coverage/index.html
-            coverage/assets
-            reports/typescript-coverage-summary.json
-          if-no-files-found: error
-          retention-days: 14
 
       - name: Build extension
         run: npm run build
@@ -138,18 +114,8 @@ jobs:
           CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
         run: |
           set -euo pipefail
-          mkdir -p reports
-          xvfb-run -a npm run test:chromium 2>&1 | tee reports/chromium-e2e.log
-          xvfb-run -a npm run test:chromium-ui 2>&1 | tee -a reports/chromium-e2e.log
-
-      - name: Upload Chromium diagnostic log
-        if: ${{ always() && hashFiles('reports/chromium-e2e.log') != '' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: chromium-e2e-${{ github.run_id }}-${{ github.run_attempt }}
-          path: reports/chromium-e2e.log
-          if-no-files-found: error
-          retention-days: 14
+          xvfb-run -a npm run test:chromium
+          xvfb-run -a npm run test:chromium-ui
 
       - name: Setup Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -174,21 +140,8 @@ jobs:
             --cov-branch \
             --cov-report=term-missing \
             --cov-report=xml:reports/coqui-coverage.xml \
-            --cov-report=json:reports/coqui-coverage.json \
-            --junitxml=reports/coqui-junit.xml
+            --cov-report=json:reports/coqui-coverage.json
           python scripts/check_python_coverage.py
-
-      - name: Upload Python coverage evidence
-        if: ${{ always() && hashFiles('reports/coqui-coverage.json') != '' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: python-coverage-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            reports/coqui-coverage.xml
-            reports/coqui-coverage.json
-            reports/coqui-junit.xml
-          if-no-files-found: error
-          retention-days: 14
 
       - name: Publish coverage summary
         env:
