@@ -1,11 +1,9 @@
 name: Run Coverage Documentation Reconciliation
-# retrigger: 2
 
 on:
-  push:
-    branches: [master]
-    paths:
-      - .github/workflows/run-coverage-reconcile.yml
+  workflow_dispatch:
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: write
@@ -13,6 +11,9 @@ permissions:
 
 jobs:
   reconcile:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.number == 2 && github.event.comment.body == 'RUN_CHROME_READIT_COVERAGE_RECONCILIATION')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
