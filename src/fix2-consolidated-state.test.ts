@@ -111,7 +111,7 @@ describe('consolidated FIX2 source state', () => {
     expect(ci).toContain('npm run test:chromium 2>&1 | tee reports/chromium-e2e.log')
     expect(ci).toContain('npm run test:chromium-ui 2>&1 | tee -a reports/chromium-e2e.log')
     expect(packageJson).toContain('scripts/run-chromium-e2e.mjs')
-    expect(uiHarness).toContain('selection-popup-options-selection-selection-replacement')
+    expect(uiHarness).toContain('selection-popup-options-selection-popup-replacement')
     expect(uiHarness).toContain('popup-pause-resume-cancel-buttons')
     expect(uiHarness).toContain('options-pause-resume-stop-buttons')
     expect(uiHarness).toContain('const extensionTargetBySession = new Map()')
