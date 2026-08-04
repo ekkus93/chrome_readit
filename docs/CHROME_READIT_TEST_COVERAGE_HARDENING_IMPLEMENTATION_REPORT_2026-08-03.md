@@ -304,6 +304,7 @@ Immutable image ID: `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa73
 - CI `30863813740` reproduced the paused-worker-restart timeout. The deterministic scenario now uses a dedicated ten-second fixture while retaining the persisted-paused assertion.
 - CI `30874522986` exposed the same lifetime class in the foreground UI Pause scenario. Popup and Options control sessions now use a dedicated ten-second UI fixture, protected by `src/chromium-ui-contract.test.ts`.
 - CI `30875225926` showed that the control phase still repeated active-tab selection capture after that workflow had already been validated. The control phase now uses a long-lived Popup test session, while selection capture remains covered by the earlier selection scenarios; timeout errors now include the last observed status.
+- CI `30875551199` caught a stale consolidated source-state assertion that still required the old selection-selection replacement label. The assertion now matches the decoupled selection-popup replacement contract; permanent CI `30875639074` then passed the complete 292-test, Chromium, Python, build, security, and upload matrix.
 
 Neither failure was converted into success through a blind rerun. Each received a root-cause fix and complete revalidation.
 
