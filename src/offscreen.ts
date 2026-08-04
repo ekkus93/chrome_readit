@@ -19,7 +19,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isDocumentPlaybackRequest(message: unknown, sender: chrome.runtime.MessageSender): boolean {
-  if (typeof sender.documentId !== 'string') return false
+  if (!isRecord(sender) || typeof sender.documentId !== 'string') return false
   return isStartPlaybackRequest(message)
     || isPlaybackControlRequest(message)
     || isPlaybackStatusRequest(message)
