@@ -6,17 +6,15 @@
 **Governing specification:** `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_SPEC_2026-08-03.md`  
 **Execution TODO:** `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_TODO_2026-08-03.md`  
 **Implementation base SHA:** `b1ce1cdcaa438a238378534dafd99b11d24cf9ad`  
-**Validated implementation SHA:** `2cf59436edef86f05b691a9c21f05836d741d407`
+**Validated implementation SHA:** `48add9a93e73c0e867763b08daa4e745a3c4bdbd`
 
 ---
 
 ## 1. Disposition
 
-The coverage-hardening implementation is complete in the candidate tree and all deterministic local unit, static-analysis, build, coverage, and repetition gates pass. The permanent hosted Chrome job remains the authoritative browser gate because the local Debian Chromium binary could start headless DevTools but could not create `DevToolsActivePort` in the non-headless extension configuration required by the E2E harness.
+The coverage-hardening implementation is complete. All deterministic local unit, static-analysis, build, coverage, and repetition gates passed, and permanent hosted CI plus real-Coqui validation passed on exact SHA `48add9a93e73c0e867763b08daa4e745a3c4bdbd`. The permanent hosted Chrome job remains the authoritative browser gate because the local Debian Chromium binary could start headless DevTools but could not create `DevToolsActivePort` in the non-headless extension configuration required by the E2E harness.
 
-This is not a browser pass. The candidate remains `PARTIAL` until permanent hosted CI and real-Coqui validation pass on one exact SHA.
-
-This work does not complete FIX2 human listening Block 16. Human listening remains a separate release gate.
+The automated coverage-hardening workstream is `COMPLETE`. This does not complete FIX2 human listening Block 16; human listening remains a separate release gate and is still **Not yet executed**.
 
 ---
 
@@ -183,7 +181,7 @@ The candidate has 57 Python tests, up from 30.
 | Metric | Final |
 |---|---:|
 | Statements | 95.59% |
-| Branches | 87.93% |
+| Branches | 87.92% |
 | Functions | 96.14% |
 | Lines | 95.59% |
 
@@ -198,7 +196,7 @@ Critical files:
 | `src/lib/storage.ts` | 100.00% | 96.00% |
 | `src/lib/voices.ts` | 100.00% | 92.59% |
 | `src/lib/playback-runtime-client.ts` | 93.93% | 95.65% |
-| `src/popup/Popup.tsx` | 91.11% | 76.67% |
+| `src/popup/Popup.tsx` | 91.10% | 76.66% |
 | `src/options/Options.tsx` | 93.43% | 81.34% |
 
 ### 5.2 Python
@@ -275,12 +273,12 @@ The local Chromium binary could start headless DevTools, but the required non-he
 
 | Gate | Run | Attempt | Job | Conclusion |
 |---|---:|---:|---:|---|
-| Permanent CI | `30864233383` | 1 | `91852510574` | success |
-| Real-Coqui | `30864233396` | 1 | `91852500584` | success |
+| Permanent CI | `30875845758` | 1 | `91887032415` | success |
+| Real-Coqui | `30875845769` | 1 | `91887025434` | success |
 
-The validated implementation SHA is `2cf59436edef86f05b691a9c21f05836d741d407`. Permanent CI passed lint, typecheck, coverage-surface integrity, FIX2 hygiene, full-history secret scanning, release-script syntax, all 292 TypeScript tests and thresholds, production and diagnostic builds, manifest/assets validation, all hosted Chromium matrices, all 57 Python tests and thresholds, Compose security validation, and both Codecov uploads.
+The validated implementation SHA is `48add9a93e73c0e867763b08daa4e745a3c4bdbd`. Permanent CI passed lint, typecheck, coverage-surface integrity, FIX2 hygiene, full-history secret scanning, release-script syntax, all 292 TypeScript tests and thresholds, production and diagnostic builds, manifest/assets validation, all hosted Chromium matrices, all 57 Python tests and thresholds, Compose security validation, and both Codecov uploads.
 
-TypeScript coverage was 95.59% statements/lines, 87.93% branches, and 96.14% functions. Python coverage was 97.44% statements and 89.19% branches. Every configured critical-file floor passed.
+TypeScript coverage was 95.59% statements/lines, 87.92% branches, and 96.14% functions. Python coverage was 97.44% statements and 89.19% branches. Every configured critical-file floor passed.
 
 The core, command/offscreen tail, and foreground UI Chromium matrices each returned `ok: true`; `maxActivePlayerCount` remained `1`, with zero cleanup failures and zero invariant violations.
 
@@ -292,11 +290,11 @@ Immutable image ID: `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa73
 
 | Evidence | Artifact ID | Digest |
 |---|---:|---|
-| Vitest JUnit | `8875497124` | `sha256:4c1d6390889c3c881639b5eb3d86ca932926e7d5c43af12057331ed397d13727` |
-| TypeScript coverage | `8875497471` | `sha256:e4b4678348c993aa3847ec117ead78a2fa095b175c1414aa66ce621afc860b62` |
-| Chromium E2E | `8875515089` | `sha256:007235ca2128a2de43bbedd1040d263cd59cdd0b13d83a09fcb78ac6b81aa750` |
-| Python coverage/JUnit | `8875517836` | `sha256:a6541ab76b72cdd0c0d20917797a3c661b2b497341be2158e0a85c49ccec566d` |
-| Real Coqui | `8875590994` | `sha256:bb84cdacc31e3c7b2fec15b3695b5f2669ed2e15a1bdfd1a5cb184da67981800` |
+| Vitest JUnit | `8879508312` | `sha256:6e9efa1329b7c2d72717f11e503606c477e59fb45ad7aec682a9128e05d974a6` |
+| TypeScript coverage | `8879508449` | `sha256:500f751a987c7ae594a1f6381415c0328b0cb6f0ad860eb2a1a3dae97b110a67` |
+| Chromium E2E | `8879522956` | `sha256:b74f01497c74f28cece77569cbe2d65add9ae415e1d6746be4620d3a42e49e90` |
+| Python coverage/JUnit | `8879525536` | `sha256:f0a9b1c4dde72359554d0ef7a546db9eda65d000ee23d8e2381496d8040447b6` |
+| Real Coqui | `8879576839` | `sha256:b12b6b89faa66372a372e54ef99c57394cf758a521107ab9e0b8d95993bbf4d3` |
 
 ## 10. Material failed attempts and repairs
 
@@ -306,7 +304,7 @@ Immutable image ID: `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa73
 - CI `30875225926` showed that the control phase still repeated active-tab selection capture after that workflow had already been validated. The control phase now uses a long-lived Popup test session, while selection capture remains covered by the earlier selection scenarios; timeout errors now include the last observed status.
 - CI `30875551199` caught a stale consolidated source-state assertion that still required the old selection-selection replacement label. The assertion now matches the decoupled selection-popup replacement contract; permanent CI `30875639074` then passed the complete 292-test, Chromium, Python, build, security, and upload matrix.
 
-Neither failure was converted into success through a blind rerun. Each received a root-cause fix and complete revalidation.
+None of these failures were converted into success through a blind rerun. Each received a root-cause fix and complete revalidation.
 
 ## 11. Repository hygiene and final disposition
 
