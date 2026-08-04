@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# This helper is intentionally self-deleting after repairing the generated test fixture.
 path = Path(__file__).with_name('apply-offscreen-target-routing-fix.py')
 text = path.read_text(encoding='utf-8')
 old = "    expect(listener(startRequest(), null, vi.fn())).toBe(false)"
