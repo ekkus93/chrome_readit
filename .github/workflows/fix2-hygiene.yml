@@ -7,7 +7,7 @@ on:
     branches: ["**"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   hygiene:
@@ -15,25 +15,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          fetch-depth: 0
 
       - name: Reject dangerous fallbacks and silent failures
         run: bash scripts/check-fix2-hygiene.sh
-
-      - name: Apply and validate explicit offscreen routing
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && hashFiles('scripts/apply-offscreen-target-routing-fix.py') != ''
-        run: |
-          set -euo pipefail
-          python scripts/fix-offscreen-routing-helper-scope.py
-          python scripts/apply-offscreen-target-routing-fix.py
-          npm ci
-          npm run lint
-          npm run typecheck
-          npx vitest --run src/lib/playback-protocol.test.ts src/offscreen.test.ts src/background/service-worker.test.ts src/fix2-consolidated-state.test.ts src/chromium-block13-contract.test.ts
-          git diff --check -- . ':(exclude)*.md'
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m 'Route playback requests through the service worker'
-          git push origin HEAD:master
