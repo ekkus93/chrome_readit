@@ -27,6 +27,19 @@ def replace_first_of_two(text: str, old: str, new: str, label: str) -> str:
     if count != 2:
         raise SystemExit(f'{label}: expected two ordered matches, found {count}')
     return text.replace(old, new, 1)
+
+
+def replace_exact_count(
+    text: str,
+    old: str,
+    new: str,
+    expected: int,
+    label: str,
+) -> str:
+    count = text.count(old)
+    if count != expected:
+        raise SystemExit(f'{label}: expected {expected} matches, found {count}')
+    return text.replace(old, new, expected)
 """
 if source.count(old_helper) != 1:
     raise SystemExit('reconciler helper definition did not match exactly once')
@@ -43,5 +56,22 @@ new_call = """todo = replace_first_of_two(todo,
 if patched.count(old_call) != 1:
     raise SystemExit('ordered TODO SHA call did not match exactly once')
 patched = patched.replace(old_call, new_call, 1)
+
+old_artifact_loop = """for old, new in artifact_pairs:
+    todo = replace_once(todo, old, new, f'TODO artifact {old}')"""
+new_artifact_loop = """for old, new in artifact_pairs:
+    if old == '8880131864':
+        todo = replace_exact_count(
+            todo,
+            old,
+            new,
+            2,
+            f'TODO artifact {old}',
+        )
+    else:
+        todo = replace_once(todo, old, new, f'TODO artifact {old}')"""
+if patched.count(old_artifact_loop) != 1:
+    raise SystemExit('TODO artifact loop did not match exactly once')
+patched = patched.replace(old_artifact_loop, new_artifact_loop, 1)
 
 exec(compile(patched, str(script_path), 'exec'), {'__file__': str(script_path)})
