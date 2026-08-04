@@ -5,6 +5,15 @@
 
 Read It is a Manifest V3 Chrome extension that reads selected text through a local or user-configured synthesis endpoint. It provides keyboard-accessible controls, configurable voices and rates, sentence-aware chunking, and explicit paragraph pacing.
 
+## Automated coverage-hardening status
+
+The automated coverage-hardening workstream passed permanent CI and real-Coqui validation on implementation SHA `2cf59436edef86f05b691a9c21f05836d741d407`. The suite contains **291 TypeScript tests** and **57 Python tests**. TypeScript coverage is **95.59% statements/lines**, **87.93% branches**, and **96.14% functions** across 17 measured production files. Python coverage is **97.44% statements** and **89.19% branches**.
+
+Only `src/manifest.ts` and `src/options/main.tsx` are excluded because they are declarative/trivial bootstrap entrypoints whose behavior is covered by manifest, build, and Chromium validation. Global TypeScript floors are 85% statements/lines/functions and 75% branches, with higher critical-file floors. Python floors are 85% statements and 75% branches.
+
+Automated coverage does not establish audible quality. The separate FIX2 human listening gate remains **Not yet executed**, so the broader FIX2 disposition remains `PARTIAL`.
+
+
 ## Architecture
 
 Read It has one production playback owner:

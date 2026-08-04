@@ -1,12 +1,12 @@
 # Chrome Read It Test Coverage Hardening Implementation Report
 
-**Status:** Candidate implementation complete; hosted exact-SHA validation pending  
+**Status:** COMPLETE — automated coverage hardening passed on exact SHA; human listening remains separate  
 **Date:** 2026-08-03  
 **Repository:** `ekkus93/chrome_readit`  
 **Governing specification:** `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_SPEC_2026-08-03.md`  
 **Execution TODO:** `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_TODO_2026-08-03.md`  
 **Implementation base SHA:** `b1ce1cdcaa438a238378534dafd99b11d24cf9ad`  
-**Candidate exact SHA:** _assigned when this report and implementation are committed_
+**Validated implementation SHA:** `2cf59436edef86f05b691a9c21f05836d741d407`
 
 ---
 
@@ -160,7 +160,7 @@ The authoritative command runs from repository root and emits terminal, XML, JSO
 
 ## 4. Test expansion
 
-The candidate has 33 TypeScript test files and 288 tests, up from 32 files and 214 tests.
+The candidate has 33 TypeScript test files and 291 tests, up from 32 files and 214 tests.
 
 Coverage was added for:
 
@@ -182,10 +182,10 @@ The candidate has 57 Python tests, up from 30.
 
 | Metric | Final |
 |---|---:|
-| Statements | 95.62% |
-| Branches | 88.21% |
+| Statements | 95.59% |
+| Branches | 87.93% |
 | Functions | 96.14% |
-| Lines | 95.62% |
+| Lines | 95.59% |
 
 Critical files:
 
@@ -198,8 +198,8 @@ Critical files:
 | `src/lib/storage.ts` | 100.00% | 96.00% |
 | `src/lib/voices.ts` | 100.00% | 92.59% |
 | `src/lib/playback-runtime-client.ts` | 93.93% | 95.65% |
-| `src/popup/Popup.tsx` | 91.13% | 77.96% |
-| `src/options/Options.tsx` | 93.52% | 82.70% |
+| `src/popup/Popup.tsx` | 91.11% | 76.67% |
+| `src/options/Options.tsx` | 93.43% | 81.34% |
 
 ### 5.2 Python
 
@@ -269,15 +269,49 @@ The local Chromium binary could start headless DevTools, but the required non-he
 
 ---
 
-## 8. Remaining exact-SHA gates
+---
 
-Before this TODO can become `COMPLETE`:
+## 8. Exact-SHA hosted validation
 
-1. commit the candidate and record its exact SHA;
-2. require the permanent CI workflow to pass on that SHA;
-3. inspect attempt-specific TypeScript, Python, Chromium, and JUnit artifacts;
-4. trigger and pass real-Coqui validation on the same final SHA;
-5. reconcile this report and the TODO with exact run, attempt, artifact, digest, and image evidence;
-6. rerun both permanent workflows after any evidence-document commit that changes the SHA.
+| Gate | Run | Attempt | Job | Conclusion |
+|---|---:|---:|---:|---|
+| Permanent CI | `30864233383` | 1 | `91852510574` | success |
+| Real-Coqui | `30864233396` | 1 | `91852500584` | success |
 
-The broader FIX2 disposition remains `PARTIAL` until the separate human listening evidence is executed.
+The validated implementation SHA is `2cf59436edef86f05b691a9c21f05836d741d407`. Permanent CI passed lint, typecheck, coverage-surface integrity, FIX2 hygiene, full-history secret scanning, release-script syntax, all 291 TypeScript tests and thresholds, production and diagnostic builds, manifest/assets validation, all hosted Chromium matrices, all 57 Python tests and thresholds, Compose security validation, and both Codecov uploads.
+
+TypeScript coverage was 95.59% statements/lines, 87.93% branches, and 96.14% functions. Python coverage was 97.44% statements and 89.19% branches. Every configured critical-file floor passed.
+
+The core, command/offscreen tail, and foreground UI Chromium matrices each returned `ok: true`; `maxActivePlayerCount` remained `1`, with zero cleanup failures and zero invariant violations.
+
+Real-Coqui loaded the actual VCTK model, selected voice `p225`, returned a structurally valid mono 16-bit 22050 Hz WAV, exercised the required error envelopes, proved loopback-only/non-root/single-worker defaults, retained model-cache reuse, and recorded bounded temporary-file, queue, recreation, timeout, and shutdown evidence.
+
+Immutable image ID: `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa732c8c0e57ebaa`.
+
+## 9. Retained artifacts
+
+| Evidence | Artifact ID | Digest |
+|---|---:|---|
+| Vitest JUnit | `8875497124` | `sha256:4c1d6390889c3c881639b5eb3d86ca932926e7d5c43af12057331ed397d13727` |
+| TypeScript coverage | `8875497471` | `sha256:e4b4678348c993aa3847ec117ead78a2fa095b175c1414aa66ce621afc860b62` |
+| Chromium E2E | `8875515089` | `sha256:007235ca2128a2de43bbedd1040d263cd59cdd0b13d83a09fcb78ac6b81aa750` |
+| Python coverage/JUnit | `8875517836` | `sha256:a6541ab76b72cdd0c0d20917797a3c661b2b497341be2158e0a85c49ccec566d` |
+| Real Coqui | `8875590994` | `sha256:bb84cdacc31e3c7b2fec15b3695b5f2669ed2e15a1bdfd1a5cb184da67981800` |
+
+## 10. Material failed attempts and repairs
+
+- CI `30862741564` exposed a stale-session race in Popup/Options controls after replacement. Both surfaces now refresh authoritative playback status before Pause, Resume, or Cancel, with focused regression tests.
+- CI `30863813740` reproduced the paused-worker-restart timeout. The deterministic scenario now uses a dedicated ten-second fixture while retaining the persisted-paused assertion.
+
+Neither failure was converted into success through a blind rerun. Each received a root-cause fix and complete revalidation.
+
+## 11. Repository hygiene and final disposition
+
+All one-time export, patch, fixture, control-race, and documentation-reconciliation workflows were removed. The workflow-hygiene unit test rejects the known temporary names and prefixes.
+
+```text
+COMPLETE — automated test coverage hardening passed on exact SHA; human listening remains governed separately
+```
+
+FIX2 human listening remains **Not yet executed**. Automated test and synthesis evidence does not establish subjective audible quality.
+
