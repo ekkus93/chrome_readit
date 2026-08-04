@@ -1,1 +1,1 @@
-Run the installed final offscreen-routing evidence reconciler once.
+Run the CI-routed final offscreen-routing evidence reconciler once.
