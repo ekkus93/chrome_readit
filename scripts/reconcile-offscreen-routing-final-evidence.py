@@ -4,7 +4,7 @@ import subprocess
 script_path = Path(__file__).resolve()
 relative_path = script_path.relative_to(Path.cwd()).as_posix()
 previous = subprocess.run(
-    ['git', 'show', f'HEAD^:{relative_path}'],
+    ['git', 'show', f'33aaff97a052a7ba537620b19e5418f5600bf6ac:{relative_path}'],
     check=True,
     capture_output=True,
     text=True,
