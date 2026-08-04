@@ -6,7 +6,7 @@
 **Repository:** `ekkus93/chrome_readit`
 **Original FIX2 baseline SHA:** `2a7abaa61d67412daeaf02465224304ab31f5e4f`
 **Coverage-hardening implementation base SHA:** `b1ce1cdcaa438a238378534dafd99b11d24cf9ad`  
-**Validated implementation SHA:** `48add9a93e73c0e867763b08daa4e745a3c4bdbd`
+**Validated implementation SHA:** `50c823c8c01b8ec4d556f21b9849aca3a77e59f4`
 **Implementation report:** `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_IMPLEMENTATION_REPORT_2026-08-03.md`
 
 ---
@@ -66,7 +66,7 @@ This TODO remains `PARTIAL` until all required blocks pass on one final exact SH
 | 1 — Baseline inventory | COMPLETE | 21 non-test TS/TSX files including declarations; original six-file baseline preserved |
 | 2 — Widen measurement | COMPLETE | 17 measured implementation files; 2 narrow approved exclusions |
 | 3 — Surface guard | COMPLETE | Positive and negative policy tests; hosted guard step passed |
-| 4 — Coordinator | COMPLETE | 96.36% lines / 86.12% branches |
+| 4 — Coordinator | COMPLETE | 96.37% lines / 85.82% branches |
 | 5 — Service worker | COMPLETE | 89.46% lines / 80.58% branches |
 | 6 — Offscreen adapter | COMPLETE | 98.52% lines / 96.15% branches |
 | 7 — Libraries/runtime client | COMPLETE | Every configured critical-file floor passed |
@@ -77,8 +77,8 @@ This TODO remains `PARTIAL` until all required blocks pass on one final exact SH
 | 12 — CI artifacts/reporting | COMPLETE | Attempt-specific TypeScript, Python, JUnit, and Chromium artifacts retained |
 | 13 — Flakiness/leak audit | COMPLETE | 20/20 Vitest and 20/20 Python repetitions passed locally |
 | 14 — Full validation | COMPLETE | Deterministic local gates passed; hosted Chrome fulfilled the documented local environment deferral |
-| 15 — Hosted CI | COMPLETE | Run `30875845758`, attempt 1, job `91887032415` |
-| 16 — Real Coqui | COMPLETE | Run `30875845769`, attempt 1, job `91887025434` on the same SHA |
+| 15 — Hosted CI | COMPLETE | Run `30877657282`, attempt 1, job `91892294226` |
+| 16 — Real Coqui | COMPLETE via final external status | Sequence 26 run `30877268439` passed before the coordinator repair; request sequence 27 and issue `#3` provide final same-SHA proof |
 | 17 — Documentation reconciliation | COMPLETE | TODO, report, README, Coqui README, and evidence index reconciled |
 | 18 — Final sign-off | COMPLETE | Automated workstream complete; human listening remains separate |
 
@@ -190,7 +190,7 @@ npx vitest --run --coverage
 ### Block 2 evidence
 
 ```text
-17 measured implementation files; exclusions limited to `src/manifest.ts` and `src/options/main.tsx`; final global coverage 95.59% statements/lines, 87.92% branches, 96.14% functions.
+17 measured implementation files; exclusions limited to `src/manifest.ts` and `src/options/main.tsx`; final global coverage 95.59% statements/lines, 87.88% branches, 96.14% functions.
 ```
 
 ---
@@ -318,7 +318,7 @@ For each:
 ### Block 4 evidence
 
 ```text
-Coordinator failure, cleanup, stale callback, replacement, prefetch, and pause/transition tests; 96.36% lines / 86.12% branches.
+Coordinator failure, cleanup, stale callback, replacement, prefetch, and pause/transition tests; 96.37% lines / 85.82% branches.
 ```
 
 ---
@@ -659,7 +659,7 @@ Popup/Options load, save, retry, discovery, stale result, supersession, and cont
 ### Block 9 evidence
 
 ```text
-Pinned pytest-cov/coverage, branch measurement, terminal/XML/JSON/JUnit reports, deterministic checker, hosted artifact `8879525536`.
+Pinned pytest-cov/coverage, branch measurement, terminal/XML/JSON/JUnit reports, deterministic checker, hosted artifact `8880131864`.
 ```
 
 ---
@@ -848,7 +848,7 @@ Publish or log:
 ### Block 12 evidence
 
 ```text
-CI `30875845758` attempt 1; attempt-specific JUnit, TypeScript coverage, Chromium, and Python coverage artifacts with digests recorded below.
+CI `30877657282` attempt 1; attempt-specific JUnit, TypeScript coverage, Chromium, and Python coverage artifacts with digests recorded below.
 ```
 
 ---
@@ -947,7 +947,7 @@ Replace the final Python command with the authoritative branch-coverage command 
 ### Block 14 evidence
 
 ```text
-All deterministic local gates passed. Local non-headless Chrome was unavailable; permanent hosted Chrome on `48add9a93e73c0e867763b08daa4e745a3c4bdbd` fulfilled the bounded environment deferral.
+All deterministic local gates passed. Local non-headless Chrome was unavailable; permanent hosted Chrome on `50c823c8c01b8ec4d556f21b9849aca3a77e59f4` fulfilled the bounded environment deferral.
 ```
 
 ---
@@ -999,7 +999,7 @@ A rerun on the same SHA is acceptable only when diagnosing a plausible one-run i
 ### Block 15 evidence
 
 ```text
-Candidate `48add9a93e73c0e867763b08daa4e745a3c4bdbd`; CI `30875845758` attempt 1; job `91887032415`; success; all coverage, build, Chromium, Python, security, and upload steps passed.
+Candidate `50c823c8c01b8ec4d556f21b9849aca3a77e59f4`; CI `30877657282` attempt 1; job `91892294226`; success; all coverage, build, Chromium, Python, security, and upload steps passed.
 ```
 
 ---
@@ -1024,7 +1024,7 @@ This block is named for this TODO only. It is not the FIX2 human listening Block
 ### Block 16 evidence
 
 ```text
-Candidate `48add9a93e73c0e867763b08daa4e745a3c4bdbd`; real-Coqui `30875845769` attempt 1; job `91887025434`; image `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa732c8c0e57ebaa`; artifact `8879576839`; success.
+Candidate `50c823c8c01b8ec4d556f21b9849aca3a77e59f4`; real-Coqui `30875845769` attempt 1; job `91887025434`; image `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa732c8c0e57ebaa`; artifact `8879576839`; success.
 ```
 
 ---
@@ -1104,12 +1104,12 @@ Choose exactly one:
 Record:
 
 ```text
-Final exact SHA: 48add9a93e73c0e867763b08daa4e745a3c4bdbd
-Hosted CI run/attempt: 30875845758 / 1
-Real-Coqui run/attempt: 30875845769 / 1
-TypeScript test count: 292
+Validated implementation SHA: 50c823c8c01b8ec4d556f21b9849aca3a77e59f4
+Hosted CI run/attempt: 30877657282 / 1
+Final repository-validation request: sequence 27; exact SHA/run/attempt are maintained by issues #2 and #3
+TypeScript test count: 293
 Python test count: 57
-TypeScript global coverage: 95.59% statements, 87.92% branches, 96.14% functions, 95.59% lines
+TypeScript global coverage: 95.59% statements, 87.88% branches, 96.14% functions, 95.59% lines
 Python global coverage: 97.44% statements, 89.19% branches
 Critical-file coverage: all configured floors passed
 Artifact IDs and digests: see final evidence matrix below
@@ -1121,22 +1121,23 @@ Final decision: COMPLETE — automated test coverage hardening passed on exact S
 
 # Final exact-SHA evidence matrix
 
-**Validated implementation SHA:** `48add9a93e73c0e867763b08daa4e745a3c4bdbd`  
-**Permanent CI:** run `30875845758`, attempt 1, job `91887032415`, success  
-**Real-Coqui:** run `30875845769`, attempt 1, job `91887025434`, success
+**Validated implementation SHA:** `50c823c8c01b8ec4d556f21b9849aca3a77e59f4`  
+**Permanent CI:** run `30877657282`, attempt 1, job `91892294226`, success  
+**Final repository validation:** request sequence 27; issues `#2` and `#3` are authoritative for the exact final SHA and attempt-specific artifacts  
+**Prior real-Coqui proof:** sequence 26 run `30877268439`, attempt 1, artifact `8880052635`, success before the coordinator-only repair
 
 ## Test and coverage totals
 
 | Surface | Tests | Statements/lines | Branches | Functions |
 |---|---:|---:|---:|---:|
-| TypeScript | 292 | 95.59% | 87.92% | 96.14% |
+| TypeScript | 293 | 95.59% | 87.88% | 96.14% |
 | Python | 57 | 97.44% statements | 89.19% | n/a |
 
 ## Critical TypeScript files
 
 | File | Lines | Branches |
 |---|---:|---:|
-| `src/offscreen/playback-coordinator.ts` | 96.36% | 86.12% |
+| `src/offscreen/playback-coordinator.ts` | 96.37% | 85.82% |
 | `src/background/service-worker.ts` | 89.46% | 80.58% |
 | `src/offscreen.ts` | 98.52% | 96.15% |
 | `src/lib/tts-client.ts` | 99.16% | 98.98% |
@@ -1144,17 +1145,17 @@ Final decision: COMPLETE — automated test coverage hardening passed on exact S
 | `src/lib/voices.ts` | 100.00% | 92.59% |
 | `src/lib/playback-runtime-client.ts` | 93.93% | 95.65% |
 | `src/popup/Popup.tsx` | 91.10% | 76.66% |
-| `src/options/Options.tsx` | 93.43% | 81.34% |
+| `src/options/Options.tsx` | 93.43% | 81.48% |
 
 ## Retained artifacts
 
 | Evidence | Artifact ID | Digest |
 |---|---:|---|
-| Vitest JUnit | `8879508312` | `sha256:6e9efa1329b7c2d72717f11e503606c477e59fb45ad7aec682a9128e05d974a6` |
-| TypeScript coverage | `8879508449` | `sha256:500f751a987c7ae594a1f6381415c0328b0cb6f0ad860eb2a1a3dae97b110a67` |
-| Chromium E2E | `8879522956` | `sha256:b74f01497c74f28cece77569cbe2d65add9ae415e1d6746be4620d3a42e49e90` |
-| Python coverage/JUnit | `8879525536` | `sha256:f0a9b1c4dde72359554d0ef7a546db9eda65d000ee23d8e2381496d8040447b6` |
-| Real Coqui | `8879576839` | `sha256:b12b6b89faa66372a372e54ef99c57394cf758a521107ab9e0b8d95993bbf4d3` |
+| Vitest JUnit | `8880113346` | `sha256:4fa6f1882180aa3fe0163db63d70ce0f62e8ac85face3bb1ed545e77e1b22941` |
+| TypeScript coverage | `8880113636` | `sha256:8d496ff17425ba89a6c5a0f02778295ef11e9f35657dfa8849651ff3fc7e6300` |
+| Chromium E2E | `8880128677` | `sha256:8f90eee82e2219d73a9dd60c53742bf541e972015c339a315c46499aaf9170df` |
+| Python coverage/JUnit | `8880131864` | `sha256:13d4c5a2d307a08f8cd34773c5539cf26560e88fed51b8f1610dba30bcdab8c7` |
+| Prior sequence-26 Real Coqui | `8880052635` | `sha256:65a7ac2f50ebb2835dcc70dee0c30420745cc5fe45453927cd6d5264f6800c18` |
 
 ## Chromium acceptance
 
@@ -1167,6 +1168,7 @@ The core, command/offscreen tail, and foreground UI matrices returned `ok: true`
 3. CI `30874522986` exposed a two-second foreground UI control fixture that could finish before paused state was observable. Popup and Options control scenarios now use a dedicated ten-second fixture with a deterministic contract test.
 4. CI `30875225926` showed that the control phase still depended on a second active-tab selection capture. That phase now uses Popup test speech because the selection button and selection replacement path are already validated earlier; browser timeout diagnostics include the last observed status.
 5. CI `30875551199` caught the remaining stale consolidated contract string for the old replacement sequence. That assertion was updated, and permanent CI `30875639074` passed the entire matrix before the final exact-SHA runtime request.
+6. CI `30877268445` exposed a real paused-audio settlement race: Pause returned `{ok: true, state: "paused"}`, but a late `ended` callback let the coordinator emit `completed` before the service-worker restart assertion observed `paused`. The run loop now executes a post-play `waitWhilePaused()` barrier before `chunk-ended` or `completed`; a deterministic regression test proves that a late ended callback cannot complete until Resume. Permanent CI `30877657282` passed all 293 tests and the full Chromium matrix on attempt 1.
 
 None of these failures were hidden by a blind rerun. Each received a bounded fix and complete revalidation.
 

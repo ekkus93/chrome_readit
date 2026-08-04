@@ -25,16 +25,17 @@
 - Specification: `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_SPEC_2026-08-03.md`
 - Governing TODO: `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_TODO_2026-08-03.md`
 - Implementation report: `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_IMPLEMENTATION_REPORT_2026-08-03.md`
-- Validated implementation SHA: `48add9a93e73c0e867763b08daa4e745a3c4bdbd`
-- Permanent CI: run `30875845758`, attempt 1, job `91887032415`
-- Real-Coqui: run `30875845769`, attempt 1, job `91887025434`
+- Validated implementation SHA: `50c823c8c01b8ec4d556f21b9849aca3a77e59f4`
+- Permanent CI: run `30877657282`, attempt 1, job `91892294226`
+- Prior real-Coqui proof: run `30877268439`, attempt 1, artifact `8880052635`, before the coordinator-only repair
+- Final repository validation: request sequence 27; issues `#2` and `#3` carry the exact same-SHA result
 
 | Evidence | Artifact ID | Digest |
 |---|---:|---|
-| Vitest JUnit | `8879508312` | `sha256:6e9efa1329b7c2d72717f11e503606c477e59fb45ad7aec682a9128e05d974a6` |
-| TypeScript coverage | `8879508449` | `sha256:500f751a987c7ae594a1f6381415c0328b0cb6f0ad860eb2a1a3dae97b110a67` |
-| Chromium E2E | `8879522956` | `sha256:b74f01497c74f28cece77569cbe2d65add9ae415e1d6746be4620d3a42e49e90` |
-| Python coverage/JUnit | `8879525536` | `sha256:f0a9b1c4dde72359554d0ef7a546db9eda65d000ee23d8e2381496d8040447b6` |
-| Real Coqui | `8879576839` | `sha256:b12b6b89faa66372a372e54ef99c57394cf758a521107ab9e0b8d95993bbf4d3` |
+| Vitest JUnit | `8880113346` | `sha256:4fa6f1882180aa3fe0163db63d70ce0f62e8ac85face3bb1ed545e77e1b22941` |
+| TypeScript coverage | `8880113636` | `sha256:8d496ff17425ba89a6c5a0f02778295ef11e9f35657dfa8849651ff3fc7e6300` |
+| Chromium E2E | `8880128677` | `sha256:8f90eee82e2219d73a9dd60c53742bf541e972015c339a315c46499aaf9170df` |
+| Python coverage/JUnit | `8880131864` | `sha256:13d4c5a2d307a08f8cd34773c5539cf26560e88fed51b8f1610dba30bcdab8c7` |
+| Prior sequence-26 Real Coqui | `8880052635` | `sha256:65a7ac2f50ebb2835dcc70dee0c30420745cc5fe45453927cd6d5264f6800c18` |
 
 The automated workstream is complete. FIX2 human listening remains **Not yet executed** and is not replaced by these artifacts.

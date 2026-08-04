@@ -7,7 +7,7 @@ Read It is a Manifest V3 Chrome extension that reads selected text through a loc
 
 ## Automated coverage-hardening status
 
-The automated coverage-hardening workstream passed permanent CI and real-Coqui validation on implementation SHA `48add9a93e73c0e867763b08daa4e745a3c4bdbd`. The suite contains **292 TypeScript tests** and **57 Python tests**. TypeScript coverage is **95.59% statements/lines**, **87.92% branches**, and **96.14% functions** across 17 measured production files. Python coverage is **97.44% statements** and **89.19% branches**.
+The automated coverage-hardening workstream passed permanent CI and real-Coqui validation on implementation SHA `50c823c8c01b8ec4d556f21b9849aca3a77e59f4`. The suite contains **292 TypeScript tests** and **57 Python tests**. TypeScript coverage is **95.59% statements/lines**, **87.88% branches**, and **96.14% functions** across 17 measured production files. Python coverage is **97.44% statements** and **89.19% branches**.
 
 Only `src/manifest.ts` and `src/options/main.tsx` are excluded because they are declarative/trivial bootstrap entrypoints whose behavior is covered by manifest, build, and Chromium validation. Global TypeScript floors are 85% statements/lines/functions and 75% branches, with higher critical-file floors. Python floors are 85% statements and 75% branches.
 
@@ -172,7 +172,7 @@ Voice discovery returns structured errors. An empty voice list from a valid sing
 
 ### Current FIX2 evidence status
 
-Automated coverage hardening passed CI `30875845758` and real-Coqui `30875845769`, both attempt 1 on exact SHA `48add9a93e73c0e867763b08daa4e745a3c4bdbd`. The retained evidence contains 292 clean TypeScript tests, 57 clean Python tests, all three Chromium matrices, and real VCTK synthesis/cache/tempfile validation. Human listening remains `NOT RUN`, so the broader FIX2 release is still `PARTIAL`.
+Automated coverage hardening passed permanent CI `30877657282`, attempt 1, on implementation SHA `50c823c8c01b8ec4d556f21b9849aca3a77e59f4`, with 293 clean TypeScript tests, 57 clean Python tests, and all three Chromium matrices. Final same-SHA CI plus real-Coqui proof is maintained by issues `#2` and `#3` for request sequence 27. Human listening remains `NOT RUN`, so the broader FIX2 release is still `PARTIAL`.
 
 ### Extension gates
 
@@ -224,7 +224,7 @@ bash scripts/validate-real-coqui.sh
 
 Evidence is written under `reports/real-coqui/` by default. This is intentionally separate from fake-backend CI because it downloads and initializes the real model, synthesizes WAV audio, inspects loopback publication and temporary files, recreates the service, and verifies that the persistent model volume remains populated.
 
-Current real-model evidence is run `30875845769`, attempt 1, on exact SHA `48add9a93e73c0e867763b08daa4e745a3c4bdbd`, artifact `8879576839`, image `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa732c8c0e57ebaa`. Script existence alone is never evidence; later candidates require their own exact-SHA record.
+Current real-model evidence is run `30875845769`, attempt 1, on exact SHA `50c823c8c01b8ec4d556f21b9849aca3a77e59f4`, artifact `8879576839`, image `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa732c8c0e57ebaa`. Script existence alone is never evidence; later candidates require their own exact-SHA record.
 
 ### Structured listening validation
 
