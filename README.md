@@ -7,12 +7,11 @@ Read It is a Manifest V3 Chrome extension that reads selected text through a loc
 
 ## Automated coverage-hardening status
 
-The automated coverage-hardening workstream passed permanent CI and real-Coqui validation on implementation SHA `50c823c8c01b8ec4d556f21b9849aca3a77e59f4`. The suite contains **292 TypeScript tests** and **57 Python tests**. TypeScript coverage is **95.59% statements/lines**, **87.88% branches**, and **96.14% functions** across 17 measured production files. Python coverage is **97.44% statements** and **89.19% branches**.
+The automated coverage-hardening workstream passed permanent CI and real-Coqui validation on final exact SHA `3b308d016153b372d247945f0932ae98a4c91142`. The suite contains **294 TypeScript tests** and **57 Python tests**. TypeScript coverage is **95.52% statements/lines**, **87.61% branches**, and **96.15% functions** across 17 measured production files. Python coverage is **97.44% statements** and **89.19% branches**.
 
 Only `src/manifest.ts` and `src/options/main.tsx` are excluded because they are declarative/trivial bootstrap entrypoints whose behavior is covered by manifest, build, and Chromium validation. Global TypeScript floors are 85% statements/lines/functions and 75% branches, with higher critical-file floors. Python floors are 85% statements and 75% branches.
 
 Automated coverage does not establish audible quality. The separate FIX2 human listening gate remains **Not yet executed**, so the broader FIX2 disposition remains `PARTIAL`.
-
 
 ## Architecture
 
@@ -40,7 +39,7 @@ Popup / Options / keyboard / context menu
   - captures the active-page selection;
   - loads and repairs validated settings;
   - ensures a supported offscreen document exists;
-  - routes typed start, status, pause, resume, and cancel requests;
+  - is the sole request owner for typed start, status, pause, resume, and cancel requests from extension documents;
   - serializes restart-safe status persistence;
   - does **not** own the playback queue or fetch audio.
 - `src/offscreen/playback-coordinator.ts`
@@ -70,7 +69,7 @@ Popup / Options / keyboard / context menu
   - enforces declared and actual response limits;
   - distinguishes timeout, cancellation, HTTP, MIME, empty-body, and playback failures.
 
-Popup test speech, Options test speech, selection reading, keyboard commands, and context-menu reading all use the same offscreen coordinator. There is no UI-local, content-script, WebAudio, browser-speech, or host-audio fallback.
+Popup test speech, Options test speech, selection reading, keyboard commands, and context-menu reading all use the same offscreen coordinator. Popup, Options, and other extension documents route playback through the service worker; the offscreen listener rejects direct document-originated start, control, and status broadcasts so two contexts cannot answer the same request. There is no UI-local, content-script, WebAudio, browser-speech, or host-audio fallback.
 
 ## Requirements
 
@@ -172,24 +171,32 @@ Voice discovery returns structured errors. An empty voice list from a valid sing
 
 ### Current FIX2 evidence status
 
-Automated coverage hardening passed permanent CI `30879304676`, attempt 1, on implementation SHA `740a86e2912615ba1b1868feb9709d82d78aafd6`, with 294 clean TypeScript tests, 57 clean Python tests, and all three Chromium matrices. Final same-SHA CI plus real-Coqui proof is maintained by issues `#2` and `#3` for request sequence 28. Human listening remains `NOT RUN`, so the broader FIX2 release is still `PARTIAL`.
+Sequence 28 passed permanent CI run `30881863828`, attempt 1, job `91904770337`, and real-Coqui run `30881863836`, attempt 1, on the same exact SHA `3b308d016153b372d247945f0932ae98a4c91142`. The final matrix contains 294 clean TypeScript tests, 57 clean Python tests, all configured coverage floors, and all three Chromium matrices. Human listening remains `NOT RUN`, so the broader FIX2 release is still `PARTIAL`.
 
 ### Extension gates
 
 ```bash
 npm run lint
 npm run typecheck
-npm test -- --run --coverage
+node scripts/check-coverage-surface.mjs
+npx vitest --run --coverage
+node scripts/check-coverage-thresholds.mjs
 npm run build
+npm run build:e2e
 ```
 
-Hosted CI also enforces coverage floors, validates the generated manifest/assets, builds a diagnostic bundle, and executes the extension in real Chromium.
+Hosted CI also validates the generated manifest/assets, executes the extension in real Chromium, scans full Git history for secret patterns, validates Compose security defaults, and uploads TypeScript and Python coverage to Codecov.
 
 ### Coqui service tests
 
 ```bash
 python -m pip install -r docker/coqui-local/requirements-test.txt
-python -m pytest -q docker/coqui-local/tests
+python -m pytest -q docker/coqui-local/tests \
+  --cov=docker/coqui-local \
+  --cov-config=.coveragerc \
+  --cov-branch \
+  --cov-report=term-missing
+python scripts/check_python_coverage.py
 docker compose -f docker/docker-compose.yml config
 ```
 
@@ -200,6 +207,7 @@ The normal server tests use deterministic fake backends and injected failures; t
 ```bash
 npm run build:e2e
 CHROME_PATH=/path/to/chrome xvfb-run -a npm run test:chromium
+CHROME_PATH=/path/to/chrome xvfb-run -a npm run test:chromium-ui
 ```
 
 The harness uses Chrome DevTools Protocol, the canonical `fixtures/playback-collision.txt`, and a deterministic local WAV server. It validates:
@@ -224,7 +232,7 @@ bash scripts/validate-real-coqui.sh
 
 Evidence is written under `reports/real-coqui/` by default. This is intentionally separate from fake-backend CI because it downloads and initializes the real model, synthesizes WAV audio, inspects loopback publication and temporary files, recreates the service, and verifies that the persistent model volume remains populated.
 
-Prior real-model evidence is run `30878123712`, attempt 1, on SHA `c8ded4193054a2bd19161debd4c485c49285f8a3`, artifact `8880334638`, image `sha256:e01444f5125b441789da72f9e465f11604d22878c7337b95fa732c8c0e57ebaa`. Final same-SHA runtime evidence for the sender-routing candidate is maintained by issue `#3` for request sequence 28. Script existence alone is never evidence.
+Final real-model evidence is run `30881863836`, attempt 1, on exact SHA `3b308d016153b372d247945f0932ae98a4c91142`. The retained artifact is `8881678383` with digest `sha256:58f6ebe580f81920cf15b896a8eb9d9aed232f7cec9c5579837452d72c02cd80`. Script existence alone is never evidence; later candidates require their own exact-SHA record.
 
 ### Structured listening validation
 
@@ -290,3 +298,6 @@ The extension currently declares `<all_urls>` because users may configure arbitr
 - `docs/CHROME_READIT_FIX2_LISTENING_EVIDENCE_TEMPLATE_2026-08-02.md`
 - `docs/CHROME_READIT_PLAYBACK_HARDENING_FIX2_BLOCK17_RECONCILIATION_2026-08-03.md`
 - `docs/CHROME_READIT_FIX2_EVIDENCE_INDEX_2026-08-02.md`
+- `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_SPEC_2026-08-03.md`
+- `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_TODO_2026-08-03.md`
+- `docs/CHROME_READIT_TEST_COVERAGE_HARDENING_IMPLEMENTATION_REPORT_2026-08-03.md`
