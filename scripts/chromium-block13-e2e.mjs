@@ -378,10 +378,16 @@ async function queryDiagnostics(cdp, sessionId) {
 }
 
 async function waitForStatus(cdp, sessionId, label, predicate, timeoutMs = 30_000) {
-  return await waitFor(label, async () => {
-    const status = await queryStatus(cdp, sessionId)
-    return predicate(status) ? status : null
-  }, timeoutMs)
+  let lastStatus = null
+  try {
+    return await waitFor(label, async () => {
+      const status = await queryStatus(cdp, sessionId)
+      lastStatus = status
+      return predicate(status) ? status : null
+    }, timeoutMs)
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}; last status: ${JSON.stringify(lastStatus)}`)
+  }
 }
 
 async function waitForState(cdp, sessionId, playbackSessionId, states, timeoutMs = 30_000) {

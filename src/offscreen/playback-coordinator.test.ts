@@ -390,6 +390,26 @@ describe('PlaybackCoordinator', () => {
     expect(coordinator.getStatus().error?.code).toBe('TTS_FETCH_FAILED')
   })
 
+  it('does not complete when an ended callback races with a paused session', async () => {
+    const { audio, coordinator, events } = harness()
+    const started = await coordinator.start(request('Pause ended race.', 'pause-ended-race'))
+    if (!started.ok) throw new Error('start failed')
+    await waitForPlay(audio, 1)
+    await waitForStartedPlayer(coordinator)
+
+    await coordinator.control('pause', started.sessionId)
+    expect(coordinator.getStatus().state).toBe('paused')
+
+    audio.finish()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(coordinator.getStatus().state).toBe('paused')
+    expect(events.some((event) => event.event === 'completed')).toBe(false)
+
+    await coordinator.control('resume', started.sessionId)
+    await vi.waitFor(() => expect(coordinator.getStatus().state).toBe('completed'))
+    expect(events.filter((event) => event.event === 'completed')).toHaveLength(1)
+  })
+
   it('pauses, resumes, and cancels the same player idempotently', async () => {
     const { audio, coordinator } = harness()
     const started = await coordinator.start(request('Hello.', 'request-1'))

@@ -670,6 +670,8 @@ export class PlaybackCoordinator {
         this.emit('chunk-started', chunk)
         await this.playChunk(session, chunk, currentResult.audio)
         if (!this.isCurrent(session)) return
+        await this.waitWhilePaused(session)
+        if (!this.isCurrent(session)) return
         this.emit('chunk-ended', chunk)
 
         if (nextAudioPromise) {
