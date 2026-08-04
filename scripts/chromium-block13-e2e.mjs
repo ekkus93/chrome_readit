@@ -17,6 +17,9 @@ const DEFAULT_SETTINGS = {
   voice: 'p225',
   rate: 1,
 }
+const DEFAULT_AUDIO_DURATION_MS = 150
+const LONG_AUDIO_DURATION_MS = 2_000
+const RESTART_PAUSED_AUDIO_DURATION_MS = 10_000
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -41,7 +44,7 @@ async function waitFor(label, operation, timeoutMs = 30_000, intervalMs = 25) {
   throw new Error(`${label} timed out${lastError ? `: ${lastError}` : ''}`)
 }
 
-function makeSilentWav(durationMs = 150, sampleRate = 8_000) {
+function makeSilentWav(durationMs = DEFAULT_AUDIO_DURATION_MS, sampleRate = 8_000) {
   const sampleCount = Math.max(1, Math.floor(sampleRate * durationMs / 1_000))
   const dataLength = sampleCount * 2
   const buffer = Buffer.alloc(44 + dataLength)
@@ -67,7 +70,7 @@ async function readJsonBody(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-function writeAudio(response, durationMs = 150) {
+function writeAudio(response, durationMs = DEFAULT_AUDIO_DURATION_MS) {
   const audio = makeSilentWav(durationMs)
   response.writeHead(200, {
     'content-type': 'audio/wav',
@@ -159,11 +162,14 @@ async function startFakeTtsServer() {
       return
     }
 
-    const durationMs = (
-      text.includes('BLOCK13_LONG_AUDIO')
-      || text.includes('BLOCK13_RESTART_PLAYBACK')
-      || text.includes('BLOCK13_KEYBOARD_CONTROL')
-    ) ? 2_000 : 150
+    const durationMs = text.includes('BLOCK13_RESTART_PLAYBACK')
+      ? RESTART_PAUSED_AUDIO_DURATION_MS
+      : (
+          text.includes('BLOCK13_LONG_AUDIO')
+          || text.includes('BLOCK13_KEYBOARD_CONTROL')
+        )
+        ? LONG_AUDIO_DURATION_MS
+        : DEFAULT_AUDIO_DURATION_MS
     writeAudio(response, durationMs)
   })
 

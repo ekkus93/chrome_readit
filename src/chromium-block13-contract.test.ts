@@ -103,6 +103,15 @@ describe('Chromium Block 13 matrix contract', () => {
     expect(wrapper).toContain('failed before verified cleanup recovery')
   })
 
+  it('gives restart-while-paused a dedicated long-lived audio fixture', () => {
+    const matrix = read('scripts/chromium-block13-e2e.mjs')
+
+    expect(matrix).toContain('const RESTART_PAUSED_AUDIO_DURATION_MS = 10_000')
+    expect(matrix).toContain("text.includes('BLOCK13_RESTART_PLAYBACK')")
+    expect(matrix).toContain('? RESTART_PAUSED_AUDIO_DURATION_MS')
+    expect(matrix).toContain("await waitForState(context.cdp, context.page.sessionId, start.sessionId, 'paused')")
+  })
+
   it('retains fail-closed player and offscreen recovery assertions', () => {
     const matrix = read('scripts/chromium-block13-e2e.mjs')
     const tail = read('scripts/chromium-block13-tail-e2e.mjs')
