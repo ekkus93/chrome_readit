@@ -24,6 +24,6 @@ export function clampPlaybackRate(value: unknown, fallback = 1): number {
 export function getTransitionGapMs(transition: PlaybackTransition, playbackRate: number): number {
   if (transition === 'end') return 0
   const rate = clampPlaybackRate(playbackRate)
-  const scaled = Math.round(BASE_GAPS_MS[transition] / Math.sqrt(rate))
+  const scaled = Math.round(BASE_GAPS_MS[transition] / rate)
   return Math.max(MIN_GAPS_MS[transition], scaled)
 }
