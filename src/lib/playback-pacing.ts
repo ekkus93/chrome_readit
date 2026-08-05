@@ -10,9 +10,9 @@ const BASE_GAPS_MS: Record<Exclude<PlaybackTransition, 'end'>, number> = {
 }
 
 const MIN_GAPS_MS: Record<Exclude<PlaybackTransition, 'end'>, number> = {
-  continuation: 35,
-  sentence: 120,
-  paragraph: 350,
+  continuation: 20,
+  sentence: 60,
+  paragraph: 180,
 }
 
 export function clampPlaybackRate(value: unknown, fallback = 1): number {
