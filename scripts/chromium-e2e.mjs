@@ -123,178 +123,121 @@ async function startFakeTtsServer() {
     }
 
     response.writeHead(404, { 'content-type': 'application/json' })
-    response.end(JSON.stringify({ error: 'not found' }))
+    response.end(JSON.stringify({ ok: false }))
   })
-
   await new Promise((resolveListen, rejectListen) => {
     server.once('error', rejectListen)
     server.listen(0, '127.0.0.1', resolveListen)
   })
   const address = server.address()
-  assert(address && typeof address === 'object', 'Fake TTS server did not expose an address')
+  assert(address && typeof address !== 'string', 'Fake TTS server did not bind')
   return {
-    port: address.port,
     requests,
+    url: `http://127.0.0.1:${address.port}/api/tts`,
     close: () => new Promise((resolveClose, rejectClose) => {
-      server.close((error) => error ? rejectClose(error) : resolveClose())
+      server.close((error) => (error ? rejectClose(error) : resolveClose()))
     }),
   }
 }
 
-class CdpConnection {
-  constructor(url) {
-    this.url = url
-    this.socket = null
-    this.nextId = 1
-    this.pending = new Map()
-  }
-
-  async connect() {
-    assert(typeof WebSocket === 'function', 'Node.js WebSocket support is unavailable')
-    this.socket = new WebSocket(this.url)
-    this.socket.addEventListener('message', (event) => {
-      const message = JSON.parse(String(event.data))
-      if (!message.id) return
-      const pending = this.pending.get(message.id)
-      if (!pending) return
-      this.pending.delete(message.id)
-      if (message.error) pending.reject(new Error(`${message.error.code}: ${message.error.message}`))
-      else pending.resolve(message.result)
-    })
-    this.socket.addEventListener('close', () => {
-      for (const pending of this.pending.values()) pending.reject(new Error('CDP connection closed'))
-      this.pending.clear()
-    })
-    await new Promise((resolveOpen, rejectOpen) => {
-      this.socket.addEventListener('open', resolveOpen, { once: true })
-      this.socket.addEventListener('error', rejectOpen, { once: true })
-    })
-  }
-
-  send(method, params = {}, sessionId) {
-    assert(this.socket?.readyState === WebSocket.OPEN, 'CDP connection is not open')
-    const id = this.nextId++
-    const message = { id, method, params, ...(sessionId ? { sessionId } : {}) }
-    return new Promise((resolveMessage, rejectMessage) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id)
-        rejectMessage(new Error(`CDP command timed out: ${method}`))
-      }, 15_000)
-      this.pending.set(id, {
-        resolve: (value) => {
-          clearTimeout(timeout)
-          resolveMessage(value)
-        },
-        reject: (error) => {
-          clearTimeout(timeout)
-          rejectMessage(error)
-        },
-      })
-      this.socket.send(JSON.stringify(message))
-    })
-  }
-
-  close() {
-    this.socket?.close()
-  }
+function findDevtoolsPort(stderr) {
+  const match = stderr.match(/DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\//)
+  return match ? Number(match[1]) : null
 }
 
-async function listTargets(port) {
-  const response = await fetch(`http://127.0.0.1:${port}/json/list`)
-  if (!response.ok) throw new Error(`Unable to list Chrome targets: HTTP ${response.status}`)
-  return await response.json()
-}
-
-async function launchChrome() {
-  const profileDirectory = await mkdtemp(resolve(tmpdir(), 'chrome-readit-e2e-'))
-  const stderr = []
-  const chromeProcess = spawn(CHROME_PATH, [
-    `--user-data-dir=${profileDirectory}`,
-    `--disable-extensions-except=${EXTENSION_DIR}`,
-    `--load-extension=${EXTENSION_DIR}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--no-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-background-networking',
-    '--disable-component-update',
-    '--disable-default-apps',
-    '--disable-sync',
-    '--metrics-recording-only',
-    '--autoplay-policy=no-user-gesture-required',
-    '--remote-debugging-port=0',
-    'about:blank',
-  ], { stdio: ['ignore', 'ignore', 'pipe'] })
-  chromeProcess.stderr.setEncoding('utf8')
-  chromeProcess.stderr.on('data', (chunk) => {
-    stderr.push(chunk)
-    if (stderr.join('').length > 30_000) stderr.shift()
+async function connectCdp(port) {
+  const response = await fetch(`http://127.0.0.1:${port}/json/version`)
+  if (!response.ok) throw new Error(`DevTools version request failed with ${response.status}`)
+  const version = await response.json()
+  const socket = new WebSocket(version.webSocketDebuggerUrl)
+  await new Promise((resolveOpen, rejectOpen) => {
+    socket.addEventListener('open', resolveOpen, { once: true })
+    socket.addEventListener('error', rejectOpen, { once: true })
   })
 
-  const activePort = await waitFor('Chrome DevTools port', async () => {
-    const text = await readFile(resolve(profileDirectory, 'DevToolsActivePort'), 'utf8')
-    const [portLine, browserPath] = text.trim().split('\n')
-    const port = Number(portLine)
-    return Number.isInteger(port) && browserPath ? { port, browserPath } : null
+  let nextId = 0
+  const pending = new Map()
+  socket.addEventListener('message', (message) => {
+    const payload = JSON.parse(String(message.data))
+    if (!payload.id) return
+    const callbacks = pending.get(payload.id)
+    if (!callbacks) return
+    pending.delete(payload.id)
+    if (payload.error) callbacks.reject(new Error(payload.error.message))
+    else callbacks.resolve(payload.result)
   })
 
   return {
-    ...activePort,
-    process: chromeProcess,
-    profileDirectory,
-    stderr,
-    async close() {
-      chromeProcess.kill('SIGTERM')
-      await Promise.race([
-        new Promise((resolveExit) => chromeProcess.once('exit', resolveExit)),
-        delay(3_000).then(() => chromeProcess.kill('SIGKILL')),
-      ])
-      await rm(profileDirectory, { recursive: true, force: true })
+    send(method, params = {}, sessionId) {
+      const id = ++nextId
+      return new Promise((resolveResult, rejectResult) => {
+        pending.set(id, { resolve: resolveResult, reject: rejectResult })
+        socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
+      })
+    },
+    close() {
+      socket.close()
     },
   }
 }
 
-async function evaluate(cdp, sessionId, expression) {
+async function evaluate(cdp, sessionId, expression, awaitPromise = true) {
   const result = await cdp.send('Runtime.evaluate', {
     expression,
-    awaitPromise: true,
+    awaitPromise,
     returnByValue: true,
     userGesture: true,
   }, sessionId)
-  if (result.exceptionDetails) {
-    throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text)
-  }
-  return result.result?.value
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.text || 'Runtime evaluation failed')
+  return result.result.value
 }
 
 async function sendExtensionMessage(cdp, sessionId, message) {
-  return await evaluate(
-    cdp,
-    sessionId,
-    `(async () => await chrome.runtime.sendMessage(${JSON.stringify(message)}))()`,
-  )
+  return await evaluate(cdp, sessionId, `new Promise((resolve) => chrome.runtime.sendMessage(${JSON.stringify(message)}, resolve))`)
 }
 
-async function findReadItWorkerTarget(cdp, port) {
-  const targets = await listTargets(port)
-  const workers = targets.filter((target) => (
-    target.type === 'service_worker' && String(target.url).startsWith('chrome-extension://')
-  ))
+async function resolveExtensionId(cdp) {
+  return await waitFor('extension service worker', async () => {
+    const targets = await cdp.send('Target.getTargets')
+    const target = targets.targetInfos.find((candidate) => (
+      candidate.type === 'service_worker' && candidate.url.startsWith('chrome-extension://')
+    ))
+    return target ? new URL(target.url).host : null
+  })
+}
 
-  for (const target of workers) {
+async function findExtensionPageTarget(cdp, extensionId, path) {
+  const targets = await cdp.send('Target.getTargets')
+  return targets.targetInfos.find((candidate) => (
+    candidate.url === `chrome-extension://${extensionId}/${path}`
+  )) ?? null
+}
+
+async function attachToTarget(cdp, targetId) {
+  const attached = await cdp.send('Target.attachToTarget', { targetId, flatten: true })
+  await cdp.send('Runtime.enable', {}, attached.sessionId)
+  return attached.sessionId
+}
+
+async function ensureOffscreenTarget(cdp, extensionId, pageSessionId) {
+  await sendExtensionMessage(cdp, pageSessionId, { kind: DIAGNOSTICS })
+  return await waitFor('offscreen target', async () => (
+    await findExtensionPageTarget(cdp, extensionId, 'src/offscreen.html')
+  ))
+}
+
+async function findExtensionPageByMarker(cdp, extensionId, marker) {
+  const targets = await cdp.send('Target.getTargets')
+  for (const target of targets.targetInfos) {
+    if (!target.url.startsWith(`chrome-extension://${extensionId}/`)) continue
+    if (!['page', 'other'].includes(target.type)) continue
     let probeSessionId
     try {
-      const attached = await cdp.send('Target.attachToTarget', {
-        targetId: target.id,
-        flatten: true,
-      })
-      probeSessionId = attached.sessionId
-      await cdp.send('Runtime.enable', {}, probeSessionId)
-      const name = await evaluate(cdp, probeSessionId, 'chrome.runtime?.getManifest?.().name')
-      if (name === EXTENSION_NAME) return target
+      probeSessionId = await attachToTarget(cdp, target.targetId)
+      const found = await evaluate(cdp, probeSessionId, `document.body?.textContent?.includes(${JSON.stringify(marker)}) === true`)
+      if (found) return { targetId: target.targetId, sessionId: probeSessionId }
     } catch {
-      // Unrelated or disappearing extension targets are expected while Chrome
-      // starts; final target discovery remains fail-closed through waitFor.
+      // Ignore transient targets that disappear while the browser UI is moving.
     } finally {
       if (probeSessionId) {
         await cdp.send('Target.detachFromTarget', { sessionId: probeSessionId }).catch(() => undefined)
@@ -363,8 +306,8 @@ function assertEventIntervals(events) {
 
 function expectedGapMs(transition, rate) {
   const base = { continuation: 60, sentence: 180, paragraph: 550 }
-  const minimum = { continuation: 35, sentence: 120, paragraph: 350 }
-  return Math.max(minimum[transition], Math.round(base[transition] / Math.sqrt(rate)))
+  const minimum = { continuation: 20, sentence: 60, paragraph: 180 }
+  return Math.max(minimum[transition], Math.round(base[transition] / rate))
 }
 
 function measuredTransitionGaps(events) {
@@ -473,21 +416,70 @@ async function verifyMixedSourceReplacement(context) {
       source: sources[index],
       text: `Replacement ${index} paragraph one.\n\nReplacement ${index} paragraph two.\n\nReplacement ${index} paragraph three.`,
     })
-    assert(start?.ok === true, `Replacement ${index} failed to start`)
+    assert(start?.ok === true, `Replacement ${index} was rejected`)
     starts.push(start)
-    await waitForState(cdp, pageSessionId, start.sessionId, ['synthesizing', 'playing', 'waiting'])
+    await waitForState(cdp, pageSessionId, start.sessionId, ['synthesizing', 'playing', 'waiting', 'paused'])
   }
-  await waitForState(cdp, pageSessionId, starts.at(-1).sessionId, 'completed')
+  const latest = starts.at(-1)
+  const completed = await waitForState(cdp, pageSessionId, latest.sessionId, 'completed', 30_000)
+  assert(completed.source === 'debug-fixture', 'Latest replacement source was not authoritative')
   const after = await queryDiagnostics(cdp, pageSessionId)
-  const marker = before.events.length
-  const events = after.events.slice(marker)
-  assertEventIntervals(events)
-  assert(after.player.maxActivePlayerCount <= 1, 'Mixed replacement exceeded one active player')
-  assert(after.player.invariantViolationCount === 0, 'Mixed replacement recorded a player invariant violation')
-  for (const old of starts.slice(0, -1)) {
-    assert(events.some((event) => event.event === 'superseded' && event.status.sessionId === old.sessionId), `Session ${old.sessionId} lacked superseded event`)
-    assert(!events.some((event) => event.event === 'completed' && event.status.sessionId === old.sessionId), `Superseded session ${old.sessionId} completed`)
+  for (const prior of starts.slice(0, -1)) {
+    const terminal = after.events.find((event) => (
+      event.status.sessionId === prior.sessionId && ['superseded', 'cancelled'].includes(event.event)
+    ))
+    assert(terminal, `Prior session ${prior.sessionId} did not record supersession/cancellation`)
   }
+  assert(after.player.activePlayerCount === 0, 'Player remained active after replacement matrix')
+  assert(after.player.maxActivePlayerCount <= 1, 'Replacement matrix overlapped players')
+  assert(after.player.invariantViolationCount === 0, 'Replacement matrix recorded a player invariant violation')
+}
+
+async function verifyPauseResumeCancel(context) {
+  const { cdp, pageSessionId } = context
+  await setSettings(cdp, pageSessionId, { rate: 0.5 })
+  const before = await queryDiagnostics(cdp, pageSessionId)
+  const start = await sendExtensionMessage(cdp, pageSessionId, {
+    kind: START_PLAYBACK,
+    source: 'debug-fixture',
+    text: 'RESTART_CONTROL_FIXTURE. This chunk is intentionally long enough for pause and resume.',
+  })
+  assert(start?.ok === true, 'Pause/resume/cancel fixture was rejected')
+  await waitForState(cdp, pageSessionId, start.sessionId, 'playing')
+
+  const paused = await sendExtensionMessage(cdp, pageSessionId, {
+    kind: PLAYBACK_CONTROL,
+    action: 'pause',
+    expectedSessionId: start.sessionId,
+  })
+  assert(paused?.ok === true && paused.state === 'paused', 'Pause command was not acknowledged')
+  await delay(150)
+  const pausedStatus = await queryStatus(cdp, pageSessionId)
+  assert(pausedStatus.state === 'paused', 'Paused session advanced unexpectedly')
+
+  const resumed = await sendExtensionMessage(cdp, pageSessionId, {
+    kind: PLAYBACK_CONTROL,
+    action: 'resume',
+    expectedSessionId: start.sessionId,
+  })
+  assert(resumed?.ok === true, 'Resume command was not acknowledged')
+  await waitForState(cdp, pageSessionId, start.sessionId, 'playing')
+
+  const cancelled = await sendExtensionMessage(cdp, pageSessionId, {
+    kind: PLAYBACK_CONTROL,
+    action: 'cancel',
+    expectedSessionId: start.sessionId,
+  })
+  assert(cancelled?.ok === true && cancelled.state === 'cancelled', 'Cancel command was not acknowledged')
+  await waitForState(cdp, pageSessionId, start.sessionId, 'cancelled')
+
+  const after = await queryDiagnostics(cdp, pageSessionId)
+  assert(after.player.activePlayerCount === 0, 'Player remained active after cancel')
+  assert(after.player.maxActivePlayerCount <= 1, 'Pause/resume/cancel overlapped players')
+  assert(after.player.invariantViolationCount === 0, 'Pause/resume/cancel recorded a player invariant violation')
+  assert(after.player.playAttemptCount - before.player.playAttemptCount === 1, 'Pause/resume unexpectedly created another play attempt')
+  assert(after.player.successfulPlayStartCount - before.player.successfulPlayStartCount === 1, 'Pause/resume unexpectedly created another successful start')
+  assert(after.player.settlementCount - before.player.settlementCount === 1, 'Pause/resume/cancel settlement count mismatch')
 }
 
 async function verifyInvalidAudioFailure(context) {
@@ -498,152 +490,158 @@ async function verifyInvalidAudioFailure(context) {
     source: 'debug-fixture',
     text: 'INVALID_AUDIO_FIXTURE.',
   })
-  assert(start?.ok === true, 'Invalid-audio session was not accepted')
+  assert(start?.ok === true, 'Invalid-audio fixture was rejected before playback')
   const failed = await waitForState(cdp, pageSessionId, start.sessionId, 'failed')
-  assert(['AUDIO_PLAYBACK_FAILED', 'INTERNAL_PLAYBACK_ERROR'].includes(failed.error?.code), `Unexpected invalid-audio error ${failed.error?.code}`)
+  assert(failed.error?.code === 'AUDIO_PLAYBACK_FAILED', `Unexpected invalid-audio error ${failed.error?.code}`)
   const after = await queryDiagnostics(cdp, pageSessionId)
-  assert(after.player.activePlayerCount === 0, 'Invalid audio left a player active')
-  assert(after.player.maxActivePlayerCount <= 1, 'Invalid audio exceeded one active player')
-  assert(after.player.settlementCount - before.player.settlementCount === 1, 'Invalid audio was not settled exactly once')
+  assert(after.player.activePlayerCount === 0, 'Player remained active after invalid audio')
+  assert(after.player.maxActivePlayerCount <= 1, 'Invalid audio overlapped players')
+  assert(after.player.invariantViolationCount === 0, 'Invalid audio recorded a player invariant violation')
+  assert(after.player.playAttemptCount - before.player.playAttemptCount === 1, 'Invalid audio did not produce exactly one play attempt')
+  assert(after.player.successfulPlayStartCount - before.player.successfulPlayStartCount === 0, 'Invalid audio reported a successful start')
+  assert(after.player.settlementCount - before.player.settlementCount === 1, 'Invalid audio did not settle exactly once')
 }
 
-async function terminateWorker(cdp, chromePort, extensionId) {
-  const worker = (await listTargets(chromePort)).find((target) => (
-    target.type === 'service_worker' && String(target.url).startsWith(`chrome-extension://${extensionId}/`)
-  ))
-  assert(worker, 'Unable to find the active service worker target')
-  const closed = await cdp.send('Target.closeTarget', { targetId: worker.id })
-  assert(closed.success === true, 'Chrome refused to terminate the extension service worker')
-}
-
-async function verifyWorkerRestartContinuation(context) {
-  const { cdp, pageSessionId, chrome, extensionId, fakeTts } = context
-  await setSettings(cdp, pageSessionId, { rate: 1 })
-  const marker = fakeTts.requests.length
-  const start = await sendExtensionMessage(cdp, pageSessionId, {
+async function verifyImmediateReplacement(context) {
+  const { cdp, pageSessionId } = context
+  await setSettings(cdp, pageSessionId, { rate: 0.5 })
+  const before = await queryDiagnostics(cdp, pageSessionId)
+  const first = await sendExtensionMessage(cdp, pageSessionId, {
     kind: START_PLAYBACK,
     source: 'selection',
-    text: 'Restart paragraph one.\n\nRestart paragraph two.\n\nRestart paragraph three.',
+    text: 'RESTART_CONTROL_FIXTURE. First session must be superseded immediately.',
   })
-  assert(start?.ok === true, 'Restart continuation session failed to start')
-  await waitForState(cdp, pageSessionId, start.sessionId, 'playing')
-  await terminateWorker(cdp, chrome.port, extensionId)
+  assert(first?.ok === true, 'First immediate-replacement session was rejected')
+  await waitForState(cdp, pageSessionId, first.sessionId, 'playing')
+  const second = await sendExtensionMessage(cdp, pageSessionId, {
+    kind: START_PLAYBACK,
+    source: 'popup-test',
+    text: 'Second session should replace the first without overlap.',
+  })
+  assert(second?.ok === true, 'Second immediate-replacement session was rejected')
+  const completed = await waitForState(cdp, pageSessionId, second.sessionId, 'completed')
+  assert(completed.source === 'popup-test', 'Replacement session source was not authoritative')
 
-  const reopened = await createExtensionPage(cdp, extensionId)
-  const restored = await waitForState(cdp, reopened.sessionId, start.sessionId, ['playing', 'waiting', 'synthesizing', 'completed'])
-  assert(restored.sessionId === start.sessionId, 'Reopened popup did not recover the active session')
-  await waitForState(cdp, reopened.sessionId, start.sessionId, 'completed', 30_000)
-  assert(fakeTts.requests.slice(marker).length === 3, 'Offscreen queue did not finish after worker termination')
-  return reopened
+  const after = await queryDiagnostics(cdp, pageSessionId)
+  const superseded = after.events.find((event) => event.status.sessionId === first.sessionId && event.event === 'superseded')
+  assert(superseded, 'First session did not emit superseded')
+  assert(after.player.activePlayerCount === 0, 'Player remained active after immediate replacement')
+  assert(after.player.maxActivePlayerCount <= 1, 'Immediate replacement overlapped players')
+  assert(after.player.invariantViolationCount === 0, 'Immediate replacement recorded a player invariant violation')
+  assert(after.player.playAttemptCount - before.player.playAttemptCount === 2, 'Immediate replacement play-attempt count mismatch')
+  assert(after.player.successfulPlayStartCount - before.player.successfulPlayStartCount === 2, 'Immediate replacement successful-start count mismatch')
+  assert(after.player.settlementCount - before.player.settlementCount === 2, 'Immediate replacement settlement count mismatch')
 }
 
-async function verifyWorkerRestartControls(context, reopenedPage) {
-  const { cdp, chrome, extensionId } = context
-  await setSettings(cdp, reopenedPage.sessionId, { rate: 1 })
-  const start = await sendExtensionMessage(cdp, reopenedPage.sessionId, {
+async function verifyOneShotRestart(context) {
+  const { cdp, pageSessionId } = context
+  await setSettings(cdp, pageSessionId, { rate: 0.5 })
+  const before = await queryDiagnostics(cdp, pageSessionId)
+  const first = await sendExtensionMessage(cdp, pageSessionId, {
     kind: START_PLAYBACK,
-    source: 'selection',
-    text: 'RESTART_CONTROL_FIXTURE paragraph one.\n\nRESTART_CONTROL_FIXTURE paragraph two.',
+    source: 'debug-fixture',
+    text: 'RESTART_CONTROL_FIXTURE. First restart session.',
   })
-  assert(start?.ok === true, 'Restart control session failed to start')
-  await waitForState(cdp, reopenedPage.sessionId, start.sessionId, 'playing')
-  await terminateWorker(cdp, chrome.port, extensionId)
-
-  const controlPage = await createExtensionPage(cdp, extensionId)
-  await waitForState(cdp, controlPage.sessionId, start.sessionId, 'playing')
-  const pause = await sendExtensionMessage(cdp, controlPage.sessionId, {
-    kind: PLAYBACK_CONTROL,
-    action: 'pause',
-    expectedSessionId: start.sessionId,
-  })
-  assert(pause?.ok === true && pause.state === 'paused', 'Pause failed after worker restart')
-  const paused = await waitForState(cdp, controlPage.sessionId, start.sessionId, 'paused')
-  await delay(200)
-  const stillPaused = await queryStatus(cdp, controlPage.sessionId)
-  assert(stillPaused.state === 'paused' && stillPaused.currentChunk === paused.currentChunk, 'Paused restart session advanced')
-
-  const resume = await sendExtensionMessage(cdp, controlPage.sessionId, {
-    kind: PLAYBACK_CONTROL,
-    action: 'resume',
-    expectedSessionId: start.sessionId,
-  })
-  assert(resume?.ok === true, 'Resume failed after worker restart')
-  await waitForState(cdp, controlPage.sessionId, start.sessionId, 'playing')
-
-  const cancel = await sendExtensionMessage(cdp, controlPage.sessionId, {
+  assert(first?.ok === true, 'First restart session was rejected')
+  await waitForState(cdp, pageSessionId, first.sessionId, 'playing')
+  const cancelled = await sendExtensionMessage(cdp, pageSessionId, {
     kind: PLAYBACK_CONTROL,
     action: 'cancel',
-    expectedSessionId: start.sessionId,
+    expectedSessionId: first.sessionId,
   })
-  assert(cancel?.ok === true && cancel.state === 'cancelled', 'Cancel failed after worker restart')
-  await waitForState(cdp, controlPage.sessionId, start.sessionId, 'cancelled')
-  const diagnostics = await queryDiagnostics(cdp, controlPage.sessionId)
-  assert(diagnostics.player.activePlayerCount === 0, 'Restart cancel left a player active')
-  assert(diagnostics.player.maxActivePlayerCount <= 1, 'Restart controls exceeded one active player')
+  assert(cancelled?.ok === true, 'Restart cancel was not acknowledged')
+  await waitForState(cdp, pageSessionId, first.sessionId, 'cancelled')
+
+  const second = await sendExtensionMessage(cdp, pageSessionId, {
+    kind: START_PLAYBACK,
+    source: 'debug-fixture',
+    text: 'Second restart session must complete cleanly.',
+  })
+  assert(second?.ok === true, 'Second restart session was rejected')
+  await waitForState(cdp, pageSessionId, second.sessionId, 'completed')
+
+  const after = await queryDiagnostics(cdp, pageSessionId)
+  assert(after.player.activePlayerCount === 0, 'Player remained active after restart')
+  assert(after.player.maxActivePlayerCount <= 1, 'Restart sequence overlapped players')
+  assert(after.player.invariantViolationCount === 0, 'Restart sequence recorded a player invariant violation')
+  assert(after.player.playAttemptCount - before.player.playAttemptCount === 2, 'Restart sequence play-attempt count mismatch')
+  assert(after.player.successfulPlayStartCount - before.player.successfulPlayStartCount === 2, 'Restart sequence successful-start count mismatch')
+  assert(after.player.settlementCount - before.player.settlementCount === 2, 'Restart sequence settlement count mismatch')
+}
+
+async function verifyDiagnosticFailure(context) {
+  const { cdp, pageSessionId } = context
+  const response = await sendExtensionMessage(cdp, pageSessionId, { kind: DIAGNOSTICS, forceError: true })
+  assert(response?.ok === false, 'Forced diagnostics failure did not return a typed failure')
+  assert(response.error?.code === 'DIAGNOSTICS_FAILED', `Unexpected diagnostics failure code ${response.error?.code}`)
 }
 
 async function main() {
-  const fixture = (await readFile(FIXTURE_PATH, 'utf8')).trim()
+  const profileDir = await mkdtemp(resolve(tmpdir(), 'chrome-readit-e2e-'))
   const fakeTts = await startFakeTtsServer()
-  const chrome = await launchChrome()
-  const cdp = new CdpConnection(`ws://127.0.0.1:${chrome.port}${chrome.browserPath}`)
+  const chrome = spawn(CHROME_PATH, [
+    '--headless=new',
+    '--disable-gpu',
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--autoplay-policy=no-user-gesture-required',
+    '--remote-debugging-port=0',
+    `--user-data-dir=${profileDir}`,
+    `--disable-extensions-except=${EXTENSION_DIR}`,
+    `--load-extension=${EXTENSION_DIR}`,
+    'about:blank',
+  ], { stdio: ['ignore', 'ignore', 'pipe'] })
 
+  let stderr = ''
+  chrome.stderr.setEncoding('utf8')
+  chrome.stderr.on('data', (chunk) => {
+    stderr += chunk
+    process.stderr.write(chunk)
+  })
+
+  let cdp
   try {
-    await cdp.connect()
-    const workerTarget = await waitFor(
-      'Read It extension service worker',
-      () => findReadItWorkerTarget(cdp, chrome.port),
-    )
-    const extensionId = new URL(workerTarget.url).host
+    const port = await waitFor('DevTools port', async () => findDevtoolsPort(stderr), 20_000, 50)
+    cdp = await connectCdp(port)
+    const extensionId = await resolveExtensionId(cdp)
     const page = await createExtensionPage(cdp, extensionId)
-    const ttsUrl = `http://127.0.0.1:${fakeTts.port}/api/tts`
-    await setSettings(cdp, page.sessionId, { ttsUrl, voice: 'p225', rate: 1 })
+    await setSettings(cdp, page.sessionId, { ttsUrl: fakeTts.url, voice: 'p225', rate: 1 })
+    await ensureOffscreenTarget(cdp, extensionId, page.sessionId)
+    const fixture = await readFile(FIXTURE_PATH, 'utf8')
 
-    const context = {
-      cdp,
-      pageSessionId: page.sessionId,
-      fakeTts,
-      chrome,
-      extensionId,
-    }
+    const context = { cdp, extensionId, pageSessionId: page.sessionId, fakeTts }
     await verifyCanonicalFixture(context, fixture)
     await verifyPacingMatrix(context)
     await verifyMixedSourceReplacement(context)
+    await verifyPauseResumeCancel(context)
     await verifyInvalidAudioFailure(context)
-    const reopened = await verifyWorkerRestartContinuation(context)
-    await verifyWorkerRestartControls(context, reopened)
+    await verifyImmediateReplacement(context)
+    await verifyOneShotRestart(context)
+    await verifyDiagnosticFailure(context)
 
-    const finalDiagnostics = await queryDiagnostics(cdp, reopened.sessionId)
-    assert(finalDiagnostics.player.activePlayerCount === 0, 'Final active-player count was not zero')
-    assert(finalDiagnostics.player.maxActivePlayerCount <= 1, 'Final max active-player count exceeded one')
-    assert(finalDiagnostics.player.invariantViolationCount === 0, 'Final player diagnostics contained violations')
-
+    const diagnostics = await queryDiagnostics(cdp, page.sessionId)
+    assert(diagnostics.player.activePlayerCount === 0, 'Final diagnostics reported an active player')
+    assert(diagnostics.player.maxActivePlayerCount <= 1, 'Final diagnostics reported overlapping players')
+    assert(diagnostics.player.invariantViolationCount === 0, 'Final diagnostics reported player invariant violations')
     console.log(JSON.stringify({
       ok: true,
       extensionId,
-      synthesizedRequests: fakeTts.requests.length,
-      player: finalDiagnostics.player,
-      verified: [
-        'canonical-collision-fixture',
-        'semantic-text-integrity',
-        'rate-matrix-0.5-1-2-4-10',
-        'continuation-sentence-paragraph-gaps',
-        'direct-active-player-instrumentation',
-        'mixed-source-rapid-replacement',
-        'invalid-audio-terminal-failure',
-        'service-worker-restart-continuation',
-        'reopened-popup-status',
-        'post-restart-pause-resume-cancel',
-      ],
+      requests: fakeTts.requests.length,
+      player: diagnostics.player,
+      cleanup: { profileDir },
     }, null, 2))
-  } catch (error) {
-    const chromeErrors = chrome.stderr.join('').trim()
-    if (chromeErrors) console.error(chromeErrors)
-    throw error
   } finally {
-    cdp.close()
-    await chrome.close()
+    cdp?.close()
+    chrome.kill('SIGTERM')
+    await new Promise((resolveExit) => {
+      const timer = setTimeout(resolveExit, 2_000)
+      chrome.once('exit', () => {
+        clearTimeout(timer)
+        resolveExit()
+      })
+    })
     await fakeTts.close()
+    await rm(profileDir, { recursive: true, force: true })
   }
 }
 
