@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { clampPlaybackRate, getTransitionGapMs } from './playback-pacing'
 
 describe('playback pacing', () => {
+  // Keep exact cadence values explicit so timing changes require intentional review.
   it.each([
     { rate: 0.5, continuation: 120, sentence: 360, paragraph: 550 },
     { rate: 1, continuation: 60, sentence: 180, paragraph: 275 },
