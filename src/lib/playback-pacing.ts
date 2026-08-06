@@ -6,13 +6,13 @@ export const MAX_PLAYBACK_RATE = 10
 const BASE_GAPS_MS: Record<Exclude<PlaybackTransition, 'end'>, number> = {
   continuation: 60,
   sentence: 180,
-  paragraph: 550,
+  paragraph: 275,
 }
 
 const MIN_GAPS_MS: Record<Exclude<PlaybackTransition, 'end'>, number> = {
   continuation: 20,
   sentence: 60,
-  paragraph: 180,
+  paragraph: 90,
 }
 
 export function clampPlaybackRate(value: unknown, fallback = 1): number {
