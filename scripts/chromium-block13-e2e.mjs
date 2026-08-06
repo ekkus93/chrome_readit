@@ -726,7 +726,7 @@ async function verifyRestartDuringGap(context) {
 }
 
 async function verifyPausePreservesGap(context) {
-  await setSettings(context.cdp, context.page.sessionId, { ...context.settings, rate: 1 })
+  await setSettings(context.cdp, context.page.sessionId, { ...context.settings, rate: 0.5 })
   const start = await startReadText(context, 'Pause gap paragraph one.\n\nPause gap paragraph two.')
   assert(start?.ok === true, 'pause-gap start rejected')
   const waiting = await waitForState(context.cdp, context.page.sessionId, start.sessionId, 'waiting')
@@ -759,6 +759,7 @@ async function verifyPausePreservesGap(context) {
   assert(resumedDelay >= 120, `resumed gap lost remaining delay (${resumedDelay}ms)`)
   assert(resumedDelay < 520, `resumed gap restarted the full delay (${resumedDelay}ms)`)
   await waitForState(context.cdp, context.page.sessionId, start.sessionId, 'completed')
+  await setSettings(context.cdp, context.page.sessionId, context.settings)
 }
 
 async function verifyOffscreenDestruction(context) {
