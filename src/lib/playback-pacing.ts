@@ -3,6 +3,7 @@ import type { PlaybackTransition } from './chunk-packing'
 export const MIN_PLAYBACK_RATE = 0.5
 export const MAX_PLAYBACK_RATE = 10
 
+// Paragraph gaps remain distinct from sentence gaps without dominating the reading cadence.
 const BASE_GAPS_MS: Record<Exclude<PlaybackTransition, 'end'>, number> = {
   continuation: 60,
   sentence: 180,
