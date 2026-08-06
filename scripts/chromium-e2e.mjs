@@ -362,8 +362,8 @@ function assertEventIntervals(events) {
 }
 
 function expectedGapMs(transition, rate) {
-  const base = { continuation: 60, sentence: 180, paragraph: 550 }
-  const minimum = { continuation: 20, sentence: 60, paragraph: 180 }
+  const base = { continuation: 60, sentence: 180, paragraph: 275 }
+  const minimum = { continuation: 20, sentence: 60, paragraph: 90 }
   return Math.max(minimum[transition], Math.round(base[transition] / rate))
 }
 
